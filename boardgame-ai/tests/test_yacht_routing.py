@@ -24,6 +24,7 @@ from bridge.local_bridge import LocalBridge
 from core.constants import CommonEventType, MsgType
 from core.events import FusionContext, GameEvent
 from games.yacht import YachtEventType, YachtFSM
+from vision.yacht.config import VisionConfig
 
 # ── FakeWebSocket ───────────────────────────────────────────────────────────
 
@@ -113,16 +114,31 @@ def _start_session_sync(session: YachtSession, loop: asyncio.AbstractEventLoop) 
 
 
 def test_yacht_event_routes_to_active_session(loop_in_thread) -> None:
-    """ROLL_CONFIRMED 발화 → 활성 session.dispatch_vision_event 호출."""
+    """ROLL_CONFIRMED 발화 → 활성 session.dispatch_vision_event 호출.
+
+    STATE_UPDATE는 클라이언트(ws)로, FUSION_CONTEXT는 브리지(비전)로 라우팅된다.
+    """
     bridge = LocalBridge()
-    runner = YachtRunner(bridge=bridge, loop=loop_in_thread)
+    runner = YachtRunner(config=VisionConfig(), bridge=bridge, loop=loop_in_thread)
 
     ws = FakeWebSocket()
     session = YachtSession(websocket=ws, bridge=bridge)
+
+    # FUSION_CONTEXT는 ws가 아니라 bridge로 전달되므로 bridge 쪽에서 수신 대기.
+    ctx_received = threading.Event()
+    received_states: list[str] = []
+
+    def _capture_ctx(ctx: FusionContext, _version: int) -> None:
+        received_states.append(ctx.fsm_state)
+        ctx_received.set()
+
+    bridge.on_fusion_context(_capture_ctx)
+
     _start_session_sync(session, loop_in_thread)
     runner.register_session(session)
 
     sent_before = len(ws.sent)
+    ctx_received.clear()  # start_game이 보낸 초기 context는 제외
 
     event = _make_event(
         YachtEventType.ROLL_CONFIRMED.value,
@@ -133,17 +149,14 @@ def test_yacht_event_routes_to_active_session(loop_in_thread) -> None:
 
     # FSM 응답이 도착할 때까지 deterministic 대기 (start_game 메시지 이후만)
     assert ws.wait_for(MsgType.STATE_UPDATE.value, timeout=2.0, after=sent_before)
-    assert ws.wait_for(MsgType.FUSION_CONTEXT.value, timeout=2.0, after=sent_before)
-
-    new_msg_types = [m.get("msg_type") for m in ws.sent[sent_before:]]
-    assert MsgType.STATE_UPDATE.value in new_msg_types
-    assert MsgType.FUSION_CONTEXT.value in new_msg_types
+    assert ctx_received.wait(timeout=2.0), "FUSION_CONTEXT가 bridge로 전달되지 않음"
+    assert received_states[-1] in ("AWAITING_KEEP", "AWAITING_SCORE")
 
 
 def test_yacht_event_ignored_when_no_active_session(loop_in_thread) -> None:
     """활성 세션 없을 때 ROLL_CONFIRMED 도착 → 예외 없이 무시."""
     bridge = LocalBridge()
-    YachtRunner(bridge=bridge, loop=loop_in_thread)  # register 안 함
+    YachtRunner(config=VisionConfig(), bridge=bridge, loop=loop_in_thread)  # register 안 함
 
     event = _make_event(YachtEventType.ROLL_CONFIRMED.value, dice_values=[1] * 5)
     # 예외만 안 뜨면 OK
@@ -153,7 +166,7 @@ def test_yacht_event_ignored_when_no_active_session(loop_in_thread) -> None:
 def test_non_yacht_event_not_routed_to_yacht(loop_in_thread) -> None:
     """SEAT_REGISTERED 같은 비-yacht 이벤트는 yacht runner가 무시해야 함."""
     bridge = LocalBridge()
-    runner = YachtRunner(bridge=bridge, loop=loop_in_thread)
+    runner = YachtRunner(config=VisionConfig(), bridge=bridge, loop=loop_in_thread)
 
     ws = FakeWebSocket()
     session = YachtSession(websocket=ws, bridge=bridge)
@@ -209,7 +222,7 @@ def test_fusion_context_published_after_roll_confirmed() -> None:
 def test_deregister_only_clears_matching_session(loop_in_thread) -> None:
     """빠른 재연결 시 새 세션을 옛 세션의 deregister가 덮어쓰지 않아야."""
     bridge = LocalBridge()
-    runner = YachtRunner(bridge=bridge, loop=loop_in_thread)
+    runner = YachtRunner(config=VisionConfig(), bridge=bridge, loop=loop_in_thread)
 
     ws = FakeWebSocket()
     old_session = YachtSession(websocket=ws, bridge=bridge)
