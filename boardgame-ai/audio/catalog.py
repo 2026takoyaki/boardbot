@@ -41,7 +41,8 @@ class VoiceConfig:
 
 
 # agent별 음성 매핑. 새 agent 추가 시 여기에만 등록.
-# .env의 TTS_* 변수로 오버라이드 가능 (server.py 부팅 시점에 주입).
+# NOTE: .env의 TTS_* 변수 오버라이드는 아직 미구현 — 보이스 변경은 이 dict를 직접 수정.
+# (구현 시 dotenv 로드가 이 모듈 import보다 먼저 일어나도록 주의)
 VOICE_BY_AGENT: dict[str, VoiceConfig] = {
     # 메인 진행자: 활기찬 남성 게임 호스트 톤
     AgentRole.NARRATOR.value: VoiceConfig(

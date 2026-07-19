@@ -306,10 +306,12 @@ async def werewolf_socket(websocket: WebSocket) -> None:
             if p.seat_zone is not None
         },
     )
+    # 핸들러 등록 직후부터 try 진입 — send_hello 등 어디서 예외가 나도
+    # finally에서 반드시 핸들러 해제/파이프라인 복귀/오디오 detach가 실행되도록.
     app.state.orchestrator.set_werewolf_event_handler(session.get_vision_event_handler())
     app.state.pipeline_switcher("werewolf")
-    await session.send_hello()
     try:
+        await session.send_hello()
         while True:
             data = await websocket.receive_json()
             await session.handle_client_message(data)
