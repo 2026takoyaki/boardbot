@@ -106,6 +106,17 @@ TENSION_RED: RGB = (255, 110, 70)
 DAWN_WARM: RGB = (255, 225, 190)
 CELEBRATION_GOLD: RGB = (255, 200, 90)
 
+# 요트 전용 팔레트 — 채도를 의도적으로 낮췄다.
+#
+# 늑대인간 색을 그대로 쓰면 안 된다. 요트는 이 전구가 곧 주사위 인식 조명이라
+# 원색이 들어오면 YOLO가 학습 시점과 다른 색분포를 본다. 그래서 요트 연출은
+# **색을 갈아엎지 않고 톤만 얹는다** — 백색에 가까운 틴트로 광량을 유지한 채
+# 방 전체의 온도만 바꾼다. 단일 광원이라 이 정도로도 변화는 충분히 보인다.
+#
+# 연출의 세기는 조명이 아니라 화면 모달이 감당한다.
+YACHT_SWEEP_WARM: RGB = (255, 226, 178)
+YACHT_BURST_GOLD: RGB = (255, 214, 140)
+
 
 def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
     """늑대인간 페이즈 → Scene.
@@ -159,8 +170,10 @@ YACHT_SCENES: dict[str, Scene] = {
     YachtPhase.AWAITING_ROLL.value: NEUTRAL_SCENE,
     YachtPhase.AWAITING_KEEP.value: NEUTRAL_SCENE,
     YachtPhase.AWAITING_SCORE.value: NEUTRAL_SCENE,
-    # 인식이 끝났으므로 자유롭게 축하한다.
-    YachtPhase.GAME_END.value: Scene("yacht_end", CELEBRATION_GOLD, 100, 1500),
+    # 종료도 Scene은 기본색이다. 축하는 Cue가 터뜨리고 곧바로 여기로 돌아온다.
+    # Scene 자체를 금색으로 두면 축하가 끝나지 않고 그 색에 머무르고, Cue와
+    # 색이 같아 중복 제거에 걸려 연출이 통째로 사라진다.
+    YachtPhase.GAME_END.value: NEUTRAL_SCENE,
 }
 
 
@@ -175,18 +188,24 @@ YACHT_SCENES: dict[str, Scene] = {
 # 좌석별 색을 쓰지 않는 이유: 프론트 좌석 색은 oklch 파스텔(C≈0.12)이라
 # 전구 하나로 재현하면 10색이 전부 "살짝 물든 흰색"으로 뭉갠다. 누구 차례인지는
 # 화면과 TTS가 이미 말하므로, 조명은 "턴이 넘어갔다"만 분명히 전한다.
+# 밝기는 세 Cue 모두 100으로 고정한다. 요트에서 광량이 흔들리면 그대로 인식
+# 위험이므로, 변하는 것은 색온도뿐이다.
 YACHT_CUES: dict[str, Cue] = {
     "yacht_turn_transition": Cue(
-        "turn_sweep", TRICK_AMBER, brightness=100, rise_ms=400, hold_ms=900, fall_ms=600
+        "turn_sweep", YACHT_SWEEP_WARM, brightness=100, rise_ms=400, hold_ms=900, fall_ms=600
     ),
-    # 야찌·라지스트레이트. 사건이므로 더 세게, 더 길게 간다.
+    # 야찌·라지스트레이트. 사건이므로 더 진하게, 더 길게 간다.
     "yacht_turn_transition_highlight": Cue(
-        "score_burst", CELEBRATION_GOLD, brightness=100, rise_ms=300, hold_ms=1600, fall_ms=800
+        "score_burst", YACHT_BURST_GOLD, brightness=100, rise_ms=300, hold_ms=1600, fall_ms=800
     ),
+    # 게임이 끝났으니 더 굴릴 주사위가 없다. 여기서만 원색을 쓴다.
     "yacht_game_finish": Cue(
         "game_finish", CELEBRATION_GOLD, brightness=100, rise_ms=500, hold_ms=2400, fall_ms=900
     ),
 }
+
+# 플레이 중에 재생되는 Cue — 인식 제약을 받는다. 게임 종료 Cue는 제외.
+IN_PLAY_YACHT_CUES = ("yacht_turn_transition", "yacht_turn_transition_highlight")
 
 
 def build_scene_map(night_brightness: int) -> dict[str, dict[str, Scene]]:

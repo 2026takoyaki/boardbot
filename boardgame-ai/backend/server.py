@@ -75,6 +75,9 @@ async def lifespan(app: FastAPI):
     # 조명: 전구가 없어도(기본 mock 드라이버) 서버는 그대로 뜬다.
     # 실제 전구는 LIGHT_DRIVER=yeelight + LIGHT_BULB_IP 로 opt-in.
     light_controller = build_controller(broadcast=ws_manager.broadcast)
+    # 로비·좌석 등록 구간의 밝기는 이 기본값이 유일한 보장이다 — 로비는
+    # 세션을 거치지 않고 브로드캐스트해서 조명 스트림에 잡히지 않는다.
+    await light_controller.start()
 
     bridge = LocalBridge()
     config = VisionConfig()

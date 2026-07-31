@@ -14,6 +14,7 @@ from bulb import build_controller
 from bulb.config import LightConfig
 from bulb.driver.mock import MockDriver
 from bulb.scenes import (
+    IN_PLAY_YACHT_CUES,
     NEUTRAL_SCENE,
     YACHT_CUES,
     build_cue_map,
@@ -126,17 +127,38 @@ def test_night_brightness_is_tunable():
     assert bright["night_start"].is_blackout
 
 
-def test_yacht_scenes_are_all_neutral_except_game_end():
-    """요트는 Scene이 항상 중립이고 Cue만 일시적으로 벗어난다."""
-    scenes = build_scene_map(night_brightness=15)["yacht"]
-    recognition_phases = [
-        YachtPhase.AWAITING_ROLL,
-        YachtPhase.AWAITING_KEEP,
-        YachtPhase.AWAITING_SCORE,
-    ]
+def test_all_yacht_scenes_are_neutral():
+    """요트는 Scene이 항상 중립이고 Cue만 일시적으로 벗어난다.
 
-    for phase in recognition_phases:
-        assert scenes[phase.value] == NEUTRAL_SCENE, f"{phase.value}는 인식 구간이다"
+    종료도 예외가 아니다. Scene을 금색으로 두면 축하가 끝나지 않고 그 색에
+    머무르고, Cue와 색이 같아 중복 제거에 걸려 연출이 통째로 사라진다.
+    """
+    scenes = build_scene_map(night_brightness=15)["yacht"]
+
+    for phase in YachtPhase:
+        assert scenes[phase.value] == NEUTRAL_SCENE, f"{phase.value}가 중립이 아니다"
+
+
+@pytest.mark.parametrize("cue_name", IN_PLAY_YACHT_CUES)
+def test_in_play_yacht_cues_keep_luminance(cue_name: str):
+    """요트 연출은 색을 갈아엎지 않고 톤만 얹는다.
+
+    이 전구가 곧 주사위 인식 조명이라 원색이 들어오면 YOLO가 학습 시점과 다른
+    색분포를 본다. 밝기는 고정하고 채도만 낮게 유지해 광량을 지킨다.
+    연출의 세기는 조명이 아니라 화면 모달이 감당한다.
+    """
+    cue = YACHT_CUES[cue_name]
+
+    assert cue.brightness == 100, "요트에서 광량이 흔들리면 그대로 인식 위험이다"
+    # 가장 어두운 채널이 충분히 높아야 원색이 아니라 틴트다.
+    assert min(cue.color) >= 130, f"{cue_name} 채도가 높아 색분포를 흔든다: {cue.color}"
+
+
+def test_game_finish_cue_may_use_full_color():
+    """게임이 끝나면 더 굴릴 주사위가 없으므로 인식 제약에서 자유롭다."""
+    finish = YACHT_CUES["yacht_game_finish"]
+
+    assert min(finish.color) < 130
 
 
 # ── 통합: 기본 설정으로 조립된 컨트롤러 ──────────────────────────────────────
@@ -187,6 +209,46 @@ async def test_highlight_cue_variant_is_selected():
     await _settle()
 
     assert driver.last[0] == YACHT_CUES["yacht_turn_transition_highlight"].color
+
+
+@pytest.mark.asyncio
+async def test_game_end_celebrates_then_returns_to_default():
+    """축하 조명이 실제로 터지고, 끝나면 기본색으로 돌아온다.
+
+    Scene을 금색으로 두면 Cue와 색이 같아 중복 제거에 걸려 전구에 나가는
+    명령이 Scene 하나뿐이 된다 — 축하가 통째로 사라진다.
+    """
+    driver = MockDriver()
+    controller = build_controller(LightConfig(driver="mock"))
+    controller._driver = driver
+
+    controller.on_message(
+        WSMessage(
+            msg_type=MsgType.STATE_UPDATE.value,
+            payload={"phase": YachtPhase.AWAITING_SCORE.value},
+        ),
+        game="yacht",
+    )
+    await _settle()
+    driver.applied.clear()
+
+    controller.on_message(
+        WSMessage(
+            msg_type=MsgType.STATE_UPDATE.value, payload={"phase": YachtPhase.GAME_END.value}
+        ),
+        game="yacht",
+    )
+    controller.on_message(
+        WSMessage.make_cue(
+            "yacht_game_finish", {"duration_ms": _GAME_FINISH_CUE_DURATION_MS}
+        ),
+        game="yacht",
+    )
+    await asyncio.sleep(4.0)
+
+    colors = [applied[0] for applied in driver.applied]
+    assert YACHT_CUES["yacht_game_finish"].color in colors, "축하 조명이 나가지 않았다"
+    assert driver.last[0] == NEUTRAL_SCENE.color, "축하 후 기본색으로 안 돌아왔다"
 
 
 @pytest.mark.asyncio
