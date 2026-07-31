@@ -293,6 +293,23 @@ async def test_disabled_controller_does_nothing():
 
 
 @pytest.mark.asyncio
+async def test_start_lights_the_room_before_any_game():
+    """부팅 직후 전구를 중립으로 올린다.
+
+    로비는 세션을 거치지 않고 브로드캐스트해서 조명 스트림에 잡히지 않는다.
+    좌석 등록이 비전으로 돌아가는 구간의 밝기는 이 기본값이 유일한 보장이다.
+    """
+    driver = MockDriver()
+    controller = _controller(driver)
+    assert driver.applied == []
+
+    await controller.start()
+
+    assert driver.last[0] == NEUTRAL_SCENE.color
+    assert driver.last[1] == NEUTRAL_SCENE.brightness
+
+
+@pytest.mark.asyncio
 async def test_reset_returns_to_neutral():
     """다음 세션이 이전 세션의 색을 물려받지 않게 한다."""
     driver = MockDriver()
