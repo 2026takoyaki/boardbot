@@ -30,14 +30,40 @@ _CATEGORY_TTS_LABELS: dict[str, str] = {
     "yacht": "요트",
 }
 
-# 달성 자체가 사건인 족보. 연출을 길게 가져간다.
+# 달성 자체가 사건인 족보.
 _HIGHLIGHT_CATEGORIES: frozenset[str] = frozenset({"yacht", "large_straight"})
 
-# 모달·조명·TTS가 공유하는 연출 길이.
-# 일반 턴 전환은 2초 초반을 넘기지 않는다 — 연출이 새로운 루즈함이 되면 안 된다.
-_TURN_CUE_DURATION_MS = 2200
-_HIGHLIGHT_CUE_DURATION_MS = 3000
+# 선두 역전을 사건으로 칠 최소 진행도 (채운 족보 수).
+#
+# 초반에는 순위가 매 턴 뒤집힌다 — 아무나 5점만 넣어도 1위다. 그걸 전부
+# 역전이라고 연출하면 의미가 닳는다. 후반의 뒤집기만 사건으로 친다.
+_LEAD_CHANGE_MIN_FILLED = 7
+
+# 모달·조명·TTS가 공유하는 연출 길이. 사건의 크기에 비례한다.
+#
+# 일반 턴은 모달 없이 화면 안에서만 처리하므로 짧다. 한 판에 36턴이라
+# 여기서 몇백 ms가 그대로 루즈함이 된다.
+_CUE_DURATION_MS: dict[str, int] = {
+    "normal": 1600,
+    "zero": 1400,        # 아쉬움은 짧게 — 실패를 길게 보여줄 이유가 없다
+    "lead_change": 2600,
+    "highlight": 3000,
+}
 _GAME_FINISH_CUE_DURATION_MS = 4000
+
+
+def _ranking(players: list[Any]) -> dict[str, int]:
+    """player_id → 1부터 시작하는 순위. 동점은 같은 순위를 공유한다."""
+    distinct_totals = sorted({p.total for p in players}, reverse=True)
+    rank_of_total = {total: index + 1 for index, total in enumerate(distinct_totals)}
+    return {p.player_id: rank_of_total[p.total] for p in players}
+
+
+def _sole_leader(players: list[Any]) -> Any | None:
+    """단독 선두. 공동 1위면 None — 뺏을 자리가 없다는 뜻이다."""
+    best = max(p.total for p in players)
+    leaders = [p for p in players if p.total == best]
+    return leaders[0] if len(leaders) == 1 else None
 
 
 class YachtFSM(BaseFSM):
@@ -245,10 +271,22 @@ class YachtFSM(BaseFSM):
             return [WSMessage.make_error("INVALID_DICE_VALUES", str(exc), self.state.state_version)]
 
         current_player = self.state.current_player
+        # 순위 변동은 점수를 쓰기 전에 찍어둬야 알 수 있다.
+        ranks_before = _ranking(self.state.players)
+        leader_before = _sole_leader(self.state.players)
+
         current_player.scores[str(category)] = score
         scorer_name = current_player.playername
         score_label = _CATEGORY_TTS_LABELS.get(str(category), str(category))
         self.state.state_version += 1
+
+        moment = self._describe_moment(
+            scorer=current_player,
+            category=str(category),
+            score=score,
+            ranks_before=ranks_before,
+            leader_before=leader_before,
+        )
 
         if self.state.is_final_round_complete:
             self.state.finish_game()
@@ -258,8 +296,9 @@ class YachtFSM(BaseFSM):
             )
             # Benchmark hook: 정상 게임 종료 (completion_rate 측정용).
             try:
-                from benchmarks.common.trace_setup import bench_log
                 import time as _t
+
+                from benchmarks.common.trace_setup import bench_log
                 bench_log().info("game_end yacht normal %.6f", _t.time())
             except Exception:
                 pass
@@ -268,11 +307,11 @@ class YachtFSM(BaseFSM):
                 self._make_score_cue(
                     cue="yacht_game_finish",
                     scorer=current_player,
-                    category=str(category),
                     score_label=score_label,
                     score=score,
                     next_player=None,
                     duration_ms=_GAME_FINISH_CUE_DURATION_MS,
+                    moment=moment,
                 ),
                 self._emit_fusion_context(),
             ]
@@ -283,32 +322,79 @@ class YachtFSM(BaseFSM):
             f"{scorer_name}님 {score_label} {score}점입니다. "
             f"{self.state.current_player.playername}님 차례입니다."
         )
-        is_highlight = str(category) in _HIGHLIGHT_CATEGORIES
         return [
             self._make_state_update(),
             self._make_score_cue(
                 cue="yacht_turn_transition",
                 scorer=current_player,
-                category=str(category),
                 score_label=score_label,
                 score=score,
                 next_player=self.state.current_player.playername,
-                duration_ms=(
-                    _HIGHLIGHT_CUE_DURATION_MS if is_highlight else _TURN_CUE_DURATION_MS
-                ),
+                duration_ms=_CUE_DURATION_MS[moment["variant"]],
+                moment=moment,
             ),
             self._emit_fusion_context(),
         ]
+
+    def _describe_moment(
+        self,
+        scorer: Player,
+        category: str,
+        score: int,
+        ranks_before: dict[str, int],
+        leader_before: Player | None,
+    ) -> dict[str, Any]:
+        """이 득점이 어떤 종류의 사건인지 판정한다.
+
+        연출의 크기를 정하는 것은 점수 숫자가 아니라 이 판정이다. 한 판에
+        36턴이라 모두를 크게 연출하면 아무것도 특별하지 않고 게임만 늘어진다.
+        대부분은 normal로 떨어져 화면 안에서 조용히 처리된다.
+        """
+        ranks_after = _ranking(self.state.players)
+        rank_before = ranks_before[scorer.player_id]
+        rank_after = ranks_after[scorer.player_id]
+
+        # 특별 족보는 "칸을 골랐다"가 아니라 "실제로 달성했다"여야 사건이다.
+        # 요트 칸에 0점을 버리는 것은 축하가 아니라 그 반대다.
+        is_highlight = category in _HIGHLIGHT_CATEGORIES and score > 0
+
+        # 0점은 총점을 못 올리므로 남을 앞지를 수 없다. 역전과 배타적이다.
+        took_lead = (
+            rank_before > 1
+            and rank_after == 1
+            and leader_before is not None
+            and leader_before.player_id != scorer.player_id
+            and len(scorer.scores) >= _LEAD_CHANGE_MIN_FILLED
+        )
+
+        if score <= 0:
+            variant = "zero"
+        elif is_highlight:
+            variant = "highlight"
+        elif took_lead:
+            variant = "lead_change"
+        else:
+            variant = "normal"
+
+        return {
+            "category": category,
+            "variant": variant,
+            "is_highlight": is_highlight,
+            "took_lead": took_lead,
+            "rank_before": rank_before,
+            "rank_after": rank_after,
+            "previous_leader": leader_before.playername if leader_before else None,
+        }
 
     def _make_score_cue(
         self,
         cue: str,
         scorer: Player,
-        category: str,
         score_label: str,
         score: int,
         next_player: str | None,
         duration_ms: int,
+        moment: dict[str, Any],
     ) -> WSMessage:
         """득점 순간을 구조화된 payload로 발행.
 
@@ -324,12 +410,18 @@ class YachtFSM(BaseFSM):
             payload={
                 "scorer_id": scorer.player_id,
                 "scorer_name": scorer.playername,
-                "category": category,
+                "category": moment.get("category", ""),
                 "category_label": score_label,
                 "score": score,
-                "is_highlight": category in _HIGHLIGHT_CATEGORIES,
                 "next_player": next_player,
                 "duration_ms": duration_ms,
+                # 연출의 크기를 정하는 값. 모달 종류와 조명 Cue 변형이 여기서 갈린다.
+                "variant": moment["variant"],
+                "is_highlight": moment["is_highlight"],
+                "took_lead": moment["took_lead"],
+                "rank_before": moment["rank_before"],
+                "rank_after": moment["rank_after"],
+                "previous_leader": moment["previous_leader"],
             },
             state_version=self.state.state_version,
         )

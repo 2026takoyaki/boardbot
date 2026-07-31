@@ -141,20 +141,114 @@ def test_turn_transition_emits_cue_with_structured_payload():
     assert payload["duration_ms"] > 0
 
 
+def _score(fsm, category, player_id, dice=None, score=None):
+    # actor_id를 맞춰줘야 차례 검증을 통과해 굴림이 기록된다.
+    fsm.handle_event(
+        _event(
+            YachtEventType.ROLL_CONFIRMED.value,
+            actor_id=player_id,
+            dice=dice or [1, 2, 3, 4, 6],
+        )
+    )
+    data = {"category": category}
+    if score is not None:
+        data["score"] = score
+    return fsm.handle_input(
+        YachtInputType.SCORE_CATEGORY_SELECTED.value, data, player_id=player_id
+    )
+
+
+def _cue_payload(msgs):
+    return _messages_of(msgs, MsgType.CUE.value)[0].payload
+
+
 def test_highlight_category_gets_longer_cue():
     fsm = YachtFSM(["p1", "p2"])
     fsm.start()
-    fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
 
-    msgs = fsm.handle_input(
-        YachtInputType.SCORE_CATEGORY_SELECTED.value,
-        {"category": "yacht"},
-        player_id="p1",
-    )
-    payload = _messages_of(msgs, MsgType.CUE.value)[0].payload
+    payload = _cue_payload(_score(fsm, "yacht", "p1", dice=[5, 5, 5, 5, 5]))
 
+    assert payload["variant"] == "highlight"
     assert payload["is_highlight"] is True
     assert payload["duration_ms"] > 2200
+
+
+def test_scoring_zero_into_a_special_category_is_not_a_highlight():
+    """요트 칸에 0점을 버리는 것은 축하가 아니라 그 반대다.
+
+    족보를 '골랐다'가 아니라 '달성했다'여야 사건이다.
+    """
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    payload = _cue_payload(_score(fsm, "yacht", "p1", dice=[1, 2, 3, 4, 6]))
+
+    assert payload["score"] == 0
+    assert payload["is_highlight"] is False
+    assert payload["variant"] == "zero"
+
+
+def test_zero_score_is_shortest_moment():
+    """실패를 길게 보여줄 이유가 없다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    zero = _cue_payload(_score(fsm, "ones", "p1", dice=[2, 3, 4, 5, 6]))
+    normal = _cue_payload(_score(fsm, "sixes", "p2", dice=[6, 6, 2, 3, 4]))
+
+    assert zero["variant"] == "zero"
+    assert normal["variant"] == "normal"
+    assert zero["duration_ms"] < normal["duration_ms"]
+
+
+def test_early_lead_swaps_are_not_treated_as_upsets():
+    """초반에는 아무나 5점만 넣어도 1위다. 그걸 역전이라 하면 의미가 닳는다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    _score(fsm, "ones", "p1", dice=[1, 2, 3, 4, 6], score=1)
+    payload = _cue_payload(_score(fsm, "sixes", "p2", dice=[6, 6, 6, 3, 4], score=18))
+
+    assert payload["rank_before"] == 2
+    assert payload["rank_after"] == 1
+    assert payload["took_lead"] is False, "초반 순위 뒤집기는 사건이 아니다"
+    assert payload["variant"] == "normal"
+
+
+def test_late_game_lead_change_is_an_upset():
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    # 두 사람 모두 후반부에 진입시키고, p1이 앞서 있게 만든다.
+    for category in ("ones", "twos", "threes", "fours", "fives", "choice"):
+        fsm.state.players[0].scores[category] = 10
+        fsm.state.players[1].scores[category] = 1
+
+    payload = _cue_payload(_score(fsm, "sixes", "p1", dice=[1, 2, 3, 4, 6], score=0))
+    assert payload["variant"] == "zero"
+
+    payload = _cue_payload(_score(fsm, "sixes", "p2", dice=[6, 6, 6, 6, 6], score=200))
+
+    assert payload["took_lead"] is True
+    assert payload["variant"] == "lead_change"
+    assert payload["rank_before"] == 2
+    assert payload["rank_after"] == 1
+    assert payload["previous_leader"] == "p1"
+
+
+def test_achieved_special_hand_outranks_a_simultaneous_lead_change():
+    """야찌로 역전하면 야찌가 주인공이다. 더 드물고 더 상징적이다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    # p1 30점 선두, p2 6점. 야찌 50점이면 뒤집힌다.
+    for category in ("ones", "twos", "threes", "fours", "fives", "choice"):
+        fsm.state.players[0].scores[category] = 5
+        fsm.state.players[1].scores[category] = 1
+
+    _score(fsm, "sixes", "p1", dice=[1, 2, 3, 4, 6], score=0)
+    payload = _cue_payload(_score(fsm, "yacht", "p2", dice=[5, 5, 5, 5, 5]))
+
+    assert payload["took_lead"] is True
+    assert payload["variant"] == "highlight"
 
 
 def test_game_end_emits_finish_cue_without_next_player():
