@@ -7,7 +7,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["core*", "bridge*", "vision*", "games*", "audio*", "backend*", "agents*", "benchmarks*"]
+include = ["core*", "bridge*", "vision*", "games*", "audio*", "backend*", "agents*", "benchmarks*", "bulb*"]
 
 [project.optional-dependencies]
 dev = [
@@ -28,7 +28,7 @@ line-length = 100
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "vision", "bridge", "games", "audio", "backend", "agents", "benchmarks"]
+known-first-party = ["bulb", "core", "vision", "bridge", "games", "audio", "backend", "agents", "benchmarks"]
 
 [tool.mypy]
 strict = true

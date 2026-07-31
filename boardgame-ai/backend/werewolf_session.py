@@ -13,6 +13,7 @@ from fastapi import WebSocket
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
 from audio.manager import AudioManager
+from bulb.controller import LightController
 from core.constants import CommonEventType, MsgType
 from core.envelope import WSMessage
 from core.events import FusionContext, GameEvent
@@ -68,6 +69,7 @@ class WerewolfSession:
         audio_manager: AudioManager | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
         seat_positions_fn: Callable[[], dict[str, tuple[float, float]]] | None = None,
+        light_controller: LightController | None = None,
     ) -> None:
         self.websocket = websocket
         self._send_fusion_context = send_fusion_context_fn
@@ -79,6 +81,7 @@ class WerewolfSession:
         self._pending_game_data: dict | None = None
         self._audio_manager = audio_manager
         self._agent = agent_orchestrator
+        self._light = light_controller
         # 동일 객체 참조를 유지해야 detach_broadcast_if에서 is 비교가 가능.
         self._send_raw_bound = self._send_raw
         if audio_manager is not None:
@@ -824,4 +827,7 @@ class WerewolfSession:
         await self._send_raw(message)
 
     async def _send_raw(self, message: WSMessage) -> None:
+        # 조명은 프론트엔드와 같은 스트림을 본다. 페이즈 이름이 곧 Scene 키다.
+        if self._light is not None:
+            self._light.on_message(message, game="werewolf")
         await self.websocket.send_json(message.to_dict())
