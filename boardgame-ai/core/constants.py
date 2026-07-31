@@ -18,6 +18,7 @@ class MsgType(StrEnum):
     GAME_EVENT = "game_event"
     FUSION_CONTEXT = "fusion_context"
     STATE_UPDATE = "state_update"
+    CUE = "cue"
     INPUT = "input"
     AGENT_MESSAGE = "agent_message"
     TTS_PLAY = "tts_play"

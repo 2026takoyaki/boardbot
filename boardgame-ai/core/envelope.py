@@ -125,6 +125,29 @@ class WSMessage:
         )
 
     @classmethod
+    def make_cue(
+        cls,
+        cue: str,
+        payload: dict[str, Any] | None = None,
+        state_version: int = 0,
+    ) -> WSMessage:
+        """순간 연출 큐. 모달·조명·TTS를 하나의 메시지로 몬다.
+
+        state_update가 "지금 어떤 상태인가"를 알린다면 cue는 "방금 무슨 일이
+        일어났는가"를 알린다. 세 채널이 payload의 duration_ms를 공유하므로
+        연출 타이밍이 어긋나지 않는다.
+
+        조명 Cue는 재생이 끝나면 반드시 현재 Scene으로 복귀한다. 요트에서는
+        이 복귀가 주사위 인식의 전제 조건이므로 연출 규칙이 아니라 요구사항이다.
+        """
+        return cls(
+            msg_type=MsgType.CUE.value,
+            payload={"cue": cue, **(payload or {})},
+            state_version=state_version,
+            msg_id=f"cue_{uuid.uuid4().hex[:12]}",
+        )
+
+    @classmethod
     def make_hello(cls, info: dict[str, Any] | None = None) -> WSMessage:
         return cls(
             msg_type=MsgType.HELLO.value,

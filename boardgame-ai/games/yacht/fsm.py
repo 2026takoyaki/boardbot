@@ -30,6 +30,15 @@ _CATEGORY_TTS_LABELS: dict[str, str] = {
     "yacht": "요트",
 }
 
+# 달성 자체가 사건인 족보. 연출을 길게 가져간다.
+_HIGHLIGHT_CATEGORIES: frozenset[str] = frozenset({"yacht", "large_straight"})
+
+# 모달·조명·TTS가 공유하는 연출 길이.
+# 일반 턴 전환은 2초 초반을 넘기지 않는다 — 연출이 새로운 루즈함이 되면 안 된다.
+_TURN_CUE_DURATION_MS = 2200
+_HIGHLIGHT_CUE_DURATION_MS = 3000
+_GAME_FINISH_CUE_DURATION_MS = 4000
+
 
 class YachtFSM(BaseFSM):
     def __init__(
@@ -254,7 +263,19 @@ class YachtFSM(BaseFSM):
                 bench_log().info("game_end yacht normal %.6f", _t.time())
             except Exception:
                 pass
-            return [self._make_state_update(), self._emit_fusion_context()]
+            return [
+                self._make_state_update(),
+                self._make_score_cue(
+                    cue="yacht_game_finish",
+                    scorer=current_player,
+                    category=str(category),
+                    score_label=score_label,
+                    score=score,
+                    next_player=None,
+                    duration_ms=_GAME_FINISH_CUE_DURATION_MS,
+                ),
+                self._emit_fusion_context(),
+            ]
 
         self.state.advance_player()
         self.state.phase = YachtPhase.AWAITING_ROLL.value
@@ -262,7 +283,56 @@ class YachtFSM(BaseFSM):
             f"{scorer_name}님 {score_label} {score}점입니다. "
             f"{self.state.current_player.playername}님 차례입니다."
         )
-        return self._state_context_messages()
+        is_highlight = str(category) in _HIGHLIGHT_CATEGORIES
+        return [
+            self._make_state_update(),
+            self._make_score_cue(
+                cue="yacht_turn_transition",
+                scorer=current_player,
+                category=str(category),
+                score_label=score_label,
+                score=score,
+                next_player=self.state.current_player.playername,
+                duration_ms=(
+                    _HIGHLIGHT_CUE_DURATION_MS if is_highlight else _TURN_CUE_DURATION_MS
+                ),
+            ),
+            self._emit_fusion_context(),
+        ]
+
+    def _make_score_cue(
+        self,
+        cue: str,
+        scorer: Player,
+        category: str,
+        score_label: str,
+        score: int,
+        next_player: str | None,
+        duration_ms: int,
+    ) -> WSMessage:
+        """득점 순간을 구조화된 payload로 발행.
+
+        같은 정보가 last_message에도 한국어 문장으로 들어가지만, 그 문장은
+        TTS용이라 연출이 쓸 수 없다. 모달·조명은 이 payload를 읽는다.
+
+        프론트가 current_player 변화를 diff해서 턴 전환을 추론하던 방식을
+        대체한다. diff 추론은 재연결 시 상태 재동기화를 턴 전환으로 오인했고,
+        백엔드에서 도는 조명은 애초에 그 순간을 알 방법이 없었다.
+        """
+        return WSMessage.make_cue(
+            cue=cue,
+            payload={
+                "scorer_id": scorer.player_id,
+                "scorer_name": scorer.playername,
+                "category": category,
+                "category_label": score_label,
+                "score": score,
+                "is_highlight": category in _HIGHLIGHT_CATEGORIES,
+                "next_player": next_player,
+                "duration_ms": duration_ms,
+            },
+            state_version=self.state.state_version,
+        )
 
     def _handle_unreadable_resolution(self, data: dict) -> list[WSMessage]:
         if self.state.phase != YachtPhase.AWAITING_SCORE.value or not self.state.unreadable_roll:
