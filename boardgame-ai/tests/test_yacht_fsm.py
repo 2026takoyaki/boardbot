@@ -114,6 +114,71 @@ def test_score_selection_records_score_and_advances_player():
     assert "2점" in fsm.state.last_message
 
 
+def test_turn_transition_emits_cue_with_structured_payload():
+    """조명·모달이 last_message 문자열을 파싱하지 않아도 되게 하는 계약."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[1, 1, 3, 4, 6]))
+
+    msgs = fsm.handle_input(
+        YachtInputType.SCORE_CATEGORY_SELECTED.value,
+        {"category": "ones"},
+        player_id="p1",
+    )
+    cues = _messages_of(msgs, MsgType.CUE.value)
+
+    assert len(cues) == 1
+    payload = cues[0].payload
+    assert payload["cue"] == "yacht_turn_transition"
+    assert payload["scorer_id"] == "p1"
+    assert payload["scorer_name"] == "p1"
+    assert payload["category"] == "ones"
+    assert payload["category_label"] == "에이스"
+    assert payload["score"] == 2
+    assert payload["is_highlight"] is False
+    assert payload["next_player"] == "p2"
+    # 모달·조명·TTS가 공유하는 타이밍. 없으면 세 채널이 어긋난다.
+    assert payload["duration_ms"] > 0
+
+
+def test_highlight_category_gets_longer_cue():
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
+
+    msgs = fsm.handle_input(
+        YachtInputType.SCORE_CATEGORY_SELECTED.value,
+        {"category": "yacht"},
+        player_id="p1",
+    )
+    payload = _messages_of(msgs, MsgType.CUE.value)[0].payload
+
+    assert payload["is_highlight"] is True
+    assert payload["duration_ms"] > 2200
+
+
+def test_game_end_emits_finish_cue_without_next_player():
+    fsm = YachtFSM(["p1"])
+    fsm.start()
+    # 마지막 한 칸만 남기고 채운다.
+    for category in fsm.state.available_categories[:-1]:
+        fsm.state.players[0].scores[category] = 0
+    last_category = fsm.state.available_categories[0]
+    fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[1, 1, 3, 4, 6]))
+
+    msgs = fsm.handle_input(
+        YachtInputType.SCORE_CATEGORY_SELECTED.value,
+        {"category": last_category},
+        player_id="p1",
+    )
+    cues = _messages_of(msgs, MsgType.CUE.value)
+
+    assert fsm.state.phase == YachtPhase.GAME_END.value
+    assert len(cues) == 1
+    assert cues[0].payload["cue"] == "yacht_game_finish"
+    assert cues[0].payload["next_player"] is None
+
+
 def test_restore_state_undoes_one_dice_roll():
     fsm = YachtFSM(["p1", "p2"])
     fsm.start()
