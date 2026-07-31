@@ -178,16 +178,21 @@ class LightController:
         return max(floor, min(BRIGHTNESS_MAX, brightness))
 
     def _resolve_cue(self, name: str, payload: dict[str, object]) -> Cue | None:
-        """is_highlight가 붙어 있으면 강조 변형을 먼저 찾는다.
+        """variant가 붙어 있으면 그 변형을 먼저 찾는다.
 
-        FSM은 큐 이름 하나(yacht_turn_transition)에 is_highlight 플래그를 실어
-        보낸다. 연출 강도는 조명 쪽 관심사이므로 이름을 나누지 않고 매핑에서
-        갈라낸다 — 변형이 없으면 기본 큐로 떨어지므로 테이블에 없어도 안전하다.
+        FSM은 큐 이름 하나(yacht_turn_transition)에 "이게 어떤 종류의 사건인가"를
+        variant로 실어 보낸다. 연출 강도는 조명 쪽 관심사이므로 FSM이 이름을
+        나눌 이유가 없다.
+
+        변형이 테이블에 없으면 기본 큐로 떨어진다. 늑대인간 담당자가 새 variant를
+        만들어도 조명이 깨지지 않고, 조명에서 굳이 구분할 필요가 없는 사건은
+        매핑을 비워두면 된다.
         """
-        if payload.get("is_highlight"):
-            highlight = self._cue_map.get(f"{name}_highlight")
-            if highlight is not None:
-                return highlight
+        variant = payload.get("variant")
+        if isinstance(variant, str) and variant:
+            specific = self._cue_map.get(f"{name}_{variant}")
+            if specific is not None:
+                return specific
         return self._cue_map.get(name)
 
     def _resolve_scene(self, game: str | None, phase: str) -> Scene:

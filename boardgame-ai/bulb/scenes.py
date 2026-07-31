@@ -116,6 +116,11 @@ CELEBRATION_GOLD: RGB = (255, 200, 90)
 # 연출의 세기는 조명이 아니라 화면 모달이 감당한다.
 YACHT_SWEEP_WARM: RGB = (255, 226, 178)
 YACHT_BURST_GOLD: RGB = (255, 214, 140)
+# 역전은 따뜻함이 아니라 서늘한 번쩍임으로 간다. 일반 턴의 웜톤과 반대 방향이라
+# 같은 광량에서도 "뭔가 다른 일이 났다"가 즉시 읽힌다.
+YACHT_UPSET_COOL: RGB = (196, 226, 255)
+# 0점은 색을 거의 빼서 김이 빠지게. 밝기는 못 낮추므로 온도만 식힌다.
+YACHT_DEFLATE_GRAY: RGB = (214, 224, 238)
 
 
 def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
@@ -191,12 +196,21 @@ YACHT_SCENES: dict[str, Scene] = {
 # 밝기는 세 Cue 모두 100으로 고정한다. 요트에서 광량이 흔들리면 그대로 인식
 # 위험이므로, 변하는 것은 색온도뿐이다.
 YACHT_CUES: dict[str, Cue] = {
+    # 대부분의 턴이 여기로 온다. 모달 없이 화면 안에서만 처리되므로 조명도 짧다.
     "yacht_turn_transition": Cue(
-        "turn_sweep", YACHT_SWEEP_WARM, brightness=100, rise_ms=400, hold_ms=900, fall_ms=600
+        "turn_sweep", YACHT_SWEEP_WARM, brightness=100, rise_ms=300, hold_ms=600, fall_ms=500
     ),
-    # 야찌·라지스트레이트. 사건이므로 더 진하게, 더 길게 간다.
+    # 야찌·라지스트레이트를 실제로 달성했을 때. 가장 길고 진하게 간다.
     "yacht_turn_transition_highlight": Cue(
         "score_burst", YACHT_BURST_GOLD, brightness=100, rise_ms=300, hold_ms=1600, fall_ms=800
+    ),
+    # 후반 선두 역전.
+    "yacht_turn_transition_lead_change": Cue(
+        "upset_flash", YACHT_UPSET_COOL, brightness=100, rise_ms=350, hold_ms=1300, fall_ms=700
+    ),
+    # 족보를 0점으로 버렸을 때. 축하가 아니므로 짧게 끝낸다.
+    "yacht_turn_transition_zero": Cue(
+        "deflate", YACHT_DEFLATE_GRAY, brightness=100, rise_ms=250, hold_ms=600, fall_ms=400
     ),
     # 게임이 끝났으니 더 굴릴 주사위가 없다. 여기서만 원색을 쓴다.
     "yacht_game_finish": Cue(
@@ -205,7 +219,7 @@ YACHT_CUES: dict[str, Cue] = {
 }
 
 # 플레이 중에 재생되는 Cue — 인식 제약을 받는다. 게임 종료 Cue는 제외.
-IN_PLAY_YACHT_CUES = ("yacht_turn_transition", "yacht_turn_transition_highlight")
+IN_PLAY_YACHT_CUES = tuple(name for name in YACHT_CUES if name != "yacht_game_finish")
 
 
 def build_scene_map(night_brightness: int) -> dict[str, dict[str, Scene]]:

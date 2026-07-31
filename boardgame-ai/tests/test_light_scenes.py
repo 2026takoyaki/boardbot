@@ -23,18 +23,16 @@ from bulb.scenes import (
 from core.constants import MsgType
 from core.envelope import WSMessage
 from games.werewolf.ontology import WerewolfPhase
-from games.yacht.fsm import (
-    _GAME_FINISH_CUE_DURATION_MS,
-    _HIGHLIGHT_CUE_DURATION_MS,
-    _TURN_CUE_DURATION_MS,
-)
+from games.yacht.fsm import _CUE_DURATION_MS, _GAME_FINISH_CUE_DURATION_MS
 from games.yacht.state import YachtPhase
 
 # FSM이 발행하는 큐 이름 → 그 큐가 싣고 오는 duration_ms.
 # 이 대응이 어긋나면 조명이 모달보다 늦게 복귀한다.
 _CUE_BUDGETS = {
-    "yacht_turn_transition": _TURN_CUE_DURATION_MS,
-    "yacht_turn_transition_highlight": _HIGHLIGHT_CUE_DURATION_MS,
+    "yacht_turn_transition": _CUE_DURATION_MS["normal"],
+    "yacht_turn_transition_highlight": _CUE_DURATION_MS["highlight"],
+    "yacht_turn_transition_lead_change": _CUE_DURATION_MS["lead_change"],
+    "yacht_turn_transition_zero": _CUE_DURATION_MS["zero"],
     "yacht_game_finish": _GAME_FINISH_CUE_DURATION_MS,
 }
 
@@ -202,7 +200,7 @@ async def test_highlight_cue_variant_is_selected():
     controller.on_message(
         WSMessage.make_cue(
             "yacht_turn_transition",
-            {"is_highlight": True, "duration_ms": _HIGHLIGHT_CUE_DURATION_MS},
+            {"variant": "highlight", "duration_ms": _CUE_DURATION_MS["highlight"]},
         ),
         game="yacht",
     )
@@ -260,7 +258,7 @@ async def test_normal_cue_falls_back_to_base_variant():
     controller.on_message(
         WSMessage.make_cue(
             "yacht_turn_transition",
-            {"is_highlight": False, "duration_ms": _TURN_CUE_DURATION_MS},
+            {"variant": "normal", "duration_ms": _CUE_DURATION_MS["normal"]},
         ),
         game="yacht",
     )
