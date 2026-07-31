@@ -16,6 +16,9 @@ websockets
 google-cloud-texttospeech>=2.16
 aiofiles>=23.0
 
+# 조명 (선택) — 없으면 mock/frontend 드라이버로 동작
+yeelight
+
 # 유틸
 python-dotenv
 pydantic

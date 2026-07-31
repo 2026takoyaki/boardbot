@@ -15,6 +15,7 @@ from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
 from audio.manager import AudioManager
 from bridge.local_bridge import LocalBridge
+from bulb.controller import LightController
 from core.constants import MsgType
 from core.envelope import WSMessage
 from core.events import FusionContext, GameEvent
@@ -44,6 +45,7 @@ class YachtSession:
         bridge: LocalBridge | None = None,
         audio_manager: AudioManager | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
+        light_controller: LightController | None = None,
     ) -> None:
         self.websocket = websocket
         self.fsm: YachtFSM | None = None
@@ -54,6 +56,7 @@ class YachtSession:
         self._bridge = bridge
         self._audio_manager = audio_manager
         self._agent = agent_orchestrator
+        self._light = light_controller
         self._last_tts_request: tuple[str, float] = ("", 0.0)
         self._send_raw_bound = self._send_raw
         if audio_manager is not None:
@@ -479,6 +482,10 @@ class YachtSession:
             message.payload["can_undo"] = bool(self.undo_stack)
             message.payload["tutorial_mode"] = self.tutorial_mode
             message.payload["tutorial_complete"] = self.tutorial_complete
+        # 조명은 프론트엔드와 같은 스트림을 본다. 화면이 state_update로 다시
+        # 그리듯 조명도 같은 메시지로 Scene을 잡으므로 트리거 누락이 없다.
+        if self._light is not None:
+            self._light.on_message(message, game="yacht")
         await self.websocket.send_json(message.to_dict())
 
 

@@ -37,6 +37,7 @@ from backend.ws.tablet import tablet_ws_handler
 from backend.yacht_runner import YachtRunner
 from backend.yacht_session import YachtSession
 from bridge.local_bridge import LocalBridge
+from bulb import build_controller
 from vision.camera import CameraManager
 from vision.yacht.config import VisionConfig
 
@@ -70,6 +71,10 @@ async def lifespan(app: FastAPI):
         logger.info("audio prewarm_static: %s", stats)
     else:
         logger.warning("TTS engine not available — STATIC/SESSION 캐시 hit만 동작")
+
+    # 조명: 전구가 없어도(기본 mock 드라이버) 서버는 그대로 뜬다.
+    # 실제 전구는 LIGHT_DRIVER=yeelight + LIGHT_BULB_IP 로 opt-in.
+    light_controller = build_controller(broadcast=ws_manager.broadcast)
 
     bridge = LocalBridge()
     config = VisionConfig()
@@ -121,6 +126,7 @@ async def lifespan(app: FastAPI):
     app.state.audio_manager = audio_manager
     app.state.tts_engine = tts_engine
     app.state.bench_session = bench_session
+    app.state.light_controller = light_controller
 
     yield
 
@@ -128,6 +134,8 @@ async def lifespan(app: FastAPI):
     yacht_runner.stop()
     werewolf_runner.stop()
     lobby_runner.stop()
+    # 조명 중립 복귀 — 다음 세션이 이전 세션의 색을 물려받지 않게.
+    await light_controller.aclose()
     # 측정 세션 정리 — finalize 호출 + logger 핸들러 닫기.
     bench_session.stop()
 
@@ -267,6 +275,7 @@ async def yacht_socket(websocket: WebSocket) -> None:
         bridge=app.state.bridge,
         audio_manager=app.state.audio_manager,
         agent_orchestrator=agent_orchestrator,
+        light_controller=app.state.light_controller,
     )
     # 비전 → 활성 세션 라우팅 활성화. send_hello/receive loop 어디서 예외가 나도
     # finally에서 반드시 deregister 되도록 register 직후부터 try 진입.
@@ -280,6 +289,8 @@ async def yacht_socket(websocket: WebSocket) -> None:
         pass
     finally:
         _bench_ws_log("disconnect", "/ws/yacht")
+        # Cue 도중 끊겼으면 조명이 색을 문 채 멈춰 있다. 중립으로 되돌린다.
+        await app.state.light_controller.reset()
         app.state.pipeline_switcher(None)
         app.state.yacht_runner.deregister_session(session)
         agent_orchestrator.stop()
@@ -305,6 +316,7 @@ async def werewolf_socket(websocket: WebSocket) -> None:
             for p in app.state.orchestrator._pm.state.players
             if p.seat_zone is not None
         },
+        light_controller=app.state.light_controller,
     )
     # 핸들러 등록 직후부터 try 진입 — send_hello 등 어디서 예외가 나도
     # finally에서 반드시 핸들러 해제/파이프라인 복귀/오디오 detach가 실행되도록.
@@ -319,6 +331,8 @@ async def werewolf_socket(websocket: WebSocket) -> None:
         pass
     finally:
         _bench_ws_log("disconnect", "/ws/werewolf")
+        # 밤 페이즈에서 끊기면 조명이 어두운 채로 남는다. 중립으로 되돌린다.
+        await app.state.light_controller.reset()
         app.state.orchestrator.set_werewolf_event_handler(None)
         app.state.pipeline_switcher(None)
         agent_orchestrator.stop()
