@@ -17,7 +17,14 @@ from bulb.controller import LightController
 from bulb.driver.base import LightDriver
 from bulb.driver.frontend import BroadcastFn, FrontendDriver
 from bulb.driver.mock import MockDriver
-from bulb.scenes import BLACKOUT_SCENE, NEUTRAL_SCENE, Cue, Scene
+from bulb.scenes import (
+    BLACKOUT_SCENE,
+    NEUTRAL_SCENE,
+    Cue,
+    Scene,
+    build_cue_map,
+    build_scene_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +76,14 @@ def build_controller(
     resolved = config if config is not None else LightConfig.from_env()
     driver = build_driver(resolved, broadcast)
     logger.info(
-        "light: %s 드라이버로 시작 (enabled=%s)", type(driver).__name__, resolved.enabled
+        "light: %s 드라이버로 시작 (enabled=%s, 밤 밝기=%d)",
+        type(driver).__name__,
+        resolved.enabled,
+        resolved.night_brightness,
     )
-    return LightController(driver, resolved)
+    return LightController(
+        driver,
+        resolved,
+        scene_map=build_scene_map(resolved.night_brightness),
+        cue_map=build_cue_map(),
+    )

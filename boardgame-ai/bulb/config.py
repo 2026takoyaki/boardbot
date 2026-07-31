@@ -63,6 +63,10 @@ class LightConfig:
     command_timeout_s: float = 1.5
     brightness_floor: dict[str, int] = field(default_factory=lambda: dict(_DEFAULT_FLOORS))
     fallback_floor: int = _FALLBACK_FLOOR
+    # 늑대인간 밤 밝기. 전구 1개가 유일한 광원이라 이 값 하나가 밤의 어둠을
+    # 전적으로 결정한다. "어둡되 최소한 보이긴 해야 한다"는 지점은 실물로만
+    # 찾을 수 있어 현장에서 LIGHT_NIGHT_BRIGHTNESS 로 조정한다 (§7.2-8).
+    night_brightness: int = 15
 
     @classmethod
     def from_env(cls) -> LightConfig:
@@ -76,6 +80,7 @@ class LightConfig:
             command_timeout_s=_env_float("LIGHT_COMMAND_TIMEOUT", 1.5),
             brightness_floor=floors,
             fallback_floor=_env_int("LIGHT_FALLBACK_FLOOR", _FALLBACK_FLOOR),
+            night_brightness=_env_int("LIGHT_NIGHT_BRIGHTNESS", 15),
         )
 
     def floor_for(self, game: str | None) -> int:

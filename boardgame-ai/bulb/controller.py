@@ -102,7 +102,7 @@ class LightController:
         name = message.payload.get("cue")
         if not isinstance(name, str):
             return
-        cue = self._cue_map.get(name)
+        cue = self._resolve_cue(name, message.payload)
         if cue is None:
             return
         duration_ms = message.payload.get("duration_ms")
@@ -176,6 +176,19 @@ class LightController:
         """
         floor = self._config.floor_for(game)
         return max(floor, min(BRIGHTNESS_MAX, brightness))
+
+    def _resolve_cue(self, name: str, payload: dict[str, object]) -> Cue | None:
+        """is_highlight가 붙어 있으면 강조 변형을 먼저 찾는다.
+
+        FSM은 큐 이름 하나(yacht_turn_transition)에 is_highlight 플래그를 실어
+        보낸다. 연출 강도는 조명 쪽 관심사이므로 이름을 나누지 않고 매핑에서
+        갈라낸다 — 변형이 없으면 기본 큐로 떨어지므로 테이블에 없어도 안전하다.
+        """
+        if payload.get("is_highlight"):
+            highlight = self._cue_map.get(f"{name}_highlight")
+            if highlight is not None:
+                return highlight
+        return self._cue_map.get(name)
 
     def _resolve_scene(self, game: str | None, phase: str) -> Scene:
         """매핑에 없는 페이즈는 중립으로 간다.
