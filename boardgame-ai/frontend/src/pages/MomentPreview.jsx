@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import RoundBanner from '../components/common/RoundBanner'
 import ScoreMoment from '../components/common/ScoreMoment'
 
 /**
@@ -13,6 +14,14 @@ import ScoreMoment from '../components/common/ScoreMoment'
  */
 
 const SAMPLES = {
+  // 주사위가 멈춘 순간 (조명 관여 안 함)
+  hand: {
+    cue: 'yacht_hand_achieved',
+    scorer_name: '성민',
+    category: 'yacht',
+    category_label: '요트',
+    score: 50,
+  },
   highlight: {
     cue: 'yacht_turn_transition',
     variant: 'highlight',
@@ -21,14 +30,14 @@ const SAMPLES = {
     category_label: '요트',
     score: 50,
     is_highlight: true,
-    took_lead: true,
-    rank_before: 2,
+    took_lead: false,
+    rank_before: 1,
     rank_after: 1,
-    previous_leader: '형승',
   },
   lead_change: {
     cue: 'yacht_turn_transition',
     variant: 'lead_change',
+    scorer_id: 'p3',
     scorer_name: '승경',
     category: 'four_of_a_kind',
     category_label: '포카드',
@@ -38,6 +47,11 @@ const SAMPLES = {
     rank_before: 3,
     rank_after: 1,
     previous_leader: '성민',
+    standings: [
+      { player_id: 'p1', playername: '성민', total: 118, rank_before: 1, rank_after: 2 },
+      { player_id: 'p2', playername: '형승', total: 104, rank_before: 2, rank_after: 3 },
+      { player_id: 'p3', playername: '승경', total: 126, rank_before: 3, rank_after: 1 },
+    ],
   },
   zero: {
     cue: 'yacht_turn_transition',
@@ -50,16 +64,16 @@ const SAMPLES = {
     took_lead: false,
     rank_before: 2,
     rank_after: 2,
-    previous_leader: '성민',
   },
 }
 
-// FSM의 games/yacht/fsm.py _CUE_DURATION_MS 와 같은 값.
-const DEFAULT_DURATIONS = { highlight: 3000, lead_change: 2600, zero: 1400 }
+// FSM의 games/yacht/fsm.py _CUE_DURATION_MS · _HAND_CUE_DURATION_MS 와 같은 값.
+const DEFAULT_DURATIONS = { hand: 2600, highlight: 1800, lead_change: 2600, zero: 1400 }
 
 export default function MomentPreview() {
   const [moment, setMoment] = useState(null)
   const [durations, setDurations] = useState(DEFAULT_DURATIONS)
+  const [round, setRound] = useState(0)
 
   const play = (variant) => {
     // 이미 떠 있으면 한 번 내렸다가 다시 올려야 애니메이션이 처음부터 돈다.
@@ -73,10 +87,13 @@ export default function MomentPreview() {
   return (
     <div style={styles.page}>
       <ScoreMoment moment={moment} onDone={() => setMoment(null)} />
+      <RoundBanner round={round} total={13} />
 
-      <h1 style={styles.title}>득점 순간 연출</h1>
+      <h1 style={styles.title}>요트 연출</h1>
       <p style={styles.lede}>
-        일반 득점(normal)은 모달 없이 점수판 안에서 처리된다. 여기 있는 셋만 화면을 잡는다.
+        <strong>hand</strong>는 주사위가 멈춘 순간에 뜬다 — 조명이 관여하지 않으므로
+        가장 화려해도 된다. 나머지 셋은 칸을 고른 뒤에 뜨고 조명과 같은 duration을 쓴다.
+        일반 득점(normal)은 모달 없이 점수판 안에서 처리된다.
       </p>
 
       {Object.keys(SAMPLES).map(variant => (
@@ -98,6 +115,17 @@ export default function MomentPreview() {
           <span style={styles.duration}>{durations[variant]}ms</span>
         </div>
       ))}
+
+      <div style={{ ...styles.row, marginTop: 26 }}>
+        <button
+          type="button"
+          style={styles.button}
+          onClick={() => setRound(r => (r >= 13 ? 1 : r + 1))}
+        >
+          라운드 안내
+        </button>
+        <span style={styles.duration}>다음: {round >= 13 ? 1 : round + 1}</span>
+      </div>
 
       <p style={styles.note}>
         지속시간을 바꿨다면 <code>games/yacht/fsm.py</code>의 <code>_CUE_DURATION_MS</code>에

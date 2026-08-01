@@ -3,6 +3,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import { audio as audioApi, useAudioPlayer } from '../hooks/useAudioPlayer'
 import { IconMusic, IconVolume } from '../components/common/Icons'
 import DevPanel from '../components/common/DevPanel'
+import RoundBanner from '../components/common/RoundBanner'
 import ScoreMoment from '../components/common/ScoreMoment'
 
 const CATEGORY_LABELS = [
@@ -573,7 +574,17 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   // 득점 순간을 diff로 추론하지 않고 백엔드가 보낸 cue를 그대로 받는다.
   // 같은 payload의 duration_ms로 조명·TTS가 함께 움직이므로 세 채널이 어긋나지 않는다.
   const handleCue = useCallback((payload) => {
-    if (!payload || !SCORE_CUES.has(payload.cue)) return
+    if (!payload) return
+
+    // 주사위가 멈춘 순간의 축하. 아직 점수를 고르기 전이라 점수판은 건드리지
+    // 않는다. 조명도 이 큐에는 반응하지 않는다 — 굴림 구간은 인식이 걸린 곳이다.
+    if (payload.cue === 'yacht_hand_achieved') {
+      setMoment(payload)
+      playLocalSfx('score_select')
+      return
+    }
+
+    if (!SCORE_CUES.has(payload.cue)) return
     const variant = payload.variant || 'normal'
     const isFinish = payload.cue === 'yacht_game_finish'
 
@@ -879,6 +890,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   return (
     <div style={s.page}>
       <ScoreMoment moment={moment} onDone={() => setMoment(null)} />
+      <RoundBanner round={round} total={TOTAL_ROUNDS} />
       <DevPanel
         title="요트"
         actions={[
