@@ -142,7 +142,10 @@ class WSMessage:
         """
         return cls(
             msg_type=MsgType.CUE.value,
-            payload={"cue": cue, **(payload or {})},
+            # cue를 뒤에 둔다. 호출자가 payload에 실수로 "cue"를 넣어도 인자가
+            # 이긴다 — 이 키는 조명·모달이 무엇을 재생할지 고르는 라우팅 키라서
+            # 조용히 덮어써지면 엉뚱한 연출이 나가거나 아무것도 안 나간다.
+            payload={**(payload or {}), "cue": cue},
             state_version=state_version,
             msg_id=f"cue_{uuid.uuid4().hex[:12]}",
         )

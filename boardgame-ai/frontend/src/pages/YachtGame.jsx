@@ -5,27 +5,13 @@ import { IconMusic, IconVolume } from '../components/common/Icons'
 import DevPanel from '../components/common/DevPanel'
 import RoundBanner from '../components/common/RoundBanner'
 import ScoreMoment from '../components/common/ScoreMoment'
+import {
+  CATEGORY_LABELS,
+  DISPLAY_CATEGORIES,
+  TOTAL_ROUNDS,
+  UPPER,
+} from '../components/common/yachtCategories'
 
-const CATEGORY_LABELS = [
-  ['ones', 'Aces'],
-  ['twos', 'Twos'],
-  ['threes', 'Threes'],
-  ['fours', 'Fours'],
-  ['fives', 'Fives'],
-  ['sixes', 'Sixes'],
-  ['bonus', '상단 보너스'],
-  ['full_house', 'Full House'],
-  ['four_of_a_kind', '4 of a Kind'],
-  ['small_straight', 'S. Straight'],
-  ['large_straight', 'L. Straight'],
-  ['yacht', 'Yacht'],
-  ['choice', 'Choice'],
-]
-
-const UPPER = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes']
-const DISPLAY_CATEGORIES = CATEGORY_LABELS.filter(([key]) => key !== 'bonus').map(([key]) => key)
-// 한 사람이 채우는 칸 수 = 전체 라운드 수. bonus는 계산 결과라 칸이 아니다.
-const TOTAL_ROUNDS = DISPLAY_CATEGORIES.length
 // 백엔드 YachtPhase.GAME_END 와 같은 값. 요트 페이즈는 대문자 규약이다.
 const GAME_END_PHASE = 'GAME_END'
 const SHOW_MANUAL_ROLL = import.meta.env.VITE_SHOW_MANUAL_ROLL === 'true'
@@ -607,6 +593,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
     setTurnPulseKey(key => key + 1)
     setRecentScore({
+      seq: momentSeqRef.current++,
       playerId: payload.scorer_id,
       category: payload.category,
       score: payload.score,
@@ -1402,9 +1389,10 @@ function ScoreTable({
               <td style={{ ...tdNameStyle, color: !hasScore && !available ? 'var(--fg-faint)' : 'var(--fg)' }}>{label}</td>
               <td style={{ ...tdScoreStyle, color: hasScore ? 'var(--fg)' : 'var(--fg-mute)' }}>
                 {highlightScore ? (
-                  // key에 갱신 횟수를 섞어 같은 칸에 다시 들어와도 애니메이션이 재생된다.
+                  // 득점마다 올라가는 seq를 key에 섞는다. key가 그대로면 React가
+                  // 같은 노드를 재사용해 애니메이션이 다시 돌지 않는다.
                   <span
-                    key={`${key}-${recentScore.score}`}
+                    key={`${key}-${recentScore.seq}`}
                     className={zeroScore ? 'yacht-score-pop-zero' : 'yacht-score-pop'}
                   >
                     {displayScore}

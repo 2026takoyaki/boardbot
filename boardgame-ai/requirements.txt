@@ -16,7 +16,8 @@ websockets
 google-cloud-texttospeech>=2.16
 aiofiles>=23.0
 
-# 조명 (선택) — 없으면 mock/frontend 드라이버로 동작
+# 조명. 설치는 하되 사용은 opt-in이다 — LIGHT_DRIVER=yeelight 일 때만 쓰이고,
+# 기본값(mock/frontend)에서는 import조차 하지 않는다.
 yeelight
 
 # 유틸

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import RoundBanner from '../components/common/RoundBanner'
 import ScoreMoment from '../components/common/ScoreMoment'
+import { TOTAL_ROUNDS } from '../components/common/yachtCategories'
 
 /**
  * 득점 순간 연출 미리보기. 백엔드·카메라 없이 모달만 띄워본다.
@@ -74,20 +75,23 @@ export default function MomentPreview() {
   const [moment, setMoment] = useState(null)
   const [durations, setDurations] = useState(DEFAULT_DURATIONS)
   const [round, setRound] = useState(0)
+  const seqRef = useRef(0)
 
   const play = (variant) => {
-    // 이미 떠 있으면 한 번 내렸다가 다시 올려야 애니메이션이 처음부터 돈다.
-    setMoment(null)
-    setTimeout(
-      () => setMoment({ ...SAMPLES[variant], duration_ms: durations[variant] }),
-      20,
-    )
+    // 실제 게임과 같은 방식으로 다시 튼다 — momentKey가 바뀌면 ScoreMoment가
+    // 새 인스턴스로 갈아끼워져 애니메이션이 처음부터 돈다. setTimeout으로
+    // 지웠다 켜면 연타할 때 이전 클릭이 뒤늦게 뜨거나 언마운트 후 setState가 난다.
+    setMoment({
+      ...SAMPLES[variant],
+      duration_ms: durations[variant],
+      momentKey: `${variant}-${seqRef.current++}`,
+    })
   }
 
   return (
     <div style={styles.page}>
       <ScoreMoment moment={moment} onDone={() => setMoment(null)} />
-      <RoundBanner round={round} total={13} />
+      <RoundBanner round={round} total={TOTAL_ROUNDS} />
 
       <h1 style={styles.title}>요트 연출</h1>
       <p style={styles.lede}>

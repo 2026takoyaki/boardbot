@@ -259,11 +259,31 @@ function ZeroScore({ look, enterMs }) {
  */
 const ROW_HEIGHT = 46
 
+/**
+ * 순위를 화면상의 줄 번호로 바꾼다.
+ *
+ * 동점자는 같은 순위를 공유하므로(백엔드 _ranking) 순위를 그대로 y좌표로 쓰면
+ * 두 사람이 같은 줄에 겹쳐 그려진다. 순위로 정렬하되 동점은 player_id로 갈라
+ * 줄 번호가 겹치지 않게 한다 — id는 판이 진행돼도 변하지 않으므로 이전 순위와
+ * 이후 순위 사이에서 줄이 제멋대로 튀지 않는다.
+ */
+function slotsByRank(rows, rankKey) {
+  const ordered = [...rows].sort(
+    (a, b) => a[rankKey] - b[rankKey] || String(a.player_id).localeCompare(String(b.player_id)),
+  )
+  return new Map(ordered.map((row, index) => [row.player_id, index]))
+}
+
 function LeadChange({ moment, look, enterMs }) {
   const standings = Array.isArray(moment.standings) ? moment.standings : []
   // DOM 순서는 고정하고 자리만 옮긴다. 목록 자체를 다시 정렬하면 React가 노드를
   // 갈아끼워 애니메이션이 끊긴다.
-  const rows = [...standings].sort((a, b) => a.rank_before - b.rank_before)
+  const beforeSlots = slotsByRank(standings, 'rank_before')
+  const afterSlots = slotsByRank(standings, 'rank_after')
+  const rows = [...standings].sort(
+    (a, b) => beforeSlots.get(a.player_id) - beforeSlots.get(b.player_id),
+  )
+  // moment마다 ScoreMoment가 통째로 remount되므로 여기서 별도 초기화가 필요 없다.
   const [settled, setSettled] = useState(false)
 
   useEffect(() => {
@@ -271,9 +291,10 @@ function LeadChange({ moment, look, enterMs }) {
     // 바뀌었는지 눈으로 따라갈 수 없다.
     const timer = setTimeout(() => setSettled(true), enterMs * 1.7)
     return () => clearTimeout(timer)
-  }, [moment, enterMs])
+  }, [enterMs])
 
-  const slotOf = (row) => (settled ? row.rank_after : row.rank_before) - 1
+  const slotOf = (row) =>
+    (settled ? afterSlots : beforeSlots).get(row.player_id) ?? 0
 
   return (
     <>
@@ -298,7 +319,11 @@ function LeadChange({ moment, look, enterMs }) {
                 animation: `ym-row ${enterMs * 1.8}ms ease-out ${domIndex * 70}ms both`,
               }}
             >
-              <span style={styles.standingRank}>{slotOf(row) + 1}</span>
+              {/* 자리는 슬롯으로 옮기되 숫자는 실제 순위를 보여준다. 동점이면
+                  같은 숫자가 두 줄에 나오는 것이 맞다. */}
+              <span style={styles.standingRank}>
+                {settled ? row.rank_after : row.rank_before}
+              </span>
               <span style={styles.standingName}>{row.playername}</span>
               <span style={styles.standingTotal}>{row.total}</span>
               <span

@@ -120,7 +120,7 @@ def test_all_yacht_phases_are_mapped():
 
 
 def test_night_starts_in_full_darkness():
-    """"밤이 되었습니다"는 암전에서 시작한다. 거기서 각 역할 색이 스며든다."""
+    """밤은 암전에서 시작한다. 거기서 각 역할 색이 스며든다."""
     scenes = build_scene_map(night_brightness=15)["werewolf"]
 
     assert scenes["night_start"].is_blackout
