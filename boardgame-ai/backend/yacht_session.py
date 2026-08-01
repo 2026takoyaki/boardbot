@@ -14,6 +14,7 @@ from fastapi import WebSocket
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
 from audio.manager import AudioManager
+from backend.dev import is_dev_mode
 from bridge.local_bridge import LocalBridge
 from bulb.controller import LightController
 from core.constants import MsgType
@@ -159,6 +160,17 @@ class YachtSession:
             await self.send(
                 WSMessage.make_error("GAME_NOT_STARTED", "요트다이스가 시작되지 않았습니다.")
             )
+            return
+
+        # 개발 모드 전용. 역전 연출은 7칸 이상 채워야 나오는데 손으로 채우려면
+        # 20턴 넘게 굴려야 한다. 연출 하나 보려고 매번 그럴 수는 없다.
+        if input_type == "DEV_SETUP_LATE_GAME":
+            if not is_dev_mode():
+                return
+            with self._fsm_lock:
+                self._dev_setup_late_game()
+                messages = self.fsm._state_context_messages()
+            await self.send_many(messages)
             return
 
         if input_type == "ROLL_DICE":
@@ -362,6 +374,31 @@ class YachtSession:
             if message.msg_type == MsgType.STATE_UPDATE.value:
                 message.payload = self.fsm.state.to_dict()
                 message.state_version = self.fsm.state.state_version
+
+    def _dev_setup_late_game(self) -> None:
+        """역전 연출을 볼 수 있는 후반 상황을 만든다. 개발 모드 전용.
+
+        현재 차례 플레이어를 2위로 앉히고 나머지를 앞세운다. 이 상태에서 한 번
+        크게 넣으면 lead_change가 뜬다. 채운 칸 수는 FSM의 역전 판정 하한
+        (_LEAD_CHANGE_MIN_FILLED)을 넘겨야 하므로 넉넉히 7칸을 채운다.
+        """
+        if self.fsm is None:
+            return
+        filled = ["ones", "twos", "threes", "fours", "fives", "sixes", "choice"]
+        scorer_id = self.fsm.state.current_player.player_id
+        others = [p for p in self.fsm.state.players if p.player_id != scorer_id]
+        for player in self.fsm.state.players:
+            for category in filled:
+                player.scores[category] = 2 if player.player_id == scorer_id else 4
+        # 1위가 단독이어야 "뺏을 자리"가 생긴다. 공동 1위면 역전으로 치지 않는
+        # 규칙이라, 선두 한 명만 살짝 올려 동점을 깬다.
+        if others:
+            others[0].scores["choice"] = 6
+        self.fsm.state.state_version += 1
+        self.fsm.state.last_message = (
+            f"[개발] 후반 상황을 만들었습니다. {self.fsm.state.current_player.playername}님이 "
+            "크게 넣으면 역전 연출이 뜹니다."
+        )
 
     def _roll_was_recorded(self, previous_state: YachtGameState) -> bool:
         if self.fsm is None:

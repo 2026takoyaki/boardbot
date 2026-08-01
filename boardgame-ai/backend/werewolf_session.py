@@ -13,6 +13,7 @@ from fastapi import WebSocket
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
 from audio.manager import AudioManager
+from backend.dev import is_dev_mode
 from bulb.controller import LightController
 from core.constants import CommonEventType, MsgType
 from core.envelope import WSMessage
@@ -208,6 +209,14 @@ class WerewolfSession:
 
         if self._fsm is None:
             await self.send(WSMessage.make_error("GAME_NOT_STARTED", "한밤이 시작되지 않았습니다."))
+            return
+
+        # 개발 모드 전용. 밤 페이즈는 타이머로 넘어가는데 조명·TTS를 조율하려면
+        # 페이즈 하나를 수십 번 다시 봐야 해서 8~15초를 매번 기다릴 수 없다.
+        if input_type == "DEV_NEXT_PHASE":
+            if not is_dev_mode():
+                return
+            await self.send_many(self._fsm._advance_to_next_phase())
             return
 
         if input_type in (

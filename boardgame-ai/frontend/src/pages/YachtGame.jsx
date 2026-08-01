@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { audio as audioApi, useAudioPlayer } from '../hooks/useAudioPlayer'
 import { IconMusic, IconVolume } from '../components/common/Icons'
+import DevPanel from '../components/common/DevPanel'
 import ScoreMoment from '../components/common/ScoreMoment'
 
 const CATEGORY_LABELS = [
@@ -871,6 +872,32 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   return (
     <div style={s.page}>
       <ScoreMoment moment={moment} onDone={() => setMoment(null)} />
+      <DevPanel
+        title="요트"
+        actions={[
+          { label: '랜덤 굴림', run: () => send('ROLL_DICE') },
+          {
+            label: '야찌 (5 5 5 5 5)',
+            hint: '요트 칸을 고르면 highlight 연출',
+            run: () => send('ROLL_DICE', { dice_values: [5, 5, 5, 5, 5] }),
+          },
+          {
+            label: '라지스트레이트 (1~5)',
+            hint: '라지 스트레이트 칸을 고르면 highlight 연출',
+            run: () => send('ROLL_DICE', { dice_values: [1, 2, 3, 4, 5] }),
+          },
+          {
+            label: '0점 유도 (2~6)',
+            hint: '에이스 칸을 고르면 zero 연출',
+            run: () => send('ROLL_DICE', { dice_values: [2, 3, 4, 5, 6] }),
+          },
+          {
+            label: '후반 상황 만들기',
+            hint: '7칸을 채워 역전(lead_change) 연출을 볼 수 있게 한다',
+            run: () => send('DEV_SETUP_LATE_GAME'),
+          },
+        ]}
+      />
       <style>{`
         @keyframes yachtTurnPulse {
           0% { transform: scale(0.94); box-shadow: 0 0 0 0 color-mix(in oklch, var(--yacht) 40%, transparent); }

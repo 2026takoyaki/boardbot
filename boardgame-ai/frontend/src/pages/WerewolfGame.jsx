@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { audio as audioApi, useAudioPlayer } from '../hooks/useAudioPlayer'
+import DevPanel from '../components/common/DevPanel'
 import RoleRegistration from '../components/werewolf/RoleRegistration'
 import RoleRegShowCard from '../components/werewolf/RoleRegShowCard'
 import RoleRegConfirm from '../components/werewolf/RoleRegConfirm'
@@ -329,6 +330,16 @@ export default function WerewolfGame({ players, onChangePlayers, onChangeGame, o
     return (
       <>
         {renderGamePhase(displayedPhase ?? phase)}
+        <DevPanel
+          title={`늑대인간 · ${phase}`}
+          actions={[
+            {
+              label: '다음 페이즈',
+              hint: '밤 페이즈 타이머(8~15초)를 기다리지 않고 넘긴다',
+              run: () => send('DEV_NEXT_PHASE'),
+            },
+          ]}
+        />
         {showVoteResult && !transitioning && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
             <VoteResult

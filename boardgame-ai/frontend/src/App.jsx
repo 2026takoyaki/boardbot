@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useAudioPlayer, audio as audioApi } from './hooks/useAudioPlayer'
 import { useBenchBridge } from './hooks/useBenchBridge'
+import DevPanel from './components/common/DevPanel'
 import SeatRegistration from './components/common/SeatRegistration'
 import { colorForIndex } from './components/common/seatColors'
 import { orderForTurn, physicalSeatOrder } from './components/common/turnOrder'
@@ -208,6 +209,19 @@ export default function App() {
   return (
     <>
       {pageEl}
+      {/* 게임 페이지는 각자 자기 패널을 띄우므로 로비 영역에서만 렌더한다. */}
+      {(page === 'seat' || page === 'lobby') && (
+        <DevPanel
+          title="로비"
+          actions={[
+            {
+              label: '전원 좌석 등록',
+              hint: '카메라 없이 좌석 등록을 통과한다',
+              run: () => fetch('/dev/seat-all', { method: 'POST' }),
+            },
+          ]}
+        />
+      )}
       <OrientationLock />
     </>
   )
