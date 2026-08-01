@@ -194,24 +194,37 @@ def dev_config() -> dict[str, bool]:
     return {"dev_mode": bool(getattr(app.state, "dev_mode", False))}
 
 
-@app.post("/dev/seat-all")
-def dev_seat_all() -> dict[str, Any]:
-    """등록된 플레이어 전원에게 가짜 좌석을 배정해 로비를 통과시킨다.
+_DEV_PLAYER_NAMES = ["성민", "형승", "승경", "병진", "지훈", "다인"]
 
-    카메라가 없으면 좌석 등록에서 막혀 게임 자체를 시작할 수 없다. 실제 등록과
-    같은 SEAT_REGISTERED 이벤트를 쏘므로 orchestrator는 구분하지 못한다.
+
+@app.post("/dev/seat/{count}")
+def dev_seat(count: int) -> dict[str, Any]:
+    """플레이어 count명을 만들고 전원 좌석까지 한 번에 끝낸다.
+
+    카메라가 없으면 좌석 등록에서 막혀 게임 자체를 시작할 수 없다. 이름을 하나씩
+    넣고 좌석을 따로 배정하는 것은 연출을 보려는 사람에게 불필요한 절차라,
+    "3명으로 시작" 한 번에 로비를 통과시킨다.
+
+    실제 등록과 같은 SEAT_REGISTERED 이벤트를 쏘므로 orchestrator는 구분하지
+    못한다 — 플레이어 상태·오디오 prewarm·조명이 전부 평소대로 돈다.
     """
     if not getattr(app.state, "dev_mode", False):
         raise HTTPException(status_code=404, detail="dev mode off")
+    if not 1 <= count <= len(_DEV_PLAYER_NAMES):
+        raise HTTPException(status_code=400, detail=f"1~{len(_DEV_PLAYER_NAMES)}명만 가능")
 
     orchestrator = app.state.orchestrator
-    player_ids = [p.player_id for p in orchestrator._pm.state.players]
-    if not player_ids:
-        raise HTTPException(status_code=400, detail="등록된 플레이어가 없습니다")
+    # 이전 시도의 잔재를 지우고 정확히 count명으로 맞춘다. 누를 때마다 인원이
+    # 늘어나면 몇 명으로 돌고 있는지 알 수 없다.
+    for player in list(orchestrator._pm.state.players):
+        orchestrator.remove_player(player.player_id)
 
+    player_ids = [
+        orchestrator.add_player(_DEV_PLAYER_NAMES[i])["player_id"] for i in range(count)
+    ]
     for event in seat_registration_events(player_ids):
         orchestrator.handle_game_event(event, 0)
-    return {"seated": player_ids}
+    return {"seated": player_ids, "names": _DEV_PLAYER_NAMES[:count]}
 
 
 @app.get("/debug/vision/lobby")

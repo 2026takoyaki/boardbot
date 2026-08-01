@@ -388,6 +388,9 @@ class YachtSession:
         scorer_id = self.fsm.state.current_player.player_id
         others = [p for p in self.fsm.state.players if p.player_id != scorer_id]
         for player in self.fsm.state.players:
+            # 덮어쓰지 않고 새로 만든다. 이미 채운 칸이 남아 있으면 사람마다
+            # 채운 칸 수가 어긋나고, 그러면 먼저 다 채운 사람 차례에서 게임이 멈춘다.
+            player.scores.clear()
             for category in filled:
                 player.scores[category] = 2 if player.player_id == scorer_id else 4
         # 1위가 단독이어야 "뺏을 자리"가 생긴다. 공동 1위면 역전으로 치지 않는
