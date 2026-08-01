@@ -336,6 +336,56 @@ async def test_aclose_restores_neutral_and_closes_driver():
     assert driver.closed
 
 
+class _SlowDriver(MockDriver):
+    """전구가 응답하는 데 시간이 걸리는 상황. 실제 소켓이 그렇다."""
+
+    async def apply(self, color, brightness, duration_ms):
+        await asyncio.sleep(0.12)
+        await super().apply(color, brightness, duration_ms)
+
+
+@pytest.mark.asyncio
+async def test_reset_wins_over_a_scene_that_is_still_in_flight():
+    """정리했다고 믿는 순간이 가장 위험하다.
+
+    Scene 적용도 백그라운드 태스크라, 취소하지 않으면 중립을 세운 직후에 뒤늦게
+    완료되면서 다른 색으로 덮어쓴다.
+    """
+    driver = _SlowDriver()
+    controller = _controller(driver, command_timeout_s=5.0)
+
+    controller.on_message(_state("night_start"), game="werewolf")
+    await asyncio.sleep(0.02)   # 암전 적용이 아직 날아가는 중
+
+    await controller.reset()
+    await asyncio.sleep(0.3)    # 취소된 명령이 뒤늦게 끝날 여유
+
+    assert driver.last is not None
+    assert driver.last[0] == NEUTRAL_SCENE.color
+    assert driver.last[1] == NEUTRAL_SCENE.brightness
+    assert 0 not in [applied[1] for applied in driver.applied], "취소된 암전이 뒤늦게 적용됐다"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_command_does_not_block_the_next_one():
+    """취소된 명령이 전구까지 갔는지 알 수 없다.
+
+    "보냈다"고 캐시해두면 뒤이은 중립 복귀가 중복 제거로 삼켜져 조명이 색을 문
+    채 멈춘다. 요트에서는 그대로 인식 실패다.
+    """
+    driver = _HangingDriver()
+    controller = _controller(driver, command_timeout_s=5.0)
+
+    task = controller._spawn(
+        controller._drive(NEUTRAL_SCENE.color, NEUTRAL_SCENE.brightness, 0, "yacht")
+    )
+    await asyncio.sleep(0.02)
+    task.cancel()
+    await asyncio.sleep(0.02)
+
+    assert controller._last_applied is None, "취소된 명령이 캐시에 남았다"
+
+
 @pytest.mark.asyncio
 async def test_reset_recovers_light_stuck_mid_cue():
     """Cue 도중 세션이 끊겨도 조명이 색을 문 채 멈추지 않는다."""

@@ -16,7 +16,13 @@ from games.yacht.scoring import (
     calculate_score,
     upper_subtotal,
 )
-from games.yacht.state import YachtEventType, YachtGameState, YachtInputType, YachtPhase
+from games.yacht.state import (
+    YachtEventType,
+    YachtGameState,
+    YachtInputType,
+    YachtPhase,
+    YachtPlayerState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +98,7 @@ _HAND_TIER_DURATION_MS: dict[str, int] = {
 _BONUS_CUE_DURATION_MS = 2600
 
 
-def _ranking(players: list[Any]) -> dict[str, int]:
+def _ranking(players: list[YachtPlayerState]) -> dict[str, int]:
     """player_id → 1부터 시작하는 순위. 동점은 같은 순위를 공유한다."""
     distinct_totals = sorted({p.total for p in players}, reverse=True)
     rank_of_total = {total: index + 1 for index, total in enumerate(distinct_totals)}
@@ -111,7 +117,7 @@ def _with_bonus(messages: list[WSMessage], bonus_cue: WSMessage | None) -> list[
     return [*messages[:-1], bonus_cue, messages[-1]]
 
 
-def _sole_leader(players: list[Any]) -> Any | None:
+def _sole_leader(players: list[YachtPlayerState]) -> YachtPlayerState | None:
     """단독 선두. 공동 1위면 None — 뺏을 자리가 없다는 뜻이다."""
     best = max(p.total for p in players)
     leaders = [p for p in players if p.total == best]
@@ -458,11 +464,11 @@ class YachtFSM(BaseFSM):
 
     def _describe_moment(
         self,
-        scorer: Player,
+        scorer: YachtPlayerState,
         category: str,
         score: int,
         ranks_before: dict[str, int],
-        leader_before: Player | None,
+        leader_before: YachtPlayerState | None,
     ) -> dict[str, Any]:
         """이 득점이 어떤 종류의 사건인지 판정한다.
 
@@ -526,7 +532,7 @@ class YachtFSM(BaseFSM):
     def _make_score_cue(
         self,
         cue: str,
-        scorer: Player,
+        scorer: YachtPlayerState,
         score_label: str,
         score: int,
         next_player: str | None,

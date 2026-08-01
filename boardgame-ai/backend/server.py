@@ -198,7 +198,9 @@ def health() -> dict[str, str]:
 
 
 # ── 개발 모드 ─────────────────────────────────────────────────────────────────
-# 전부 BOARDBOT_DEV=1 뒤에 있다. 꺼져 있으면 404라 시연 중 눌릴 경로가 없다.
+# 게임 상태를 바꾸는 것은 전부 BOARDBOT_DEV=1 뒤에 있고, 꺼져 있으면 404다.
+# /dev/config만 예외로 항상 200을 준다 — 프론트가 "개발 모드인가"를 물어보는
+# 창구라, 이것까지 막으면 패널을 띄울지 판단할 방법이 없다. 상태는 바꾸지 않는다.
 
 
 @app.get("/dev/config")
@@ -229,8 +231,8 @@ def dev_seat(count: int) -> dict[str, Any]:
     orchestrator = app.state.orchestrator
     # 이전 시도의 잔재를 지우고 정확히 count명으로 맞춘다. 누를 때마다 인원이
     # 늘어나면 몇 명으로 돌고 있는지 알 수 없다.
-    for player in list(orchestrator._pm.state.players):
-        orchestrator.remove_player(player.player_id)
+    for player in orchestrator.get_players_list():
+        orchestrator.remove_player(player["player_id"])
 
     player_ids = [
         orchestrator.add_player(_DEV_PLAYER_NAMES[i])["player_id"] for i in range(count)

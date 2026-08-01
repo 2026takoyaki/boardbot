@@ -19,7 +19,8 @@ export default defineConfig({
       // 기존 HTTP 라우트
       '/players': { target: 'http://localhost:8000', changeOrigin: true },
       '/health': { target: 'http://localhost:8000', changeOrigin: true },
-      // 개발 모드 (BOARDBOT_DEV=1). 꺼져 있으면 백엔드가 404를 준다.
+      // 개발 모드 (BOARDBOT_DEV=1). 꺼져 있으면 /dev/config가 dev_mode=false를
+      // 주고, 상태를 바꾸는 나머지 /dev/* 는 404가 된다.
       '/dev': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },

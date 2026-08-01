@@ -156,6 +156,9 @@ class LightController:
                 timeout=self._config.command_timeout_s,
             )
         except asyncio.CancelledError:
+            # 취소 시점에 명령이 전구까지 갔는지 알 수 없다. "보냈다"고 캐시해두면
+            # 뒤이은 중립 복귀가 중복 제거로 삼켜져 조명이 색을 문 채 멈춘다.
+            self._last_applied = None
             raise
         except TimeoutError:
             # 전구가 실제로 어떤 상태인지 모르게 됐다. 캐시를 비워 다음 명령이
@@ -223,20 +226,25 @@ class LightController:
 
         다음 세션이 이전 세션의 색을 물려받지 않게 하고, Cue 도중에 연결이
         끊겨 조명이 색을 문 채 멈추는 경우를 정리한다.
+
+        Cue만이 아니라 **대기 중인 모든 명령**을 취소한다. Scene 적용도 백그라운드
+        태스크라, 취소하지 않으면 중립을 세운 직후에 뒤늦게 완료되면서 다른 색으로
+        덮어쓴다 — 정리했다고 믿는 순간이 가장 위험하다.
+
+        캐시도 비운다. 취소된 명령이 전구까지 갔는지 알 수 없으므로, 중립 복귀는
+        중복 제거를 건너뛰고 반드시 나가야 한다.
         """
-        self._cancel_cue()
+        self._cancel_pending()
         self._game = None
         self._phase = None
         self._scene = NEUTRAL_SCENE
+        self._last_applied = None
         await self._drive(
             NEUTRAL_SCENE.color, NEUTRAL_SCENE.brightness, NEUTRAL_SCENE.transition_ms, None
         )
 
     async def aclose(self) -> None:
         """프로세스 종료 시 중립 복귀 후 연결 정리."""
-        self._cancel_cue()
-        for task in list(self._tasks):
-            task.cancel()
         with contextlib.suppress(Exception):
             await self.reset()
         with contextlib.suppress(Exception):
@@ -248,6 +256,13 @@ class LightController:
         if self._cue_task is not None and not self._cue_task.done():
             self._cue_task.cancel()
         self._cue_task = None
+
+    def _cancel_pending(self) -> None:
+        """Cue와 Scene 적용을 모두 취소한다. 뒤늦게 완료돼 덮어쓰는 것을 막는다."""
+        self._cancel_cue()
+        for task in list(self._tasks):
+            if not task.done():
+                task.cancel()
 
     def _spawn(self, coro: object) -> asyncio.Task[None] | None:
         """이벤트 루프에 던지고 즉시 반환. 호출자를 절대 기다리게 하지 않는다."""

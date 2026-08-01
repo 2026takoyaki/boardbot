@@ -13,6 +13,9 @@ import { useEffect, useState } from 'react'
  */
 
 // 모듈 수준 캐시. 페이지를 옮길 때마다 다시 물어볼 이유가 없다.
+// **응답을 받았을 때만** 채운다 — 백엔드가 아직 안 떴거나 네트워크가 잠깐
+// 흔들린 것을 "개발 모드 아님"으로 굳혀버리면, 나중에 정상화돼도 새로고침
+// 전까지 패널이 돌아오지 않는다.
 let devModeCache = null
 
 function useDevMode() {
@@ -28,13 +31,33 @@ function useDevMode() {
         if (!cancelled) setDevMode(devModeCache)
       })
       .catch(() => {
-        devModeCache = false
+        // 캐시는 건드리지 않는다. 다음 마운트에서 다시 물어본다.
         if (!cancelled) setDevMode(false)
       })
     return () => { cancelled = true }
   }, [])
 
   return devMode
+}
+
+/** localStorage가 막힌 컨텍스트(사파리 프라이빗, 테스트 환경)에서도 렌더는 살아야 한다. */
+function readStoredCorner() {
+  try {
+    if (typeof localStorage === 'undefined') return 0
+    const saved = Number(localStorage.getItem(CORNER_STORAGE_KEY))
+    return Number.isInteger(saved) && saved >= 0 && saved < CORNERS.length ? saved : 0
+  } catch {
+    return 0
+  }
+}
+
+function storeCorner(index) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(CORNER_STORAGE_KEY, String(index))
+  } catch {
+    // 기억하지 못할 뿐, 이번 세션 동안은 옮긴 자리가 유지된다.
+  }
 }
 
 // 화면 네 귀퉁이. 게임 UI가 가려지면 눌러서 옮긴다.
@@ -51,10 +74,7 @@ export default function DevPanel({ title, actions = [] }) {
   const devMode = useDevMode()
   // 기본은 접힘. 펼친 채로 두면 게임 UI 버튼을 가려서 정작 테스트를 방해한다.
   const [open, setOpen] = useState(false)
-  const [cornerIndex, setCornerIndex] = useState(() => {
-    const saved = Number(localStorage.getItem(CORNER_STORAGE_KEY))
-    return Number.isInteger(saved) && saved >= 0 && saved < CORNERS.length ? saved : 0
-  })
+  const [cornerIndex, setCornerIndex] = useState(readStoredCorner)
 
   if (!devMode || actions.length === 0) return null
 
@@ -62,7 +82,7 @@ export default function DevPanel({ title, actions = [] }) {
   const moveCorner = () => {
     const next = (cornerIndex + 1) % CORNERS.length
     setCornerIndex(next)
-    localStorage.setItem(CORNER_STORAGE_KEY, String(next))
+    storeCorner(next)
   }
   // 아래쪽 귀퉁이에서는 목록이 위로 자라야 손잡이가 안 밀린다.
   const growsUp = corner.key.startsWith('b')
