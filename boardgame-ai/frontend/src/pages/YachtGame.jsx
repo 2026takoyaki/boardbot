@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { audio as audioApi, useAudioPlayer } from '../hooks/useAudioPlayer'
 import { IconMusic, IconVolume } from '../components/common/Icons'
+import ScoreMoment from '../components/common/ScoreMoment'
 
 const CATEGORY_LABELS = [
   ['ones', 'Aces'],
@@ -542,12 +543,13 @@ const s = {
   },
 }
 
+const SCORE_CUES = new Set(['yacht_turn_transition', 'yacht_game_finish'])
+
+// 일반 득점은 모달까지 가지 않는다. 한 판이 36턴이라 전부 화면을 멈춰세우면
+// 아무것도 특별하지 않고 게임만 늘어진다.
+const INLINE_ONLY_VARIANTS = new Set(['normal'])
+
 export default function YachtGame({ players, tutorialMode = false, onExit, onChangePlayers }) {
-  const { state, connected, messages, send } = useWebSocket('/ws/yacht', {
-    onAudioMessage: audioApi.enqueue,
-  })
-  // /ws/yacht 채널로도 audio_ack가 흐르도록 등록 (FSM 멘트는 이 채널로 옴).
-  useAudioPlayer(send)
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
   const [diceEditMode, setDiceEditMode] = useState(false)
   const [editDiceValues, setEditDiceValues] = useState([1, 1, 1, 1, 1])
@@ -557,14 +559,44 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const [bgmEnabled, setBgmEnabled] = useState(true)
   const [turnPulseKey, setTurnPulseKey] = useState(0)
   const [recentScore, setRecentScore] = useState(null)
+  const [moment, setMoment] = useState(null)
   const [scoreRowPaddingY, setScoreRowPaddingY] = useState(null)
   const scoreWrapRef = useRef(null)
   const startedRef = useRef(false)
-  const previousTurnRef = useRef(null)
   const previousRollRef = useRef(null)
-  const previousScoresRef = useRef(new Map())
   const previousTutorialResetKeyRef = useRef('')
   const lastTutorialTtsKeyRef = useRef('')
+
+  // 득점 순간을 diff로 추론하지 않고 백엔드가 보낸 cue를 그대로 받는다.
+  // 같은 payload의 duration_ms로 조명·TTS가 함께 움직이므로 세 채널이 어긋나지 않는다.
+  const handleCue = useCallback((payload) => {
+    if (!payload || !SCORE_CUES.has(payload.cue)) return
+    const variant = payload.variant || 'normal'
+    const isFinish = payload.cue === 'yacht_game_finish'
+
+    setTurnPulseKey(key => key + 1)
+    setRecentScore({
+      playerId: payload.scorer_id,
+      category: payload.category,
+      score: payload.score,
+      variant,
+      // 인라인 하이라이트는 연출 전체 길이를 넘기지 않는다.
+      holdMs: Math.min(1100, payload.duration_ms || 1100),
+    })
+    playLocalSfx(isFinish ? 'game_end' : 'score_select')
+
+    // 게임 종료는 전용 결과 화면이 따로 있으므로 모달을 겹치지 않는다.
+    if (!INLINE_ONLY_VARIANTS.has(variant) && !isFinish) {
+      setMoment(payload)
+    }
+  }, [])
+
+  const { state, connected, messages, send } = useWebSocket('/ws/yacht', {
+    onAudioMessage: audioApi.enqueue,
+    onCue: handleCue,
+  })
+  // /ws/yacht 채널로도 audio_ack가 흐르도록 등록 (FSM 멘트는 이 채널로 옴).
+  useAudioPlayer(send)
 
   useEffect(() => {
     audioApi.setTtsEnabled(true)
@@ -631,6 +663,8 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     send('START_YACHT', { players: normalizePlayers(players), tutorial_mode: tutorialMode })
   }, [connected, helloSeen, players, send, tutorialMode])
 
+  // 굴림 효과음만 state diff로 남는다. 굴림에는 cue가 없고, 같은 턴 안에서
+  // roll_count 증가만 보므로 재연결로 되살아나지 않는다.
   useEffect(() => {
     if (!state?.players?.length) return
 
@@ -647,41 +681,11 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
       playLocalSfx('dice_roll')
     }
     previousRollRef.current = currentRoll
-
-    if (previousTurnRef.current && previousTurnRef.current !== state.current_player_id) {
-      setTurnPulseKey(key => key + 1)
-    }
-    previousTurnRef.current = state.current_player_id
-
-    const nextScores = new Map()
-    let addedScore = null
-    for (const player of state.players) {
-      const scores = player.scores || {}
-      const previousScores = previousScoresRef.current.get(player.player_id) || {}
-      nextScores.set(player.player_id, { ...scores })
-
-      for (const [category, score] of Object.entries(scores)) {
-        if (previousScores[category] == null) {
-          addedScore = {
-            playerId: player.player_id,
-            playerName: player.playername,
-            category,
-            score,
-          }
-        }
-      }
-    }
-
-    previousScoresRef.current = nextScores
-    if (addedScore) {
-      setRecentScore(addedScore)
-      playLocalSfx('score_select')
-    }
   }, [state])
 
   useEffect(() => {
     if (!recentScore) return undefined
-    const timeout = window.setTimeout(() => setRecentScore(null), 1100)
+    const timeout = window.setTimeout(() => setRecentScore(null), recentScore.holdMs)
     return () => window.clearTimeout(timeout)
   }, [recentScore])
 
@@ -866,18 +870,46 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
   return (
     <div style={s.page}>
+      <ScoreMoment moment={moment} onDone={() => setMoment(null)} />
       <style>{`
         @keyframes yachtTurnPulse {
-          0% { transform: scale(0.98); box-shadow: 0 0 0 0 color-mix(in oklch, var(--yacht) 32%, transparent); }
-          45% { transform: scale(1.03); box-shadow: 0 0 0 8px color-mix(in oklch, var(--yacht) 18%, transparent); }
+          0% { transform: scale(0.94); box-shadow: 0 0 0 0 color-mix(in oklch, var(--yacht) 40%, transparent); }
+          40% { transform: scale(1.08); box-shadow: 0 0 0 12px color-mix(in oklch, var(--yacht) 22%, transparent); }
+          70% { transform: scale(0.99); }
           100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
         }
 
         @keyframes yachtScoreFlash {
-          0% { background: color-mix(in oklch, var(--yacht) 30%, var(--bg-surface)); }
-          55% { background: color-mix(in oklch, var(--yacht) 20%, var(--bg-surface)); }
+          0% { background: color-mix(in oklch, var(--yacht) 42%, var(--bg-surface)); }
+          55% { background: color-mix(in oklch, var(--yacht) 22%, var(--bg-surface)); }
           100% { background: var(--bg-surface); }
         }
+
+        /* 0점은 같은 자리에 다른 표정으로 — 색이 빠지고 아래로 처진다. */
+        @keyframes yachtScoreFlashZero {
+          0%   { background: color-mix(in oklch, var(--fg-faint) 34%, var(--bg-surface)); }
+          55%  { background: color-mix(in oklch, var(--fg-faint) 16%, var(--bg-surface)); }
+          100% { background: var(--bg-surface); }
+        }
+
+        /* 점수 숫자가 칸에 "착지"한다. 매 턴 오는 연출이라 짧고 경쾌하게. */
+        @keyframes yachtScorePop {
+          0%   { transform: scale(2.1) translateY(-14px); opacity: 0; }
+          35%  { transform: scale(1.18) translateY(0); opacity: 1; }
+          60%  { transform: scale(0.94); }
+          100% { transform: scale(1); }
+        }
+
+        @keyframes yachtScorePopZero {
+          0%   { transform: scale(1.5) translateY(-8px); opacity: 0; }
+          40%  { transform: scale(1) translateY(3px); opacity: 1; }
+          70%  { transform: translateY(0); }
+          100% { transform: scale(1); }
+        }
+
+        .yacht-score-pop { animation: yachtScorePop 620ms cubic-bezier(.2,.9,.25,1.3); display: inline-block; }
+        .yacht-score-pop-zero { animation: yachtScorePopZero 520ms ease-out; display: inline-block; }
+        .yacht-score-flash-zero { animation: yachtScoreFlashZero 900ms ease-out; }
 
         @keyframes yachtScoreSuggest {
           0%, 100% {
@@ -1283,13 +1315,14 @@ function ScoreTable({
           const highlightScore =
             recentScore?.playerId === player?.player_id &&
             recentScore?.category === key
+          const zeroScore = highlightScore && recentScore?.variant === 'zero'
           const suggested = canScore && suggestedCategories.has(key)
 
           return (
             <tr
               key={key}
               className={[
-                highlightScore ? 'yacht-score-flash' : '',
+                highlightScore ? (zeroScore ? 'yacht-score-flash-zero' : 'yacht-score-flash') : '',
                 suggested ? 'yacht-score-suggest' : '',
               ].filter(Boolean).join(' ') || undefined}
               style={s.scoreRow(canScore)}
@@ -1297,20 +1330,56 @@ function ScoreTable({
             >
               <td style={{ ...tdNameStyle, color: !hasScore && !available ? 'var(--fg-faint)' : 'var(--fg)' }}>{label}</td>
               <td style={{ ...tdScoreStyle, color: hasScore ? 'var(--fg)' : 'var(--fg-mute)' }}>
-                {displayScore}
+                {highlightScore ? (
+                  // key에 갱신 횟수를 섞어 같은 칸에 다시 들어와도 애니메이션이 재생된다.
+                  <span
+                    key={`${key}-${recentScore.score}`}
+                    className={zeroScore ? 'yacht-score-pop-zero' : 'yacht-score-pop'}
+                  >
+                    {displayScore}
+                  </span>
+                ) : displayScore}
               </td>
             </tr>
           )
         })}
         <tr style={s.totalRow}>
           <td style={tdNameStyle}>합계</td>
-          <td style={tdScoreStyle}>{player?.total ?? 0}</td>
+          <td style={tdScoreStyle}>
+            <CountUpTotal value={player?.total ?? 0} />
+          </td>
         </tr>
       </tbody>
     </table>
     {scoreHelpOpen && <ScoreHelp onClose={closeScoreHelp} />}
     </>
   )
+}
+
+/** 합계가 뛰지 않고 굴러 올라간다. 점수가 쌓이는 감각이 여기서 나온다. */
+function CountUpTotal({ value }) {
+  const [shown, setShown] = useState(value)
+  const fromRef = useRef(value)
+  const frameRef = useRef(0)
+
+  useEffect(() => {
+    const from = fromRef.current
+    fromRef.current = value
+    if (from === value) return undefined
+    // 오르는 폭에 비례해 길어지되 상한을 둔다 — 매 턴 오는 연출이라 길면 답답하다.
+    const duration = Math.min(700, 220 + Math.abs(value - from) * 8)
+    const start = performance.now()
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration)
+      const eased = 1 - (1 - t) ** 3
+      setShown(Math.round(from + (value - from) * eased))
+      if (t < 1) frameRef.current = requestAnimationFrame(tick)
+    }
+    frameRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameRef.current)
+  }, [value])
+
+  return shown
 }
 
 function normalizePlayers(players) {
