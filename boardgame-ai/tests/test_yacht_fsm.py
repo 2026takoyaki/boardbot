@@ -173,6 +173,35 @@ def test_highlight_category_gets_longer_cue():
     assert payload["duration_ms"] > 2200
 
 
+def test_cue_payload_carries_every_field_the_ui_reads():
+    """필드명이 어긋나면 조용히 연출만 안 나온다 — 에러도 로그도 없다.
+
+    프론트 ScoreMoment/YachtGame이 읽는 키 목록. 이름을 바꾸려면 양쪽을 같이
+    고쳐야 한다.
+    """
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    payload = _cue_payload(_score(fsm, "ones", "p1", dice=[1, 1, 3, 4, 6]))
+
+    consumed_by_ui = {
+        "cue",
+        "variant",
+        "scorer_id",
+        "scorer_name",
+        "category",
+        "category_label",
+        "score",
+        "took_lead",
+        "rank_before",
+        "rank_after",
+        "previous_leader",
+        "duration_ms",
+    }
+
+    assert consumed_by_ui <= set(payload)
+
+
 def test_scoring_zero_into_a_special_category_is_not_a_highlight():
     """요트 칸에 0점을 버리는 것은 축하가 아니라 그 반대다.
 

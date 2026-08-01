@@ -15,16 +15,23 @@ const AUDIO_MSG_TYPES = new Set([
  * options:
  *   onAudioMessage(msg) — audio 관련 메시지 수신 시 호출. 기본은 no-op.
  *                         보통 useAudioPlayer(send).enqueue를 넘김.
+ *   onCue(payload)      — 연출 큐 수신 시 호출. 기본은 no-op.
+ *
+ * state_update가 "지금 어떤 상태인가"라면 cue는 "방금 무슨 일이 일어났는가"다.
+ * 상태가 아니라 사건이므로 state에 담지 않고 콜백으로 흘린다 — 리렌더로
+ * 되살아나면 안 되고, 놓친 큐를 나중에 재생해서도 안 된다.
  */
 export function useWebSocket(path, options = {}) {
-  const { onAudioMessage } = options
+  const { onAudioMessage, onCue } = options
   const [state, setState] = useState(null)
   const [connected, setConnected] = useState(false)
   const [messages, setMessages] = useState([])
   const ws = useRef(null)
   const onAudioRef = useRef(onAudioMessage)
+  const onCueRef = useRef(onCue)
   const benchSeq = useRef(0)
   useEffect(() => { onAudioRef.current = onAudioMessage }, [onAudioMessage])
+  useEffect(() => { onCueRef.current = onCue }, [onCue])
 
   useEffect(() => {
     let destroyed = false
@@ -87,6 +94,9 @@ export function useWebSocket(path, options = {}) {
           }
           if (AUDIO_MSG_TYPES.has(msg.msg_type) && onAudioRef.current) {
             try { onAudioRef.current(msg) } catch (_) {}
+          }
+          if (msg.msg_type === 'cue' && onCueRef.current) {
+            try { onCueRef.current(msg.payload) } catch (_) {}
           }
         } catch (_) {}
       }
