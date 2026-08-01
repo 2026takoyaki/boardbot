@@ -213,13 +213,11 @@ export default function App() {
       {(page === 'seat' || page === 'lobby') && (
         <DevPanel
           title="로비"
-          actions={[
-            {
-              label: '전원 좌석 등록',
-              hint: '카메라 없이 좌석 등록을 통과한다',
-              run: () => fetch('/dev/seat-all', { method: 'POST' }),
-            },
-          ]}
+          actions={[2, 3, 4, 5].map(count => ({
+            label: `${count}명으로 시작`,
+            hint: '플레이어를 만들고 좌석 등록까지 한 번에 끝낸다',
+            run: () => fetch(`/dev/seat/${count}`, { method: 'POST' }),
+          }))}
         />
       )}
       <OrientationLock />

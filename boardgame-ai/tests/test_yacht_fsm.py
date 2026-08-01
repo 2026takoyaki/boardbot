@@ -3,6 +3,7 @@ from copy import deepcopy
 from core.constants import MsgType
 from core.events import GameEvent
 from games.yacht import YachtEventType, YachtFSM, YachtInputType, YachtPhase
+from games.yacht.scoring import ALL_CATEGORIES
 
 
 def _event(event_type: str, actor_id: str = "p1", dice=None) -> GameEvent:
@@ -300,6 +301,46 @@ def test_game_end_emits_finish_cue_without_next_player():
     assert len(cues) == 1
     assert cues[0].payload["cue"] == "yacht_game_finish"
     assert cues[0].payload["next_player"] is None
+
+
+def test_turn_skips_players_whose_scorecard_is_full():
+    """고를 칸이 없는 사람에게 차례가 가면 게임이 멈춘다.
+
+    종료 조건이 "전원이 다 채웠는가"라, 한 명만 먼저 다 채운 상태에서 그 사람에게
+    차례가 돌아오면 점수를 넣을 수도 게임을 끝낼 수도 없다. 정상 플레이에서는
+    칸 수가 어긋나지 않지만 되돌리기·상태 복원이 그 전제를 깰 수 있다.
+    """
+    fsm = YachtFSM(["p1", "p2", "p3"])
+    fsm.start()
+    everything = [category.value for category in ALL_CATEGORIES]
+    # p2만 점수판을 다 채운 상태.
+    for category in everything:
+        fsm.state.players[1].scores[category] = 1
+
+    fsm.state.current_player_index = 0
+    fsm.state.advance_player()
+
+    assert fsm.state.current_player.player_id == "p3", "다 채운 p2를 건너뛰어야 한다"
+    assert fsm.state.available_categories, "차례를 받은 사람은 고를 칸이 있어야 한다"
+
+
+def test_game_ends_instead_of_deadlocking_when_counts_are_uneven():
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    everything = [category.value for category in ALL_CATEGORIES]
+    for category in everything:
+        fsm.state.players[0].scores[category] = 1
+    for category in everything[:-1]:
+        fsm.state.players[1].scores[category] = 1
+
+    fsm.state.current_player_index = 0
+    fsm.state.advance_player()
+    assert fsm.state.current_player.player_id == "p2"
+
+    msgs = _score(fsm, everything[-1], "p2", dice=[1, 1, 3, 4, 6])
+
+    assert fsm.state.phase == YachtPhase.GAME_END.value
+    assert _messages_of(msgs, MsgType.CUE.value)[0].payload["cue"] == "yacht_game_finish"
 
 
 def test_restore_state_undoes_one_dice_roll():

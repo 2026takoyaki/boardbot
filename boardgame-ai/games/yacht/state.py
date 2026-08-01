@@ -100,8 +100,29 @@ class YachtGameState:
     def is_final_round_complete(self) -> bool:
         return all(len(p.scores) == len(ALL_CATEGORIES) for p in self.players)
 
+    def has_open_category(self, player: YachtPlayerState) -> bool:
+        return len(player.scores) < len(ALL_CATEGORIES)
+
     def advance_player(self) -> None:
-        self.current_player_index = (self.current_player_index + 1) % len(self.players)
+        """다음 차례로 넘긴다. 점수판을 다 채운 사람은 건너뛴다.
+
+        건너뛰지 않으면 고를 칸이 하나도 없는 사람에게 차례가 가서 게임이 멈춘다.
+        종료 조건은 "전원이 다 채웠는가"라 그 상태로는 끝나지도 않는다.
+
+        정상 플레이에서는 모두가 매 턴 한 칸씩 채우므로 칸 수가 어긋날 일이
+        없지만, 되돌리기나 상태 복원처럼 턴 수가 어긋나는 경로가 있으면 그대로
+        데드락이 된다. 한 사람이라도 남아 있으면 그 사람에게 차례가 가야 한다.
+        """
+        total = len(self.players)
+        for step in range(1, total + 1):
+            candidate = (self.current_player_index + step) % total
+            if self.has_open_category(self.players[candidate]):
+                self.current_player_index = candidate
+                break
+        else:
+            # 전원이 다 채웠다. 종료 판정이 곧바로 뒤따르므로 자리만 넘긴다.
+            self.current_player_index = (self.current_player_index + 1) % total
+
         self.roll_count = 0
         self.dice_values = []
         self.keep_mask = [False] * 5

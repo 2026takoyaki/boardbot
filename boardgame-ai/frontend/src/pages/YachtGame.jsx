@@ -23,6 +23,8 @@ const CATEGORY_LABELS = [
 
 const UPPER = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes']
 const DISPLAY_CATEGORIES = CATEGORY_LABELS.filter(([key]) => key !== 'bonus').map(([key]) => key)
+// 한 사람이 채우는 칸 수 = 전체 라운드 수. bonus는 계산 결과라 칸이 아니다.
+const TOTAL_ROUNDS = DISPLAY_CATEGORIES.length
 const SHOW_MANUAL_ROLL = import.meta.env.VITE_SHOW_MANUAL_ROLL === 'true'
 const SHOW_DICE_MANUAL_INPUT = import.meta.env.VITE_SHOW_DICE_MANUAL_INPUT !== 'false'
 const TUTORIAL_GUIDE_STEPS = [
@@ -694,7 +696,12 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     () => state?.players?.find(p => p.player_id === state.current_player_id),
     [state],
   )
-  const round = (currentPlayer?.scores ? Object.keys(currentPlayer.scores).length : 0) + 1
+  // 점수판을 다 채우면 filled+1이 13이 되어 "13 / 12"로 넘어간다. 마지막 라운드에서
+  // 멈춘다.
+  const round = Math.min(
+    TOTAL_ROUNDS,
+    (currentPlayer?.scores ? Object.keys(currentPlayer.scores).length : 0) + 1,
+  )
   const ranked = useMemo(
     () => [...(state?.players || [])].sort((a, b) => b.total - a.total),
     [state],
@@ -1017,7 +1024,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
               <div key={turnPulseKey} className={turnPulseKey ? 'yacht-turn-pulse' : undefined} style={s.turnBadge}>
                 {currentPlayer?.playername || '-'} 님 차례
               </div>
-              <div style={s.roundText}>라운드 {round} / 12</div>
+              <div style={s.roundText}>라운드 {round} / {TOTAL_ROUNDS}</div>
             </div>
 
             <div style={s.clips}>

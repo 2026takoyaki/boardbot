@@ -37,35 +37,68 @@ function useDevMode() {
   return devMode
 }
 
+// 화면 네 귀퉁이. 게임 UI가 가려지면 눌러서 옮긴다.
+const CORNERS = [
+  { key: 'br', label: '↘', style: { right: 12, bottom: 12, alignItems: 'flex-end' } },
+  { key: 'bl', label: '↙', style: { left: 12, bottom: 12, alignItems: 'flex-start' } },
+  { key: 'tl', label: '↖', style: { left: 12, top: 12, alignItems: 'flex-start' } },
+  { key: 'tr', label: '↗', style: { right: 12, top: 12, alignItems: 'flex-end' } },
+]
+
+const CORNER_STORAGE_KEY = 'devPanelCorner'
+
 export default function DevPanel({ title, actions = [] }) {
   const devMode = useDevMode()
-  const [open, setOpen] = useState(true)
+  // 기본은 접힘. 펼친 채로 두면 게임 UI 버튼을 가려서 정작 테스트를 방해한다.
+  const [open, setOpen] = useState(false)
+  const [cornerIndex, setCornerIndex] = useState(() => {
+    const saved = Number(localStorage.getItem(CORNER_STORAGE_KEY))
+    return Number.isInteger(saved) && saved >= 0 && saved < CORNERS.length ? saved : 0
+  })
 
   if (!devMode || actions.length === 0) return null
 
-  return (
-    <div style={styles.wrap}>
-      <button type="button" style={styles.handle} onClick={() => setOpen(o => !o)}>
-        <span style={styles.dot} />
-        DEV{title ? ` · ${title}` : ''}
-        <span style={styles.chevron}>{open ? '▾' : '▴'}</span>
-      </button>
+  const corner = CORNERS[cornerIndex]
+  const moveCorner = () => {
+    const next = (cornerIndex + 1) % CORNERS.length
+    setCornerIndex(next)
+    localStorage.setItem(CORNER_STORAGE_KEY, String(next))
+  }
+  // 아래쪽 귀퉁이에서는 목록이 위로 자라야 손잡이가 안 밀린다.
+  const growsUp = corner.key.startsWith('b')
 
-      {open && (
-        <div style={styles.body}>
-          {actions.map(({ label, run, hint }) => (
-            <button
-              key={label}
-              type="button"
-              style={styles.action}
-              onClick={run}
-              title={hint}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
+  return (
+    <div style={{ ...styles.wrap, ...corner.style }}>
+      {open && growsUp && <Actions actions={actions} />}
+
+      <div style={styles.handleRow}>
+        <button type="button" style={styles.handle} onClick={() => setOpen(o => !o)}>
+          <span style={styles.dot} />
+          DEV{title ? ` · ${title}` : ''}
+        </button>
+        <button
+          type="button"
+          style={styles.corner}
+          onClick={moveCorner}
+          title="패널 위치 옮기기"
+        >
+          {corner.label}
+        </button>
+      </div>
+
+      {open && !growsUp && <Actions actions={actions} />}
+    </div>
+  )
+}
+
+function Actions({ actions }) {
+  return (
+    <div style={styles.body}>
+      {actions.map(({ label, run, hint }) => (
+        <button key={label} type="button" style={styles.action} onClick={run} title={hint}>
+          {label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -73,14 +106,22 @@ export default function DevPanel({ title, actions = [] }) {
 const styles = {
   wrap: {
     position: 'fixed',
-    right: 12,
-    bottom: 12,
     zIndex: 10000,
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'flex-end',
     gap: 6,
     fontFamily: 'var(--font-mono)',
+  },
+  handleRow: { display: 'flex', gap: 4 },
+  corner: {
+    padding: '7px 9px',
+    fontSize: 12,
+    lineHeight: 1,
+    color: 'oklch(0.85 0.14 85)',
+    background: 'color-mix(in oklch, var(--bg-deep) 88%, transparent)',
+    border: '1px solid oklch(0.85 0.14 85 / 0.4)',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
   },
   handle: {
     display: 'flex',
