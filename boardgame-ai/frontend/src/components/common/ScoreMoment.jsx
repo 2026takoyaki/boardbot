@@ -11,35 +11,62 @@ import { useEffect, useRef, useState } from 'react'
  * 단 yacht_hand_achieved(굴림 축하)는 조명이 관여하지 않으므로 화면만 신경 쓰면 된다.
  */
 
+// 굴림 축하는 조합이 희귀할수록 크게 간다. 다 똑같이 터뜨리면 야찌가 스몰
+// 스트레이트와 같은 무게가 되어 아무것도 특별하지 않다.
+const TIERS = {
+  legendary: { rays: true, rayOpacity: 0.62, scale: 1.0, shake: true },
+  epic: { rays: true, rayOpacity: 0.42, scale: 0.88, shake: false },
+  great: { rays: false, rayOpacity: 0, scale: 0.76, shake: false },
+  good: { rays: false, rayOpacity: 0, scale: 0.66, shake: false },
+  nice: { rays: false, rayOpacity: 0, scale: 0.58, shake: false },
+}
+
+const GOLD = { tint: 'oklch(0.86 0.17 85)', glow: 'oklch(0.88 0.19 85)' }
+
 const LOOKS = {
-  // 주사위가 멈춘 순간. 조명 제약이 없어 가장 화려하게 간다.
-  hand: { tint: 'oklch(0.86 0.17 85)', glow: 'oklch(0.88 0.19 85)', rays: true, rise: true },
-  highlight: { tint: 'oklch(0.84 0.15 85)', glow: 'oklch(0.86 0.16 85)', rays: false, rise: true },
-  lead_change: {
-    tint: 'oklch(0.80 0.14 230)',
-    glow: 'oklch(0.84 0.15 230)',
-    rays: false,
-    rise: true,
-  },
-  zero: { tint: 'oklch(0.66 0.02 250)', glow: 'oklch(0.55 0.02 250)', rays: false, rise: false },
+  hand: GOLD,
+  bonus: { tint: 'oklch(0.84 0.16 145)', glow: 'oklch(0.86 0.17 145)' },
+  highlight: GOLD,
+  lead_change: { tint: 'oklch(0.82 0.15 230)', glow: 'oklch(0.85 0.16 230)' },
+  normal: { tint: 'oklch(0.90 0.03 90)', glow: 'oklch(0.80 0.06 90)' },
+  zero: { tint: 'oklch(0.68 0.02 250)', glow: 'oklch(0.55 0.02 250)' },
+}
+
+function kindOf(moment) {
+  if (!moment) return null
+  if (moment.cue === 'yacht_hand_achieved') return 'hand'
+  if (moment.cue === 'yacht_bonus_achieved') return 'bonus'
+  return moment.variant || 'normal'
 }
 
 export default function ScoreMoment({ moment, onDone }) {
-  const kind = moment?.cue === 'yacht_hand_achieved' ? 'hand' : moment?.variant
+  const kind = kindOf(moment)
   const look = LOOKS[kind]
+  // 연출마다 새 인스턴스로 갈아끼워야 CSS 애니메이션이 처음부터 다시 돈다.
+  return <Moment key={moment?.momentKey ?? 'none'} moment={moment} kind={kind} look={look} onDone={onDone} />
+}
 
+function Moment({ moment, kind, look, onDone }) {
+  // onDone은 매 렌더마다 새로 만들어질 수 있다. ref에 담아두지 않으면 부모가
+  // 리렌더될 때마다 타이머가 리셋되어 모달이 닫히지 않고, 다음 판까지 끌려간다.
+  const doneRef = useRef(onDone)
+  useEffect(() => { doneRef.current = onDone }, [onDone])
+
+  const duration = moment?.duration_ms
   useEffect(() => {
-    if (!moment || !look) return undefined
+    if (!duration) return undefined
     // 자동으로 닫힌다. 매 턴 손을 요구하면 연출이 아니라 절차가 된다.
-    const timer = setTimeout(() => onDone?.(), moment.duration_ms)
+    const timer = setTimeout(() => doneRef.current?.(), duration)
     return () => clearTimeout(timer)
-  }, [moment, look, onDone])
+  }, [duration])
 
   if (!moment || !look) return null
 
   const d = moment.duration_ms
   const enterMs = Math.round(d * 0.16)
-  const exitMs = Math.round(d * 0.22)
+  const tier = TIERS[moment.tier] ?? TIERS.great
+  const showRays = kind === 'hand' ? tier.rays : false
+  const bodyScale = kind === 'hand' ? tier.scale : 1
 
   return (
     <div style={styles.overlay}>
@@ -87,9 +114,11 @@ export default function ScoreMoment({ moment, onDone }) {
           0%   { opacity: 0; transform: translateY(12px); }
           100% { opacity: 1; transform: translateY(0); }
         }
+        /* transform은 건드리지 않는다. 여기서 translateY를 쓰면 fill:both가
+           자리 이동용 인라인 transform을 덮어써 순위표가 움직이지 않는다. */
         @keyframes ym-row {
-          0%   { opacity: 0; transform: translateY(14px); }
-          100% { opacity: 1; transform: translateY(0); }
+          0%   { opacity: 0; }
+          100% { opacity: 1; }
         }
       `}</style>
 
@@ -106,56 +135,87 @@ export default function ScoreMoment({ moment, onDone }) {
           animation: `ym-glow ${d}ms cubic-bezier(.2,.9,.3,1) forwards`,
         }}
       />
-      {look.rays && (
-        <div style={{ ...styles.rays, animation: `ym-rays ${d}ms ease-out forwards` }} />
+      {showRays && (
+        <div
+          style={{
+            ...styles.rays,
+            opacity: tier.rayOpacity,
+            animation: `ym-rays ${d}ms ease-out forwards`,
+          }}
+        />
       )}
 
       <div
         style={{
           ...styles.stage,
-          animation: `${look.rise ? 'ym-rise' : 'ym-drop'} ${d}ms `
+          '--tier-scale': bodyScale,
+          animation: `${kind === 'zero' ? 'ym-drop' : 'ym-rise'} ${d}ms `
             + 'cubic-bezier(.2,.9,.25,1.1) forwards',
         }}
       >
-        <Content kind={kind} moment={moment} look={look} enterMs={enterMs} exitMs={exitMs} />
+        <Content kind={kind} moment={moment} look={look} enterMs={enterMs} scale={bodyScale} />
       </div>
     </div>
   )
 }
 
-function Content({ kind, moment, look, enterMs }) {
+function Content({ kind, moment, look, enterMs, scale }) {
   if (kind === 'lead_change') return <LeadChange moment={moment} look={look} enterMs={enterMs} />
-  if (kind === 'zero') return <ZeroScore moment={moment} look={look} enterMs={enterMs} />
-  if (kind === 'hand') return <HandAchieved moment={moment} look={look} enterMs={enterMs} />
+  if (kind === 'zero') return <ZeroScore look={look} enterMs={enterMs} />
+  if (kind === 'bonus') return <UpperBonus moment={moment} look={look} enterMs={enterMs} />
+  if (kind === 'hand') {
+    return <HandAchieved moment={moment} look={look} enterMs={enterMs} scale={scale} />
+  }
   return <ScoreConfirmed moment={moment} look={look} enterMs={enterMs} />
 }
 
-/** 주사위가 멈춘 순간. 조합 이름이 주인공이다. */
-function HandAchieved({ moment, look, enterMs }) {
+/**
+ * 주사위가 멈춘 순간. 조합 이름만 크게 세운다.
+ * 누가 몇 점인지는 아직 확정된 것이 아니라 붙이면 오히려 헷갈린다.
+ */
+function HandAchieved({ moment, look, enterMs, scale }) {
+  const size = `clamp(${Math.round(40 * scale)}px, ${(11 * scale).toFixed(1)}vw,`
+    + ` ${Math.round(112 * scale)}px)`
+  return (
+    <div style={{ ...headlineStyle(look, enterMs), fontSize: size }}>
+      {moment.category_label}
+    </div>
+  )
+}
+
+/** 상단 보너스. 게임 내내 쌓아온 것이 한 번에 붙는 순간이다. */
+function UpperBonus({ moment, look, enterMs }) {
+  const shown = useCountUp(moment.score, enterMs * 2.2)
   return (
     <>
-      <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(44px, 11vw, 108px)' }}>
-        {moment.category_label}
-      </div>
       <div
         style={{
           ...styles.sub,
-          animation: `ym-sub ${enterMs * 2}ms ease-out ${enterMs}ms both`,
+          marginTop: 0,
+          marginBottom: 10,
+          animation: `ym-sub ${enterMs * 2}ms ease-out both`,
         }}
       >
-        {moment.scorer_name} 님 · {moment.score}점
+        상단 합계 {moment.upper_subtotal} · 보너스 달성
+      </div>
+      <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(46px, 12vw, 108px)' }}>
+        +{shown}
+        <span style={styles.unit}>점</span>
       </div>
     </>
   )
 }
 
-/** 칸을 고른 뒤. 확인시켜주는 역할이라 숫자만 크게. */
+/**
+ * 칸을 고른 뒤. 상단 숫자든 족보든 똑같이 "+n점"이다.
+ * 칸마다 반응이 다르면 플레이어는 규칙을 하나 더 외워야 한다.
+ */
 function ScoreConfirmed({ moment, look, enterMs }) {
   const shown = useCountUp(moment.score, enterMs * 2.2)
   return (
     <>
       <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(52px, 13vw, 120px)' }}>
-        {shown}
+        +{shown}
         <span style={styles.unit}>점</span>
       </div>
       <div
@@ -187,7 +247,7 @@ function ZeroScore({ look, enterMs }) {
         점수를 넣을 칸이 없었어요
       </div>
       <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(44px, 11vw, 96px)' }}>
-        0<span style={styles.unit}>점</span>
+        +0<span style={styles.unit}>점</span>
       </div>
     </>
   )
