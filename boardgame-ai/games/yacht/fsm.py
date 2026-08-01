@@ -30,8 +30,14 @@ _CATEGORY_TTS_LABELS: dict[str, str] = {
     "yacht": "요트",
 }
 
-# 달성 자체가 사건인 족보.
-_HIGHLIGHT_CATEGORIES: frozenset[str] = frozenset({"yacht", "large_straight"})
+# 달성 자체가 사건인 족보. 굴림 축하도 이 목록을 쓴다 — 크게 축하한 조합이
+# 점수 확정 때도 크게 대접받아야 앞뒤가 맞는다.
+#
+# 순서가 곧 우선순위다. 한 굴림이 여러 조합을 만족할 수 있으므로(예: 야찌는
+# 포카드이기도 하다) 더 희귀한 것부터 본다. frozenset을 쓰면 순회 순서가
+# 비결정적이라 같은 눈에도 다른 축하가 뜬다.
+_HIGHLIGHT_ORDER: tuple[str, ...] = ("yacht", "large_straight")
+_HIGHLIGHT_CATEGORIES: frozenset[str] = frozenset(_HIGHLIGHT_ORDER)
 
 # 선두 역전을 사건으로 칠 최소 진행도 (채운 족보 수).
 #
@@ -47,9 +53,15 @@ _CUE_DURATION_MS: dict[str, int] = {
     "normal": 1600,
     "zero": 1400,        # 아쉬움은 짧게 — 실패를 길게 보여줄 이유가 없다
     "lead_change": 2600,
-    "highlight": 3000,
+    # 특별 조합은 주사위가 멈춘 순간에 이미 크게 축하했다. 여기서는 점수만
+    # 확인시켜주면 되므로 짧게 끝낸다.
+    "highlight": 1800,
 }
 _GAME_FINISH_CUE_DURATION_MS = 4000
+
+# 굴림 축하. 조명이 관여하지 않으므로 인식 예산에 묶이지 않는다 — 화면만
+# 쓰는 연출이라 마음껏 길어도 되지만, 아직 점수를 고르기 전이라 길면 방해가 된다.
+_HAND_CUE_DURATION_MS = 2600
 
 
 def _ranking(players: list[Any]) -> dict[str, int]:
@@ -204,7 +216,12 @@ class YachtFSM(BaseFSM):
         )
         self.state.last_message = self._roll_message()
         self.state.state_version += 1
-        return self._state_context_messages()
+
+        messages = self._state_context_messages()
+        achieved = self._make_hand_cue()
+        if achieved is not None:
+            messages.insert(1, achieved)
+        return messages
 
     def _handle_roll_unreadable(self, event: GameEvent) -> list[WSMessage]:
         if self.state.phase not in (
@@ -336,6 +353,42 @@ class YachtFSM(BaseFSM):
             self._emit_fusion_context(),
         ]
 
+    def _make_hand_cue(self) -> WSMessage | None:
+        """방금 굴린 눈이 특별 조합이면 그 순간을 알린다.
+
+        축하는 칸을 고른 뒤가 아니라 주사위가 멈춘 순간에 터져야 자연스럽다.
+        칸 선택은 그 뒤에 오는 사무적인 절차고, 짜릿한 건 눈이 맞아떨어진 순간이다.
+
+        같은 턴에 같은 조합이 두 번 나와도 두 번 다 알린다 — 세 번 굴릴 수 있고,
+        다시 맞춘 것도 그 나름의 순간이다.
+
+        **조명은 이 큐를 건드리지 않는다.** 매핑 테이블에 이름이 없으면
+        LightController가 그냥 무시하므로 별도 분기가 필요 없다. 굴림 구간은
+        주사위 인식이 걸린 곳이라 조명이 흔들려선 안 되고, 연출은 화면이 맡는다.
+        조명은 점수를 확정하는 순간에만 움직인다.
+        """
+        for category in _HIGHLIGHT_ORDER:
+            # 이미 채운 칸이면 축하할 것이 없다. "요트!"라고 띄워놓고 다른 칸에
+            # 넣게 하는 것은 축하가 아니라 약올리기다.
+            if category not in self.state.available_categories:
+                continue
+            score = calculate_score(category, self.state.dice_values)
+            if score <= 0:
+                continue
+            return WSMessage.make_cue(
+                cue="yacht_hand_achieved",
+                payload={
+                    "scorer_id": self.state.current_player.player_id,
+                    "scorer_name": self.state.current_player.playername,
+                    "category": category,
+                    "category_label": _CATEGORY_TTS_LABELS.get(category, category),
+                    "score": score,
+                    "duration_ms": _HAND_CUE_DURATION_MS,
+                },
+                state_version=self.state.state_version,
+            )
+        return None
+
     def _describe_moment(
         self,
         scorer: Player,
@@ -384,6 +437,18 @@ class YachtFSM(BaseFSM):
             "rank_before": rank_before,
             "rank_after": rank_after,
             "previous_leader": leader_before.playername if leader_before else None,
+            # 순위표가 자리를 바꾸는 연출에 필요하다. 3등에서 2등도 역전이므로
+            # 득점자만이 아니라 전원의 이동을 보낸다.
+            "standings": [
+                {
+                    "player_id": p.player_id,
+                    "playername": p.playername,
+                    "total": p.total,
+                    "rank_before": ranks_before[p.player_id],
+                    "rank_after": ranks_after[p.player_id],
+                }
+                for p in self.state.players
+            ],
         }
 
     def _make_score_cue(
@@ -422,6 +487,7 @@ class YachtFSM(BaseFSM):
                 "rank_before": moment["rank_before"],
                 "rank_after": moment["rank_after"],
                 "previous_leader": moment["previous_leader"],
+                "standings": moment["standings"],
             },
             state_version=self.state.state_version,
         )

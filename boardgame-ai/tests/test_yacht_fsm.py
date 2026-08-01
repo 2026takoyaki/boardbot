@@ -3,6 +3,7 @@ from copy import deepcopy
 from core.constants import MsgType
 from core.events import GameEvent
 from games.yacht import YachtEventType, YachtFSM, YachtInputType, YachtPhase
+from games.yacht.fsm import _CUE_DURATION_MS
 from games.yacht.scoring import ALL_CATEGORIES
 
 
@@ -163,7 +164,8 @@ def _cue_payload(msgs):
     return _messages_of(msgs, MsgType.CUE.value)[0].payload
 
 
-def test_highlight_category_gets_longer_cue():
+def test_confirming_a_special_hand_is_short_because_the_roll_already_celebrated():
+    """굴림 순간에 크게 축하했으므로 확정은 점수만 못 박아주면 된다."""
     fsm = YachtFSM(["p1", "p2"])
     fsm.start()
 
@@ -171,7 +173,55 @@ def test_highlight_category_gets_longer_cue():
 
     assert payload["variant"] == "highlight"
     assert payload["is_highlight"] is True
-    assert payload["duration_ms"] > 2200
+    assert payload["duration_ms"] < _CUE_DURATION_MS["lead_change"]
+
+
+def test_rolling_a_special_hand_celebrates_immediately():
+    """축하는 칸을 고른 뒤가 아니라 주사위가 멈춘 순간에 터져야 한다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    msgs = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
+    cues = _messages_of(msgs, MsgType.CUE.value)
+
+    assert len(cues) == 1
+    payload = cues[0].payload
+    assert payload["cue"] == "yacht_hand_achieved"
+    assert payload["category"] == "yacht"
+    assert payload["category_label"] == "요트"
+    assert payload["score"] == 50
+
+
+def test_the_same_hand_celebrates_every_time_it_is_rolled():
+    """세 번 굴릴 수 있고, 다시 맞춘 것도 그 나름의 순간이다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    first = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
+    second = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
+
+    assert _messages_of(first, MsgType.CUE.value)
+    assert _messages_of(second, MsgType.CUE.value)
+
+
+def test_ordinary_rolls_do_not_celebrate():
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+
+    msgs = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[1, 1, 3, 4, 6]))
+
+    assert _messages_of(msgs, MsgType.CUE.value) == []
+
+
+def test_no_celebration_when_the_category_is_already_used():
+    """'요트!'라고 띄워놓고 다른 칸에 넣게 하는 것은 축하가 아니라 약올리기다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    fsm.state.players[0].scores["yacht"] = 0
+
+    msgs = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
+
+    assert _messages_of(msgs, MsgType.CUE.value) == []
 
 
 def test_cue_payload_carries_every_field_the_ui_reads():

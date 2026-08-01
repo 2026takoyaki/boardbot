@@ -200,9 +200,10 @@ YACHT_CUES: dict[str, Cue] = {
     "yacht_turn_transition": Cue(
         "turn_sweep", YACHT_SWEEP_WARM, brightness=100, rise_ms=300, hold_ms=600, fall_ms=500
     ),
-    # 야찌·라지스트레이트를 실제로 달성했을 때. 가장 길고 진하게 간다.
+    # 야찌·라지스트레이트 확정. 주사위가 멈춘 순간에 화면이 이미 크게 축하했으므로
+    # (yacht_hand_achieved — 조명은 관여하지 않는다) 여기서는 짧게 못 박아준다.
     "yacht_turn_transition_highlight": Cue(
-        "score_burst", YACHT_BURST_GOLD, brightness=100, rise_ms=300, hold_ms=1600, fall_ms=800
+        "score_burst", YACHT_BURST_GOLD, brightness=100, rise_ms=250, hold_ms=700, fall_ms=600
     ),
     # 후반 선두 역전.
     "yacht_turn_transition_lead_change": Cue(

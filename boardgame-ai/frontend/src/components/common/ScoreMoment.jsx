@@ -1,54 +1,36 @@
 import { useEffect, useRef, useState } from 'react'
 
 /**
- * 득점 순간 모달.
+ * 요트 연출 오버레이.
  *
- * FSM이 보낸 cue payload의 variant에 따라 연출이 갈린다. 한 판이 36턴이라
- * 일반 득점(normal)은 여기까지 오지 않고 화면 안에서 처리된다 — 이 모달은
- * "사건"에만 뜬다.
+ * 상자를 그리지 않는다. 테두리와 배경이 있으면 "창이 떴다"가 되고, 게임 화면과
+ * 분리된 별개의 물건처럼 보인다. 글자와 빛만 화면 위에 얹혀 나타났다 사라지는
+ * 편이 자연스럽다.
  *
- * duration_ms는 payload가 정한다. 같은 값으로 조명 Cue와 TTS가 함께 움직이므로
- * 여기서 임의로 늘이거나 줄이면 세 채널이 어긋난다.
+ * duration_ms는 payload가 정한다. 임의로 바꾸면 조명·TTS와 어긋난다.
+ * 단 yacht_hand_achieved(굴림 축하)는 조명이 관여하지 않으므로 화면만 신경 쓰면 된다.
  */
 
-// variant별 성격. 움직임의 방향이 곧 의미다 — 달성은 솟고, 실패는 떨어진다.
 const LOOKS = {
-  highlight: {
-    tint: 'oklch(0.80 0.15 85)',
-    glow: 'oklch(0.85 0.18 85)',
-    rise: true,
-    rays: true,
-    countUp: true,
-  },
+  // 주사위가 멈춘 순간. 조명 제약이 없어 가장 화려하게 간다.
+  hand: { tint: 'oklch(0.86 0.17 85)', glow: 'oklch(0.88 0.19 85)', rays: true, rise: true },
+  highlight: { tint: 'oklch(0.84 0.15 85)', glow: 'oklch(0.86 0.16 85)', rays: false, rise: true },
   lead_change: {
-    tint: 'oklch(0.78 0.13 230)',
-    glow: 'oklch(0.82 0.15 230)',
+    tint: 'oklch(0.80 0.14 230)',
+    glow: 'oklch(0.84 0.15 230)',
+    rays: false,
     rise: true,
-    rays: false,
-    countUp: true,
   },
-  zero: {
-    tint: 'oklch(0.62 0.02 250)',
-    glow: 'oklch(0.55 0.02 250)',
-    rise: false,
-    rays: false,
-    countUp: false,
-  },
-}
-
-const HEADLINES = {
-  highlight: (m) => (m.category_label || '').toUpperCase(),
-  lead_change: () => '역전',
-  zero: () => '아쉽네요',
+  zero: { tint: 'oklch(0.66 0.02 250)', glow: 'oklch(0.55 0.02 250)', rays: false, rise: false },
 }
 
 export default function ScoreMoment({ moment, onDone }) {
-  const look = LOOKS[moment?.variant]
+  const kind = moment?.cue === 'yacht_hand_achieved' ? 'hand' : moment?.variant
+  const look = LOOKS[kind]
 
   useEffect(() => {
     if (!moment || !look) return undefined
-    // 자동으로 닫힌다. 탭으로 넘기게 만들지 않는다 — 매 턴 손을 요구하면
-    // 연출이 아니라 절차가 된다.
+    // 자동으로 닫힌다. 매 턴 손을 요구하면 연출이 아니라 절차가 된다.
     const timer = setTimeout(() => onDone?.(), moment.duration_ms)
     return () => clearTimeout(timer)
   }, [moment, look, onDone])
@@ -56,178 +38,251 @@ export default function ScoreMoment({ moment, onDone }) {
   if (!moment || !look) return null
 
   const d = moment.duration_ms
-  // 진입 15% · 유지 · 퇴장 20%. 빠르게 들어오고 빠르게 빠져야 경쾌하다.
-  const enterMs = Math.round(d * 0.15)
-  const exitMs = Math.round(d * 0.2)
-  const exitDelay = d - exitMs
+  const enterMs = Math.round(d * 0.16)
+  const exitMs = Math.round(d * 0.22)
 
   return (
-    <div style={{ ...styles.overlay, animation: `sm-veil ${d}ms ease-out forwards` }}>
+    <div style={styles.overlay}>
       <style>{`
-        @keyframes sm-veil {
+        @keyframes ym-veil {
           0%   { opacity: 0; }
-          12%  { opacity: 1; }
-          80%  { opacity: 1; }
+          14%  { opacity: 1; }
+          78%  { opacity: 1; }
           100% { opacity: 0; }
         }
-        @keyframes sm-card-rise {
-          0%   { opacity: 0; transform: translateY(28px) scale(0.88); }
-          55%  { opacity: 1; transform: translateY(-6px) scale(1.04); }
-          75%  { transform: translateY(0) scale(1); }
-          100% { opacity: 1; transform: translateY(0) scale(1); }
+        @keyframes ym-rise {
+          0%   { opacity: 0; transform: translateY(34px) scale(0.86); }
+          52%  { opacity: 1; transform: translateY(-8px) scale(1.05); }
+          72%  { transform: translateY(0) scale(1); }
+          78%  { opacity: 1; transform: scale(1); }
+          100% { opacity: 0; transform: scale(1.06); }
         }
-        @keyframes sm-card-drop {
-          0%   { opacity: 0; transform: translateY(-18px) scale(1.03); }
-          45%  { opacity: 1; transform: translateY(4px) scale(1); }
-          62%  { transform: translateY(0) scale(1); }
-          70%  { transform: translateX(-5px); }
-          78%  { transform: translateX(5px); }
-          86%  { transform: translateX(-3px); }
-          100% { opacity: 1; transform: translateX(0); }
+        @keyframes ym-drop {
+          0%   { opacity: 0; transform: translateY(-20px) scale(1.04); }
+          42%  { opacity: 1; transform: translateY(5px) scale(1); }
+          58%  { transform: translateY(0); }
+          66%  { transform: translateX(-6px); }
+          74%  { transform: translateX(6px); }
+          82%  { opacity: 1; transform: translateX(0); }
+          100% { opacity: 0; transform: scale(0.97); }
         }
-        @keyframes sm-exit {
-          0%   { opacity: 1; transform: scale(1); }
-          100% { opacity: 0; transform: scale(0.94); }
+        @keyframes ym-glow {
+          0%   { opacity: 0; transform: scale(0.55); }
+          35%  { opacity: 0.95; transform: scale(1.12); }
+          78%  { opacity: 0.5; transform: scale(1); }
+          100% { opacity: 0; }
         }
-        @keyframes sm-glow {
-          0%   { opacity: 0; transform: scale(0.6); }
-          40%  { opacity: 0.9; transform: scale(1.1); }
-          100% { opacity: 0.35; transform: scale(1); }
+        @keyframes ym-rays {
+          0%   { opacity: 0; transform: rotate(-8deg) scale(0.65); }
+          30%  { opacity: 0.6; }
+          78%  { opacity: 0.28; }
+          100% { opacity: 0; transform: rotate(30deg) scale(1.2); }
         }
-        @keyframes sm-rays {
-          0%   { opacity: 0; transform: rotate(0deg) scale(0.7); }
-          35%  { opacity: 0.55; }
-          100% { opacity: 0.2; transform: rotate(26deg) scale(1.15); }
+        @keyframes ym-headline {
+          0%   { opacity: 0; transform: scale(0.62); letter-spacing: 0.34em; filter: blur(6px); }
+          58%  { opacity: 1; transform: scale(1.07); letter-spacing: 0.05em; filter: blur(0); }
+          100% { opacity: 1; transform: scale(1); letter-spacing: 0.07em; }
         }
-        @keyframes sm-headline {
-          0%   { opacity: 0; transform: scale(0.7); letter-spacing: 0.3em; }
-          60%  { opacity: 1; transform: scale(1.06); letter-spacing: 0.06em; }
-          100% { opacity: 1; transform: scale(1); letter-spacing: 0.08em; }
+        @keyframes ym-sub {
+          0%   { opacity: 0; transform: translateY(12px); }
+          100% { opacity: 1; transform: translateY(0); }
         }
-        @keyframes sm-rank-flip {
-          0%   { opacity: 0; transform: translateY(10px); }
+        @keyframes ym-row {
+          0%   { opacity: 0; transform: translateY(14px); }
           100% { opacity: 1; transform: translateY(0); }
         }
       `}</style>
 
-      {/* 뒤에서 번지는 빛. variant 색이 여기서 화면 전체 인상을 만든다. */}
+      <div
+        style={{
+          ...styles.veil,
+          animation: `ym-veil ${d}ms ease-out forwards`,
+        }}
+      />
       <div
         style={{
           ...styles.glow,
           background: `radial-gradient(circle, ${look.glow} 0%, transparent 62%)`,
-          animation: `sm-glow ${enterMs * 2}ms cubic-bezier(.2,.9,.3,1) forwards`,
+          animation: `ym-glow ${d}ms cubic-bezier(.2,.9,.3,1) forwards`,
         }}
       />
-
       {look.rays && (
-        <div
-          style={{
-            ...styles.rays,
-            animation: `sm-rays ${d}ms cubic-bezier(.15,.85,.3,1) forwards`,
-          }}
-        />
+        <div style={{ ...styles.rays, animation: `ym-rays ${d}ms ease-out forwards` }} />
       )}
 
       <div
         style={{
-          ...styles.card,
-          borderColor: `color-mix(in oklch, ${look.tint} 45%, transparent)`,
-          animation: [
-            `${look.rise ? 'sm-card-rise' : 'sm-card-drop'} ${enterMs * 2.4}ms `
-              + 'cubic-bezier(.2,.9,.25,1.15) both',
-            `sm-exit ${exitMs}ms ease-in ${exitDelay}ms forwards`,
-          ].join(', '),
+          ...styles.stage,
+          animation: `${look.rise ? 'ym-rise' : 'ym-drop'} ${d}ms `
+            + 'cubic-bezier(.2,.9,.25,1.1) forwards',
         }}
       >
-        <div
-          style={{
-            ...styles.headline,
-            color: look.tint,
-            textShadow: `0 0 32px color-mix(in oklch, ${look.glow} 55%, transparent)`,
-            animation: `sm-headline ${enterMs * 2.6}ms cubic-bezier(.2,.9,.25,1.2) both`,
-          }}
-        >
-          {HEADLINES[moment.variant](moment)}
-        </div>
-
-        {moment.variant === 'lead_change' ? (
-          <RankFlip moment={moment} tint={look.tint} enterMs={enterMs} />
-        ) : (
-          <ScoreLine moment={moment} look={look} enterMs={enterMs} />
-        )}
-
-        <div style={styles.scorer}>
-          {moment.scorer_name}
-          {moment.variant !== 'lead_change' && moment.took_lead && (
-            <span style={{ ...styles.leadBadge, color: 'oklch(0.78 0.13 230)' }}>
-              선두 탈환
-            </span>
-          )}
-        </div>
+        <Content kind={kind} moment={moment} look={look} enterMs={enterMs} exitMs={exitMs} />
       </div>
     </div>
   )
 }
 
-/** 점수 숫자. 달성 순간에는 숫자가 올라가는 것 자체가 연출이다. */
-function ScoreLine({ moment, look, enterMs }) {
-  const shown = useCountUp(look.countUp ? moment.score : null, enterMs * 2.2)
-  const value = look.countUp ? shown : moment.score
-
-  return (
-    <div style={styles.scoreRow}>
-      {moment.variant !== 'highlight' && (
-        <span style={styles.category}>{moment.category_label}</span>
-      )}
-      <span style={{ ...styles.score, color: look.tint }}>
-        {value}
-        <span style={styles.scoreUnit}>점</span>
-      </span>
-    </div>
-  )
+function Content({ kind, moment, look, enterMs }) {
+  if (kind === 'lead_change') return <LeadChange moment={moment} look={look} enterMs={enterMs} />
+  if (kind === 'zero') return <ZeroScore moment={moment} look={look} enterMs={enterMs} />
+  if (kind === 'hand') return <HandAchieved moment={moment} look={look} enterMs={enterMs} />
+  return <ScoreConfirmed moment={moment} look={look} enterMs={enterMs} />
 }
 
-/** 순위 뒤집힘. 누구를 제쳤는지가 이 순간의 내용이다. */
-function RankFlip({ moment, tint, enterMs }) {
+/** 주사위가 멈춘 순간. 조합 이름이 주인공이다. */
+function HandAchieved({ moment, look, enterMs }) {
   return (
-    <div style={styles.rankRow}>
-      <span style={{ ...styles.rankFrom, animation: `sm-rank-flip ${enterMs * 2}ms ease-out both` }}>
-        {moment.rank_before}위
-      </span>
-      <span style={styles.rankArrow}>→</span>
-      <span
+    <>
+      <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(44px, 11vw, 108px)' }}>
+        {moment.category_label}
+      </div>
+      <div
         style={{
-          ...styles.rankTo,
-          color: tint,
-          animation: `sm-rank-flip ${enterMs * 2}ms ease-out ${enterMs * 0.6}ms both`,
+          ...styles.sub,
+          animation: `ym-sub ${enterMs * 2}ms ease-out ${enterMs}ms both`,
         }}
       >
-        {moment.rank_after}위
-      </span>
-      {moment.previous_leader && (
-        <span style={styles.displaced}>{moment.previous_leader} 님을 제쳤습니다</span>
-      )}
-    </div>
+        {moment.scorer_name} 님 · {moment.score}점
+      </div>
+    </>
   )
 }
 
-/** 0 → target 까지 숫자를 굴린다. target이 null이면 카운트업을 쓰지 않는다. */
+/** 칸을 고른 뒤. 확인시켜주는 역할이라 숫자만 크게. */
+function ScoreConfirmed({ moment, look, enterMs }) {
+  const shown = useCountUp(moment.score, enterMs * 2.2)
+  return (
+    <>
+      <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(52px, 13vw, 120px)' }}>
+        {shown}
+        <span style={styles.unit}>점</span>
+      </div>
+      <div
+        style={{
+          ...styles.sub,
+          animation: `ym-sub ${enterMs * 2}ms ease-out ${enterMs}ms both`,
+        }}
+      >
+        {moment.category_label} · {moment.scorer_name} 님
+      </div>
+    </>
+  )
+}
+
+/**
+ * 0점. 어떤 칸을 버렸는지는 굳이 알리지 않는다 — 이미 본인이 고른 것이고,
+ * "풀하우스 0점"은 실패를 두 번 말하는 셈이다.
+ */
+function ZeroScore({ look, enterMs }) {
+  return (
+    <>
+      <div
+        style={{
+          ...styles.sub,
+          marginBottom: 10,
+          animation: `ym-sub ${enterMs * 2}ms ease-out both`,
+        }}
+      >
+        점수를 넣을 칸이 없었어요
+      </div>
+      <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(44px, 11vw, 96px)' }}>
+        0<span style={styles.unit}>점</span>
+      </div>
+    </>
+  )
+}
+
+/**
+ * 역전. 순위표가 실제로 자리를 바꾸며 올라가는 것이 이 순간의 내용이다.
+ * 3등에서 2등도 역전이므로 1등만 특별 취급하지 않는다.
+ */
+const ROW_HEIGHT = 46
+
+function LeadChange({ moment, look, enterMs }) {
+  const standings = Array.isArray(moment.standings) ? moment.standings : []
+  // DOM 순서는 고정하고 자리만 옮긴다. 목록 자체를 다시 정렬하면 React가 노드를
+  // 갈아끼워 애니메이션이 끊긴다.
+  const rows = [...standings].sort((a, b) => a.rank_before - b.rank_before)
+  const [settled, setSettled] = useState(false)
+
+  useEffect(() => {
+    // 이전 순위를 한 박자 보여준 뒤 미끄러진다. 곧바로 정렬해버리면 무엇이
+    // 바뀌었는지 눈으로 따라갈 수 없다.
+    const timer = setTimeout(() => setSettled(true), enterMs * 1.7)
+    return () => clearTimeout(timer)
+  }, [moment, enterMs])
+
+  const slotOf = (row) => (settled ? row.rank_after : row.rank_before) - 1
+
+  return (
+    <>
+      <div style={{ ...headlineStyle(look, enterMs), fontSize: 'clamp(38px, 9vw, 78px)' }}>
+        역전
+      </div>
+      <div style={{ ...styles.standings, height: rows.length * ROW_HEIGHT }}>
+        {rows.map((row, domIndex) => {
+          const moved = row.rank_after !== row.rank_before
+          const isScorer = row.player_id === moment.scorer_id
+          const climbed = row.rank_after < row.rank_before
+          return (
+            <div
+              key={row.player_id}
+              style={{
+                ...styles.standingRow,
+                top: domIndex * ROW_HEIGHT,
+                transform: `translateY(${(slotOf(row) - domIndex) * ROW_HEIGHT}px)`,
+                transition: 'transform 620ms cubic-bezier(.3,.9,.25,1.05), color 400ms ease',
+                color: isScorer ? look.tint : 'var(--fg-soft)',
+                fontWeight: isScorer ? 800 : 600,
+                animation: `ym-row ${enterMs * 1.8}ms ease-out ${domIndex * 70}ms both`,
+              }}
+            >
+              <span style={styles.standingRank}>{slotOf(row) + 1}</span>
+              <span style={styles.standingName}>{row.playername}</span>
+              <span style={styles.standingTotal}>{row.total}</span>
+              <span
+                style={{
+                  ...styles.standingDelta,
+                  color: climbed ? 'oklch(0.78 0.14 150)' : 'oklch(0.68 0.14 25)',
+                  opacity: moved && settled ? 1 : 0,
+                  transition: 'opacity 300ms ease',
+                }}
+              >
+                {climbed ? '▲' : '▼'}
+                {Math.abs(row.rank_after - row.rank_before)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
+function headlineStyle(look, enterMs) {
+  return {
+    ...styles.headline,
+    color: look.tint,
+    textShadow: `0 0 46px color-mix(in oklch, ${look.glow} 62%, transparent),`
+      + ' 0 3px 18px rgba(0,0,0,0.55)',
+    animation: `ym-headline ${enterMs * 2.6}ms cubic-bezier(.2,.9,.25,1.2) both`,
+  }
+}
+
 function useCountUp(target, durationMs) {
-  const [value, setValue] = useState(target == null ? null : 0)
+  const [value, setValue] = useState(0)
   const frameRef = useRef(0)
 
   useEffect(() => {
-    if (target == null) return undefined
-    if (target === 0) {
-      setValue(0)
+    if (!target) {
+      setValue(target ?? 0)
       return undefined
     }
     const start = performance.now()
     const tick = (now) => {
       const t = Math.min(1, (now - start) / durationMs)
-      // 끝에서 감속 — 마지막 숫자에 안착하는 느낌.
-      const eased = 1 - (1 - t) ** 3
-      setValue(Math.round(target * eased))
+      setValue(Math.round(target * (1 - (1 - t) ** 3)))
       if (t < 1) frameRef.current = requestAnimationFrame(tick)
     }
     frameRef.current = requestAnimationFrame(tick)
@@ -245,76 +300,79 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    // 탭을 가로채지 않는다. 자동으로 닫히므로 막을 이유가 없다.
     pointerEvents: 'none',
-    background: 'color-mix(in oklch, var(--bg-deep) 62%, transparent)',
-    backdropFilter: 'blur(3px)',
+  },
+  // 상자 대신 화면 전체를 살짝 눌러 글자가 읽히게만 한다.
+  veil: {
+    position: 'absolute',
+    inset: 0,
+    background:
+      'radial-gradient(ellipse at center, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.34) 55%,'
+      + ' rgba(0,0,0,0.12) 100%)',
   },
   glow: {
     position: 'absolute',
-    width: 'min(160vw, 1100px)',
-    height: 'min(160vw, 1100px)',
+    width: 'min(170vw, 1200px)',
+    height: 'min(170vw, 1200px)',
     borderRadius: '50%',
-    filter: 'blur(30px)',
+    filter: 'blur(40px)',
   },
   rays: {
     position: 'absolute',
-    width: 'min(150vw, 1000px)',
-    height: 'min(150vw, 1000px)',
+    width: 'min(160vw, 1100px)',
+    height: 'min(160vw, 1100px)',
     background:
-      'repeating-conic-gradient(from 0deg, oklch(0.9 0.14 85 / 0.5) 0deg 5deg,'
-      + ' transparent 5deg 16deg)',
-    maskImage: 'radial-gradient(circle, #000 12%, transparent 62%)',
-    WebkitMaskImage: 'radial-gradient(circle, #000 12%, transparent 62%)',
+      'repeating-conic-gradient(from 0deg, oklch(0.92 0.16 85 / 0.55) 0deg 4deg,'
+      + ' transparent 4deg 15deg)',
+    maskImage: 'radial-gradient(circle, transparent 8%, #000 22%, transparent 60%)',
+    WebkitMaskImage: 'radial-gradient(circle, transparent 8%, #000 22%, transparent 60%)',
   },
-  card: {
+  stage: {
     position: 'relative',
-    minWidth: 'min(86vw, 460px)',
-    padding: '40px 52px 34px',
-    borderRadius: 'var(--radius-xl)',
-    border: '1px solid',
-    background: 'color-mix(in oklch, var(--bg-surface) 88%, transparent)',
-    boxShadow: 'var(--shadow-lg)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '0 24px',
     textAlign: 'center',
   },
-  headline: {
-    fontSize: 'clamp(30px, 6vw, 52px)',
-    fontWeight: 900,
-    lineHeight: 1.05,
-    marginBottom: 18,
+  headline: { fontWeight: 900, lineHeight: 1, whiteSpace: 'nowrap' },
+  unit: { fontSize: '0.36em', fontWeight: 800, marginLeft: 6, opacity: 0.75 },
+  sub: {
+    marginTop: 14,
+    fontSize: 'clamp(16px, 2.6vw, 22px)',
+    fontWeight: 600,
+    color: 'var(--fg-soft)',
+    textShadow: '0 2px 12px rgba(0,0,0,0.6)',
   },
-  scoreRow: {
-    display: 'flex',
-    alignItems: 'baseline',
-    justifyContent: 'center',
-    gap: 14,
-    marginBottom: 16,
+  standings: {
+    position: 'relative',
+    marginTop: 22,
+    width: 'min(82vw, 360px)',
   },
-  category: { fontSize: 22, fontWeight: 600, color: 'var(--fg-soft)' },
-  score: { fontSize: 'clamp(40px, 8vw, 68px)', fontWeight: 900, lineHeight: 1 },
-  scoreUnit: { fontSize: 22, fontWeight: 700, marginLeft: 4, color: 'var(--fg-mute)' },
-  rankRow: {
+  standingRow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: ROW_HEIGHT,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
     gap: 12,
-    marginBottom: 16,
+    padding: '0 4px',
+    fontSize: 'clamp(17px, 3vw, 23px)',
+    textShadow: '0 2px 12px rgba(0,0,0,0.6)',
   },
-  rankFrom: {
-    fontSize: 30,
-    fontWeight: 700,
-    color: 'var(--fg-mute)',
-    textDecoration: 'line-through',
+  standingRank: {
+    width: 26,
+    textAlign: 'right',
+    fontFamily: 'var(--font-mono)',
+    opacity: 0.7,
   },
-  rankArrow: { fontSize: 26, color: 'var(--fg-faint)' },
-  rankTo: { fontSize: 46, fontWeight: 900, lineHeight: 1 },
-  displaced: {
-    flexBasis: '100%',
-    fontSize: 15,
-    color: 'var(--fg-mute)',
-    marginTop: 2,
+  standingName: { flex: 1, textAlign: 'left' },
+  standingTotal: { fontFamily: 'var(--font-mono)', fontWeight: 700 },
+  standingDelta: {
+    width: 34,
+    fontSize: '0.72em',
+    fontWeight: 800,
+    color: 'oklch(0.80 0.14 230)',
   },
-  scorer: { fontSize: 19, fontWeight: 600, color: 'var(--fg-soft)' },
-  leadBadge: { marginLeft: 10, fontSize: 14, fontWeight: 800 },
 }

@@ -61,6 +61,39 @@ def test_every_fsm_cue_name_has_a_mapping():
     assert set(_CUE_BUDGETS) <= mapped
 
 
+def test_roll_time_celebration_never_touches_the_light():
+    """굴림 구간은 주사위 인식이 걸린 곳이라 조명이 흔들려선 안 된다.
+
+    yacht_hand_achieved는 화면만 쓰는 연출이다. 매핑에 이름이 없으면 조명이
+    그냥 무시하므로, 누군가 "빠진 것 같다"며 채워 넣지 않도록 못을 박는다.
+    """
+    assert "yacht_hand_achieved" not in build_cue_map()
+
+
+@pytest.mark.asyncio
+async def test_roll_time_cue_sends_no_light_command():
+    driver = MockDriver()
+    controller = build_controller(LightConfig(driver="mock"))
+    controller._driver = driver
+
+    controller.on_message(
+        WSMessage(
+            msg_type=MsgType.STATE_UPDATE.value,
+            payload={"phase": YachtPhase.AWAITING_KEEP.value},
+        ),
+        game="yacht",
+    )
+    await _settle()
+    driver.applied.clear()
+
+    controller.on_message(
+        WSMessage.make_cue("yacht_hand_achieved", {"duration_ms": 2600}), game="yacht"
+    )
+    await asyncio.sleep(0.3)
+
+    assert driver.applied == [], "굴림 축하가 조명을 건드렸다"
+
+
 # ── 페이즈 이름 계약 (§3.4 동결 목록) ────────────────────────────────────────
 
 
