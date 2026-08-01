@@ -26,6 +26,8 @@ const UPPER = ['ones', 'twos', 'threes', 'fours', 'fives', 'sixes']
 const DISPLAY_CATEGORIES = CATEGORY_LABELS.filter(([key]) => key !== 'bonus').map(([key]) => key)
 // 한 사람이 채우는 칸 수 = 전체 라운드 수. bonus는 계산 결과라 칸이 아니다.
 const TOTAL_ROUNDS = DISPLAY_CATEGORIES.length
+// 백엔드 YachtPhase.GAME_END 와 같은 값. 요트 페이즈는 대문자 규약이다.
+const GAME_END_PHASE = 'GAME_END'
 const SHOW_MANUAL_ROLL = import.meta.env.VITE_SHOW_MANUAL_ROLL === 'true'
 const SHOW_DICE_MANUAL_INPUT = import.meta.env.VITE_SHOW_DICE_MANUAL_INPUT !== 'false'
 const TUTORIAL_GUIDE_STEPS = [
@@ -721,7 +723,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   // 게임이 끝나면 남은 연출을 버린다. 결과 화면 위로 지난 턴의 모달이 뒤늦게
   // 떠오르거나, 다시 시작한 판에 앞 판의 연출이 튀어나오는 것을 막는다.
   useEffect(() => {
-    if (state?.phase !== YachtPhase.GAME_END.value) return
+    if (state?.phase !== GAME_END_PHASE) return
     setMomentQueue([])
     setRecentScore(null)
   }, [state?.phase])
