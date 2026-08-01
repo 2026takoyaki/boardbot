@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ from backend.ws.tablet import tablet_ws_handler
 from backend.yacht_runner import YachtRunner
 from backend.yacht_session import YachtSession
 from bridge.local_bridge import LocalBridge
-from bulb import build_controller
+from bulb import LightConfig, build_controller
 from vision.camera import CameraManager
 from vision.yacht.config import VisionConfig
 
@@ -58,6 +59,15 @@ if _creds and not Path(_creds).is_absolute():
 async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
 
+    # 개발 모드 여부는 여러 곳에서 분기하므로 가장 먼저 확정한다.
+    dev_mode = is_dev_mode()
+    if dev_mode:
+        logger.warning(
+            "개발 모드입니다 (%s=1). 카메라·비전 파이프라인을 띄우지 않고 "
+            "개발 입력을 허용합니다. 시연에서는 절대 켜지 마세요.",
+            DEV_ENV_VAR,
+        )
+
     # 측정 모드 (BENCH_TRACE=1) — 가장 먼저 시작해야 이후 모든 bench_log 호출이 살아남음.
     from benchmarks.session import BenchmarkSession
     bench_session = BenchmarkSession()
@@ -74,9 +84,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("TTS engine not available — STATIC/SESSION 캐시 hit만 동작")
 
-    # 조명: 전구가 없어도(기본 mock 드라이버) 서버는 그대로 뜬다.
+    # 조명: 전구가 없어도 서버는 그대로 뜬다.
     # 실제 전구는 LIGHT_DRIVER=yeelight + LIGHT_BULB_IP 로 opt-in.
-    light_controller = build_controller(broadcast=ws_manager.broadcast)
+    #
+    # broadcast_message를 넘긴다. broadcast는 payload를 state_update 봉투로
+    # 감싸버려서 조명 메시지가 상태 갱신으로 둔갑한다.
+    #
+    # 개발 모드에서는 frontend 드라이버가 기본이다. 전구가 없는데 mock으로 두면
+    # 조명이 무슨 색인지 로그를 뒤져야만 알 수 있어 조율이 불가능하다.
+    light_config = LightConfig.from_env()
+    if dev_mode and os.environ.get("LIGHT_DRIVER") is None:
+        light_config = replace(light_config, driver="frontend")
+    light_controller = build_controller(
+        config=light_config, broadcast=ws_manager.broadcast_message
+    )
     # 로비·좌석 등록 구간의 밝기는 이 기본값이 유일한 보장이다 — 로비는
     # 세션을 거치지 않고 브로드캐스트해서 조명 스트림에 잡히지 않는다.
     await light_controller.start()
@@ -93,14 +114,6 @@ async def lifespan(app: FastAPI):
 
     # 개발 모드에서는 카메라도 비전도 띄우지 않는다. YOLO·MediaPipe 로딩만
     # 몇 초가 걸리는데 개발 입력은 어차피 이벤트를 직접 주입하므로 쓸 일이 없다.
-    dev_mode = is_dev_mode()
-    if dev_mode:
-        logger.warning(
-            "개발 모드입니다 (%s=1). 카메라·비전 파이프라인을 띄우지 않고 "
-            "개발 입력을 허용합니다. 시연에서는 절대 켜지 마세요.",
-            DEV_ENV_VAR,
-        )
-
     camera_index = int(os.environ.get("CAMERA_INDEX", "0"))
     camera = CameraManager(source=camera_index, resolution=None, fps=30)
     # 비전 → 활성 YachtSession.fsm 라우터. LocalBridge에 자동 핸들러 등록됨.

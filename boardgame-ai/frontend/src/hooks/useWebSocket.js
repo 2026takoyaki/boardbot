@@ -22,16 +22,18 @@ const AUDIO_MSG_TYPES = new Set([
  * 되살아나면 안 되고, 놓친 큐를 나중에 재생해서도 안 된다.
  */
 export function useWebSocket(path, options = {}) {
-  const { onAudioMessage, onCue } = options
+  const { onAudioMessage, onCue, onLightState } = options
   const [state, setState] = useState(null)
   const [connected, setConnected] = useState(false)
   const [messages, setMessages] = useState([])
   const ws = useRef(null)
   const onAudioRef = useRef(onAudioMessage)
   const onCueRef = useRef(onCue)
+  const onLightStateRef = useRef(onLightState)
   const benchSeq = useRef(0)
   useEffect(() => { onAudioRef.current = onAudioMessage }, [onAudioMessage])
   useEffect(() => { onCueRef.current = onCue }, [onCue])
+  useEffect(() => { onLightStateRef.current = onLightState }, [onLightState])
 
   useEffect(() => {
     let destroyed = false
@@ -97,6 +99,9 @@ export function useWebSocket(path, options = {}) {
           }
           if (msg.msg_type === 'cue' && onCueRef.current) {
             try { onCueRef.current(msg.payload) } catch (_) {}
+          }
+          if (msg.msg_type === 'light_state' && onLightStateRef.current) {
+            try { onLightStateRef.current(msg.payload) } catch (_) {}
           }
         } catch (_) {}
       }

@@ -213,15 +213,47 @@ def test_ordinary_rolls_do_not_celebrate():
     assert _messages_of(msgs, MsgType.CUE.value) == []
 
 
-def test_no_celebration_when_the_category_is_already_used():
-    """'요트!'라고 띄워놓고 다른 칸에 넣게 하는 것은 축하가 아니라 약올리기다."""
+def test_celebration_falls_back_to_the_next_open_combination():
+    """야찌 칸이 찼어도 그 눈은 여전히 포카드다. 넣을 수 있는 것을 축하한다."""
     fsm = YachtFSM(["p1", "p2"])
     fsm.start()
     fsm.state.players[0].scores["yacht"] = 0
 
     msgs = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
+    payload = _cue_payload(msgs)
+
+    assert payload["category"] == "four_of_a_kind"
+
+
+def test_no_celebration_when_every_matching_category_is_used():
+    """'요트!'라고 띄워놓고 넣을 곳이 없으면 축하가 아니라 약올리기다."""
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    for category in ("yacht", "four_of_a_kind"):
+        fsm.state.players[0].scores[category] = 0
+
+    msgs = fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=[5, 5, 5, 5, 5]))
 
     assert _messages_of(msgs, MsgType.CUE.value) == []
+
+
+def test_combination_tiers_scale_with_rarity():
+    """다 똑같이 터뜨리면 야찌가 스몰 스트레이트와 같은 무게가 된다."""
+    def tier_of(dice):
+        fsm = YachtFSM(["p1", "p2"])
+        fsm.start()
+        return _cue_payload(
+            fsm.handle_event(_event(YachtEventType.ROLL_CONFIRMED.value, dice=dice))
+        )
+
+    yacht = tier_of([5, 5, 5, 5, 5])
+    large = tier_of([1, 2, 3, 4, 5])
+    small = tier_of([1, 2, 3, 4, 4])
+
+    assert yacht["tier"] == "legendary"
+    assert large["tier"] == "epic"
+    assert small["tier"] == "nice"
+    assert yacht["duration_ms"] > large["duration_ms"] > small["duration_ms"]
 
 
 def test_cue_payload_carries_every_field_the_ui_reads():
@@ -315,8 +347,8 @@ def test_late_game_lead_change_is_an_upset():
     assert payload["previous_leader"] == "p1"
 
 
-def test_achieved_special_hand_outranks_a_simultaneous_lead_change():
-    """야찌로 역전하면 야찌가 주인공이다. 더 드물고 더 상징적이다."""
+def test_lead_change_outranks_a_special_hand_at_confirm_time():
+    """조합은 주사위가 멈춘 순간에 이미 축하했다. 확정 시점의 주인공은 순위 변동이다."""
     fsm = YachtFSM(["p1", "p2"])
     fsm.start()
     # p1 30점 선두, p2 6점. 야찌 50점이면 뒤집힌다.
@@ -328,7 +360,29 @@ def test_achieved_special_hand_outranks_a_simultaneous_lead_change():
     payload = _cue_payload(_score(fsm, "yacht", "p2", dice=[5, 5, 5, 5, 5]))
 
     assert payload["took_lead"] is True
-    assert payload["variant"] == "highlight"
+    assert payload["variant"] == "lead_change"
+
+
+def test_climbing_without_taking_first_is_still_an_upset():
+    """3등에서 2등도 역전이다. 1등 뺏기만 역전이라 하면 연출이 특정 플레이어에게만 붙는다."""
+    fsm = YachtFSM(["p1", "p2", "p3"])
+    fsm.start()
+    filled = ("ones", "twos", "threes", "fours", "fives", "choice")
+    for category in filled:
+        fsm.state.players[0].scores[category] = 10   # 부동의 1위
+        fsm.state.players[1].scores[category] = 4    # 2위
+        fsm.state.players[2].scores[category] = 3    # 3위
+
+    _score(fsm, "sixes", "p1", dice=[1, 2, 3, 4, 6], score=0)
+    _score(fsm, "sixes", "p2", dice=[1, 2, 3, 4, 6], score=0)
+    # p3가 2위는 제치되 1위에는 못 미치는 점수.
+    payload = _cue_payload(_score(fsm, "sixes", "p3", dice=[6, 6, 2, 3, 4], score=12))
+
+    assert payload["rank_before"] == 3
+    assert payload["rank_after"] == 2
+    assert payload["overtook"] is True
+    assert payload["took_lead"] is False
+    assert payload["variant"] == "lead_change"
 
 
 def test_game_end_emits_finish_cue_without_next_player():

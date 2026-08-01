@@ -549,10 +549,6 @@ const s = {
 
 const SCORE_CUES = new Set(['yacht_turn_transition', 'yacht_game_finish'])
 
-// 일반 득점은 모달까지 가지 않는다. 한 판이 36턴이라 전부 화면을 멈춰세우면
-// 아무것도 특별하지 않고 게임만 늘어진다.
-const INLINE_ONLY_VARIANTS = new Set(['normal'])
-
 export default function YachtGame({ players, tutorialMode = false, onExit, onChangePlayers }) {
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
   const [diceEditMode, setDiceEditMode] = useState(false)
@@ -563,24 +559,43 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const [bgmEnabled, setBgmEnabled] = useState(true)
   const [turnPulseKey, setTurnPulseKey] = useState(0)
   const [recentScore, setRecentScore] = useState(null)
-  const [moment, setMoment] = useState(null)
+  // 연출 대기열. 득점과 보너스처럼 한 번에 두 사건이 겹칠 수 있어 순서대로 튼다.
+  // 밀리면 오래된 것부터 버린다 — 지나간 턴의 연출을 뒤늦게 보여줄 이유가 없다.
+  const [momentQueue, setMomentQueue] = useState([])
   const [scoreRowPaddingY, setScoreRowPaddingY] = useState(null)
   const scoreWrapRef = useRef(null)
   const startedRef = useRef(false)
   const previousRollRef = useRef(null)
+  const momentSeqRef = useRef(0)
   const previousTutorialResetKeyRef = useRef('')
   const lastTutorialTtsKeyRef = useRef('')
 
   // 득점 순간을 diff로 추론하지 않고 백엔드가 보낸 cue를 그대로 받는다.
   // 같은 payload의 duration_ms로 조명·TTS가 함께 움직이므로 세 채널이 어긋나지 않는다.
+  const enqueueMoment = useCallback((payload) => {
+    // 같은 종류가 연달아 와도 애니메이션이 다시 돌도록 매번 다른 키를 붙인다.
+    // 키가 없으면 React가 DOM을 재사용해서, 앞사람과 같은 연출인 뒷사람은
+    // 아무것도 안 뜬 것처럼 보인다.
+    const keyed = { ...payload, momentKey: `${payload.cue}-${momentSeqRef.current++}` }
+    setMomentQueue(queue => [...queue, keyed].slice(-2))
+  }, [])
+
+  const dismissMoment = useCallback(() => setMomentQueue(queue => queue.slice(1)), [])
+
   const handleCue = useCallback((payload) => {
     if (!payload) return
 
     // 주사위가 멈춘 순간의 축하. 아직 점수를 고르기 전이라 점수판은 건드리지
     // 않는다. 조명도 이 큐에는 반응하지 않는다 — 굴림 구간은 인식이 걸린 곳이다.
     if (payload.cue === 'yacht_hand_achieved') {
-      setMoment(payload)
+      enqueueMoment(payload)
       playLocalSfx('score_select')
+      return
+    }
+
+    // 상단 보너스. 득점 연출 바로 뒤에 이어진다.
+    if (payload.cue === 'yacht_bonus_achieved') {
+      enqueueMoment(payload)
       return
     }
 
@@ -599,11 +614,11 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     })
     playLocalSfx(isFinish ? 'game_end' : 'score_select')
 
-    // 게임 종료는 전용 결과 화면이 따로 있으므로 모달을 겹치지 않는다.
-    if (!INLINE_ONLY_VARIANTS.has(variant) && !isFinish) {
-      setMoment(payload)
-    }
-  }, [])
+    // 상단 숫자든 족보든 "+n점"은 똑같이 뜬다. 어떤 칸이냐에 따라 반응이
+    // 달라지면 플레이어는 규칙을 하나 더 외워야 한다.
+    // 게임 종료만 예외 — 전용 결과 화면이 따로 있어 겹치지 않는다.
+    if (!isFinish) enqueueMoment(payload)
+  }, [enqueueMoment])
 
   const { state, connected, messages, send } = useWebSocket('/ws/yacht', {
     onAudioMessage: audioApi.enqueue,
@@ -702,6 +717,14 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     const timeout = window.setTimeout(() => setRecentScore(null), recentScore.holdMs)
     return () => window.clearTimeout(timeout)
   }, [recentScore])
+
+  // 게임이 끝나면 남은 연출을 버린다. 결과 화면 위로 지난 턴의 모달이 뒤늦게
+  // 떠오르거나, 다시 시작한 판에 앞 판의 연출이 튀어나오는 것을 막는다.
+  useEffect(() => {
+    if (state?.phase !== YachtPhase.GAME_END.value) return
+    setMomentQueue([])
+    setRecentScore(null)
+  }, [state?.phase])
 
   const currentPlayer = useMemo(
     () => state?.players?.find(p => p.player_id === state.current_player_id),
@@ -889,7 +912,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
   return (
     <div style={s.page}>
-      <ScoreMoment moment={moment} onDone={() => setMoment(null)} />
+      <ScoreMoment moment={momentQueue[0] ?? null} onDone={dismissMoment} />
       <RoundBanner round={round} total={TOTAL_ROUNDS} />
       <DevPanel
         title="요트"

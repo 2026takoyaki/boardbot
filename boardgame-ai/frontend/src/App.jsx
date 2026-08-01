@@ -4,6 +4,7 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { useAudioPlayer, audio as audioApi } from './hooks/useAudioPlayer'
 import { useBenchBridge } from './hooks/useBenchBridge'
 import DevPanel from './components/common/DevPanel'
+import LightStrip from './components/common/LightStrip'
 import SeatRegistration from './components/common/SeatRegistration'
 import { colorForIndex } from './components/common/seatColors'
 import { orderForTurn, physicalSeatOrder } from './components/common/turnOrder'
@@ -35,8 +36,12 @@ export default function App() {
   const [firstPlayerId, setFirstPlayerId] = useState(null)
   const [direction, setDirection] = useState('cw')
 
+  // 조명은 게임 소켓이 아니라 태블릿 소켓으로 온다. App은 어느 페이지에서도
+  // 마운트돼 있어 게임 중에도 계속 받는다.
+  const [light, setLight] = useState(null)
   const { state, connected, send } = useWebSocket('/ws/tablet', {
     onAudioMessage: audioApi.enqueue,
+    onLightState: setLight,
   })
   useAudioPlayer(send)
   useBenchBridge(send)
@@ -209,6 +214,7 @@ export default function App() {
   return (
     <>
       {pageEl}
+      <LightStrip light={light} />
       {/* 게임 페이지는 각자 자기 패널을 띄우므로 로비 영역에서만 렌더한다. */}
       {(page === 'seat' || page === 'lobby') && (
         <DevPanel

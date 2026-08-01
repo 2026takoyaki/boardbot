@@ -10,7 +10,12 @@ from core.envelope import WSMessage
 from core.events import FusionContext, GameEvent
 from core.models import Player
 from games.base_fsm import BaseFSM
-from games.yacht.scoring import calculate_score
+from games.yacht.scoring import (
+    UPPER_BONUS_SCORE,
+    UPPER_BONUS_THRESHOLD,
+    calculate_score,
+    upper_subtotal,
+)
 from games.yacht.state import YachtEventType, YachtGameState, YachtInputType, YachtPhase
 
 logger = logging.getLogger(__name__)
@@ -30,14 +35,26 @@ _CATEGORY_TTS_LABELS: dict[str, str] = {
     "yacht": "요트",
 }
 
-# 달성 자체가 사건인 족보. 굴림 축하도 이 목록을 쓴다 — 크게 축하한 조합이
-# 점수 확정 때도 크게 대접받아야 앞뒤가 맞는다.
+# 굴림 축하 대상과 그 강도.
 #
-# 순서가 곧 우선순위다. 한 굴림이 여러 조합을 만족할 수 있으므로(예: 야찌는
-# 포카드이기도 하다) 더 희귀한 것부터 본다. frozenset을 쓰면 순회 순서가
-# 비결정적이라 같은 눈에도 다른 축하가 뜬다.
-_HIGHLIGHT_ORDER: tuple[str, ...] = ("yacht", "large_straight")
-_HIGHLIGHT_CATEGORIES: frozenset[str] = frozenset(_HIGHLIGHT_ORDER)
+# 순서가 곧 우선순위다. 한 굴림이 여러 조합을 만족할 수 있으므로(야찌는
+# 포카드이기도 하고 라지스트레이트는 스몰스트레이트이기도 하다) 더 희귀한
+# 것부터 본다. frozenset을 쓰면 순회 순서가 비결정적이라 같은 눈에도 다른
+# 축하가 떴다.
+#
+# tier는 화면이 연출 크기를 고르는 데 쓴다. 다 똑같이 터뜨리면 야찌가 스몰
+# 스트레이트와 같은 무게가 되어 아무것도 특별하지 않다.
+_HAND_TIERS: tuple[tuple[str, str], ...] = (
+    ("yacht", "legendary"),
+    ("large_straight", "epic"),
+    ("four_of_a_kind", "great"),
+    ("full_house", "good"),
+    ("small_straight", "nice"),
+)
+
+# 조명이 크게 반응할 족보. 굴림 축하 대상보다 좁다 — 요트는 조명이 곧 인식
+# 조명이라 자주 흔들 수 없다.
+_HIGHLIGHT_CATEGORIES: frozenset[str] = frozenset({"yacht", "large_straight"})
 
 # 선두 역전을 사건으로 칠 최소 진행도 (채운 족보 수).
 #
@@ -52,16 +69,27 @@ _LEAD_CHANGE_MIN_FILLED = 7
 _CUE_DURATION_MS: dict[str, int] = {
     "normal": 1600,
     "zero": 1400,        # 아쉬움은 짧게 — 실패를 길게 보여줄 이유가 없다
-    "lead_change": 2600,
+    # 순위표가 이전 순위를 보여준 뒤 미끄러져야 해서 다른 것보다 길다.
+    "lead_change": 3600,
     # 특별 조합은 주사위가 멈춘 순간에 이미 크게 축하했다. 여기서는 점수만
     # 확인시켜주면 되므로 짧게 끝낸다.
     "highlight": 1800,
 }
 _GAME_FINISH_CUE_DURATION_MS = 4000
 
-# 굴림 축하. 조명이 관여하지 않으므로 인식 예산에 묶이지 않는다 — 화면만
-# 쓰는 연출이라 마음껏 길어도 되지만, 아직 점수를 고르기 전이라 길면 방해가 된다.
-_HAND_CUE_DURATION_MS = 2600
+# 굴림 축하. 조명이 관여하지 않으므로 인식 예산에 묶이지 않는다 — 화면만 쓰는
+# 연출이다. 다만 아직 점수를 고르기 전이라 길면 방해가 되므로, 흔한 조합일수록
+# 짧게 끝낸다.
+_HAND_TIER_DURATION_MS: dict[str, int] = {
+    "legendary": 2800,
+    "epic": 2400,
+    "great": 1800,
+    "good": 1500,
+    "nice": 1200,
+}
+
+# 상단 보너스 확정. 게임 내내 쌓아온 것이 한 번에 터지는 순간이라 넉넉히 준다.
+_BONUS_CUE_DURATION_MS = 2600
 
 
 def _ranking(players: list[Any]) -> dict[str, int]:
@@ -69,6 +97,18 @@ def _ranking(players: list[Any]) -> dict[str, int]:
     distinct_totals = sorted({p.total for p in players}, reverse=True)
     rank_of_total = {total: index + 1 for index, total in enumerate(distinct_totals)}
     return {p.player_id: rank_of_total[p.total] for p in players}
+
+
+def _with_bonus(messages: list[WSMessage], bonus_cue: WSMessage | None) -> list[WSMessage]:
+    """보너스 큐를 득점 큐 뒤에 끼워 넣는다.
+
+    순서가 곧 연출 순서다 — "+18점" 다음에 "보너스 +35점"이 와야 쌓인 것이
+    터지는 흐름이 된다. 반대로 오면 보너스가 어디서 나왔는지 알 수 없다.
+    """
+    if bonus_cue is None:
+        return messages
+    # 마지막은 FusionContext라 그 앞에 넣는다.
+    return [*messages[:-1], bonus_cue, messages[-1]]
 
 
 def _sole_leader(players: list[Any]) -> Any | None:
@@ -291,6 +331,7 @@ class YachtFSM(BaseFSM):
         # 순위 변동은 점수를 쓰기 전에 찍어둬야 알 수 있다.
         ranks_before = _ranking(self.state.players)
         leader_before = _sole_leader(self.state.players)
+        bonus_before = upper_subtotal(current_player.scores) >= UPPER_BONUS_THRESHOLD
 
         current_player.scores[str(category)] = score
         scorer_name = current_player.playername
@@ -303,6 +344,24 @@ class YachtFSM(BaseFSM):
             score=score,
             ranks_before=ranks_before,
             leader_before=leader_before,
+        )
+        # 상단 보너스는 방금 넣은 점수 때문에 확정될 수 있다. 게임 내내 쌓아온
+        # 것이 한 번에 붙는 순간이라 득점과 별개의 사건으로 알린다.
+        bonus_cue = (
+            None
+            if bonus_before or upper_subtotal(current_player.scores) < UPPER_BONUS_THRESHOLD
+            else WSMessage.make_cue(
+                cue="yacht_bonus_achieved",
+                payload={
+                    "scorer_id": current_player.player_id,
+                    "scorer_name": current_player.playername,
+                    "score": UPPER_BONUS_SCORE,
+                    "upper_subtotal": upper_subtotal(current_player.scores),
+                    "threshold": UPPER_BONUS_THRESHOLD,
+                    "duration_ms": _BONUS_CUE_DURATION_MS,
+                },
+                state_version=self.state.state_version,
+            )
         )
 
         if self.state.is_final_round_complete:
@@ -319,19 +378,22 @@ class YachtFSM(BaseFSM):
                 bench_log().info("game_end yacht normal %.6f", _t.time())
             except Exception:
                 pass
-            return [
-                self._make_state_update(),
-                self._make_score_cue(
-                    cue="yacht_game_finish",
-                    scorer=current_player,
-                    score_label=score_label,
-                    score=score,
-                    next_player=None,
-                    duration_ms=_GAME_FINISH_CUE_DURATION_MS,
-                    moment=moment,
-                ),
-                self._emit_fusion_context(),
-            ]
+            return _with_bonus(
+                [
+                    self._make_state_update(),
+                    self._make_score_cue(
+                        cue="yacht_game_finish",
+                        scorer=current_player,
+                        score_label=score_label,
+                        score=score,
+                        next_player=None,
+                        duration_ms=_GAME_FINISH_CUE_DURATION_MS,
+                        moment=moment,
+                    ),
+                    self._emit_fusion_context(),
+                ],
+                bonus_cue,
+            )
 
         self.state.advance_player()
         self.state.phase = YachtPhase.AWAITING_ROLL.value
@@ -339,19 +401,22 @@ class YachtFSM(BaseFSM):
             f"{scorer_name}님 {score_label} {score}점입니다. "
             f"{self.state.current_player.playername}님 차례입니다."
         )
-        return [
-            self._make_state_update(),
-            self._make_score_cue(
-                cue="yacht_turn_transition",
-                scorer=current_player,
-                score_label=score_label,
-                score=score,
-                next_player=self.state.current_player.playername,
-                duration_ms=_CUE_DURATION_MS[moment["variant"]],
-                moment=moment,
-            ),
-            self._emit_fusion_context(),
-        ]
+        return _with_bonus(
+            [
+                self._make_state_update(),
+                self._make_score_cue(
+                    cue="yacht_turn_transition",
+                    scorer=current_player,
+                    score_label=score_label,
+                    score=score,
+                    next_player=self.state.current_player.playername,
+                    duration_ms=_CUE_DURATION_MS[moment["variant"]],
+                    moment=moment,
+                ),
+                self._emit_fusion_context(),
+            ],
+            bonus_cue,
+        )
 
     def _make_hand_cue(self) -> WSMessage | None:
         """방금 굴린 눈이 특별 조합이면 그 순간을 알린다.
@@ -367,10 +432,11 @@ class YachtFSM(BaseFSM):
         주사위 인식이 걸린 곳이라 조명이 흔들려선 안 되고, 연출은 화면이 맡는다.
         조명은 점수를 확정하는 순간에만 움직인다.
         """
-        for category in _HIGHLIGHT_ORDER:
+        available = self.state.available_categories
+        for category, tier in _HAND_TIERS:
             # 이미 채운 칸이면 축하할 것이 없다. "요트!"라고 띄워놓고 다른 칸에
             # 넣게 하는 것은 축하가 아니라 약올리기다.
-            if category not in self.state.available_categories:
+            if category not in available:
                 continue
             score = calculate_score(category, self.state.dice_values)
             if score <= 0:
@@ -383,7 +449,8 @@ class YachtFSM(BaseFSM):
                     "category": category,
                     "category_label": _CATEGORY_TTS_LABELS.get(category, category),
                     "score": score,
-                    "duration_ms": _HAND_CUE_DURATION_MS,
+                    "tier": tier,
+                    "duration_ms": _HAND_TIER_DURATION_MS[tier],
                 },
                 state_version=self.state.state_version,
             )
@@ -411,21 +478,25 @@ class YachtFSM(BaseFSM):
         # 요트 칸에 0점을 버리는 것은 축하가 아니라 그 반대다.
         is_highlight = category in _HIGHLIGHT_CATEGORIES and score > 0
 
-        # 0점은 총점을 못 올리므로 남을 앞지를 수 없다. 역전과 배타적이다.
-        took_lead = (
-            rank_before > 1
-            and rank_after == 1
-            and leader_before is not None
-            and leader_before.player_id != scorer.player_id
+        # 순위가 오르기만 하면 역전이다. 1등을 뺏는 것만 역전이라고 하면
+        # 3등에서 2등으로 올라간 사람은 아무 일도 없는 것처럼 지나가고,
+        # 연출이 특정 플레이어에게만 붙는 것처럼 보인다.
+        #
+        # 0점은 총점을 못 올리므로 남을 앞지를 수 없다. 역전과 자연히 배타적이다.
+        overtook = (
+            rank_after < rank_before
             and len(scorer.scores) >= _LEAD_CHANGE_MIN_FILLED
         )
+        took_lead = overtook and rank_after == 1
 
+        # 역전이 특별 조합보다 앞선다. 조합은 주사위가 멈춘 순간에 이미 크게
+        # 축하했으므로, 확정 시점에 더 할 말이 있는 쪽은 순위 변동이다.
         if score <= 0:
             variant = "zero"
+        elif overtook:
+            variant = "lead_change"
         elif is_highlight:
             variant = "highlight"
-        elif took_lead:
-            variant = "lead_change"
         else:
             variant = "normal"
 
@@ -433,6 +504,7 @@ class YachtFSM(BaseFSM):
             "category": category,
             "variant": variant,
             "is_highlight": is_highlight,
+            "overtook": overtook,
             "took_lead": took_lead,
             "rank_before": rank_before,
             "rank_after": rank_after,
@@ -483,6 +555,7 @@ class YachtFSM(BaseFSM):
                 # 연출의 크기를 정하는 값. 모달 종류와 조명 Cue 변형이 여기서 갈린다.
                 "variant": moment["variant"],
                 "is_highlight": moment["is_highlight"],
+                "overtook": moment["overtook"],
                 "took_lead": moment["took_lead"],
                 "rank_before": moment["rank_before"],
                 "rank_after": moment["rank_after"],
