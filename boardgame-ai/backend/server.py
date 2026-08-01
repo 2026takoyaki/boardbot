@@ -14,10 +14,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 import cv2
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +28,7 @@ from audio.manager import AudioManager
 from audio.prewarm import prewarm_static
 from audio.tts_engine import TTSEngine
 from agents.orchestrator import AgentOrchestrator
+from backend.dev import DEV_ENV_VAR, is_dev_mode, seat_registration_events
 from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
 from backend.routes.players import router as players_router
@@ -89,6 +91,16 @@ async def lifespan(app: FastAPI):
     orchestrator.set_audio_manager(audio_manager)
     bridge.on_game_event(orchestrator.handle_game_event)
 
+    # 개발 모드에서는 카메라도 비전도 띄우지 않는다. YOLO·MediaPipe 로딩만
+    # 몇 초가 걸리는데 개발 입력은 어차피 이벤트를 직접 주입하므로 쓸 일이 없다.
+    dev_mode = is_dev_mode()
+    if dev_mode:
+        logger.warning(
+            "개발 모드입니다 (%s=1). 카메라·비전 파이프라인을 띄우지 않고 "
+            "개발 입력을 허용합니다. 시연에서는 절대 켜지 마세요.",
+            DEV_ENV_VAR,
+        )
+
     camera_index = int(os.environ.get("CAMERA_INDEX", "0"))
     camera = CameraManager(source=camera_index, resolution=None, fps=30)
     # 비전 → 활성 YachtSession.fsm 라우터. LocalBridge에 자동 핸들러 등록됨.
@@ -109,14 +121,15 @@ async def lifespan(app: FastAPI):
     orchestrator.set_players_listener(_on_players_changed)
     orchestrator.set_pipeline_switcher(_on_game_switch)
 
-    lobby_queue = camera.subscribe()
-    yacht_queue = camera.subscribe()
-    werewolf_queue = camera.subscribe()
+    if not dev_mode:
+        lobby_queue = camera.subscribe()
+        yacht_queue = camera.subscribe()
+        werewolf_queue = camera.subscribe()
 
-    camera.start()
-    lobby_runner.start(lobby_queue)
-    yacht_runner.start(yacht_queue)
-    werewolf_runner.start(werewolf_queue)
+        camera.start()
+        lobby_runner.start(lobby_queue)
+        yacht_runner.start(yacht_queue)
+        werewolf_runner.start(werewolf_queue)
 
     app.state.orchestrator = orchestrator
     app.state.bridge = bridge
@@ -130,6 +143,7 @@ async def lifespan(app: FastAPI):
     app.state.tts_engine = tts_engine
     app.state.bench_session = bench_session
     app.state.light_controller = light_controller
+    app.state.dev_mode = dev_mode
 
     yield
 
@@ -168,6 +182,36 @@ app.mount("/bgm", StaticFiles(directory=str(BGM_DIR)), name="bgm")
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ── 개발 모드 ─────────────────────────────────────────────────────────────────
+# 전부 BOARDBOT_DEV=1 뒤에 있다. 꺼져 있으면 404라 시연 중 눌릴 경로가 없다.
+
+
+@app.get("/dev/config")
+def dev_config() -> dict[str, bool]:
+    """프론트가 개발 패널을 띄울지 결정하는 근거."""
+    return {"dev_mode": bool(getattr(app.state, "dev_mode", False))}
+
+
+@app.post("/dev/seat-all")
+def dev_seat_all() -> dict[str, Any]:
+    """등록된 플레이어 전원에게 가짜 좌석을 배정해 로비를 통과시킨다.
+
+    카메라가 없으면 좌석 등록에서 막혀 게임 자체를 시작할 수 없다. 실제 등록과
+    같은 SEAT_REGISTERED 이벤트를 쏘므로 orchestrator는 구분하지 못한다.
+    """
+    if not getattr(app.state, "dev_mode", False):
+        raise HTTPException(status_code=404, detail="dev mode off")
+
+    orchestrator = app.state.orchestrator
+    player_ids = [p.player_id for p in orchestrator._pm.state.players]
+    if not player_ids:
+        raise HTTPException(status_code=400, detail="등록된 플레이어가 없습니다")
+
+    for event in seat_registration_events(player_ids):
+        orchestrator.handle_game_event(event, 0)
+    return {"seated": player_ids}
 
 
 @app.get("/debug/vision/lobby")
