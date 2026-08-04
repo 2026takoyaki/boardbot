@@ -31,12 +31,6 @@ _AUDIO_MSG_TYPES = {
     MsgType.BGM_DUCK.value,
 }
 
-_TUTORIAL_KEEP_GUIDE = (
-    "원하는 주사위를 킵할 수 있습니다. 킵한 주사위는 다음 굴림에서 유지되며, "
-    "한 번 킵한 주사위를 다시 굴릴 수도 있습니다. 주사위는 세 번까지 굴릴 수 있으며, "
-    "그 전에 점수 칸을 선택해 턴을 끝낼 수도 있습니다. "
-    "점수판 오른쪽 위 물음표 버튼에서 족보 설명을 볼 수 있습니다."
-)
 
 class YachtSession:
     def __init__(
@@ -357,10 +351,11 @@ class YachtSession:
         if self.fsm is None or not self.tutorial_mode or self.tutorial_complete:
             return
         if self.fsm.state.phase == YachtPhase.AWAITING_ROLL.value:
+            # 짧아야 한다. 이 문장은 ProgressAgent가 매 턴 그대로 읽는데,
+            # 세 명이 열두 라운드를 돌면 서른여섯 번 들린다. 굴리는 법은
+            # 화면 인트로에서 한 번 설명했으므로 여기서는 차례만 알린다.
             self.fsm.state.last_message = (
-                f"{self.fsm.state.current_player.playername}님 차례입니다. "
-                "주사위 5개를 굴리면 카메라가 결과를 인식합니다. "
-                "주사위 다섯개를 원형굴림통에 넣고 트레이 안에 굴려주세요."
+                f"{self.fsm.state.current_player.playername}님 차례입니다. 주사위를 굴려주세요."
             )
         elif self.fsm.state.phase == YachtPhase.AWAITING_KEEP.value:
             remaining = {2: "두 번", 1: "한 번"}.get(max(0, 3 - self.fsm.state.roll_count), "0번")
