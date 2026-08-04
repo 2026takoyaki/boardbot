@@ -155,9 +155,7 @@ def _score(fsm, category, player_id, dice=None, score=None):
     data = {"category": category}
     if score is not None:
         data["score"] = score
-    return fsm.handle_input(
-        YachtInputType.SCORE_CATEGORY_SELECTED.value, data, player_id=player_id
-    )
+    return fsm.handle_input(YachtInputType.SCORE_CATEGORY_SELECTED.value, data, player_id=player_id)
 
 
 def _cue_payload(msgs):
@@ -239,6 +237,7 @@ def test_no_celebration_when_every_matching_category_is_used():
 
 def test_combination_tiers_scale_with_rarity():
     """다 똑같이 터뜨리면 야찌가 스몰 스트레이트와 같은 무게가 된다."""
+
     def tier_of(dice):
         fsm = YachtFSM(["p1", "p2"])
         fsm.start()
@@ -369,9 +368,9 @@ def test_climbing_without_taking_first_is_still_an_upset():
     fsm.start()
     filled = ("ones", "twos", "threes", "fours", "fives", "choice")
     for category in filled:
-        fsm.state.players[0].scores[category] = 10   # 부동의 1위
-        fsm.state.players[1].scores[category] = 4    # 2위
-        fsm.state.players[2].scores[category] = 3    # 3위
+        fsm.state.players[0].scores[category] = 10  # 부동의 1위
+        fsm.state.players[1].scores[category] = 4  # 2위
+        fsm.state.players[2].scores[category] = 3  # 3위
 
     _score(fsm, "sixes", "p1", dice=[1, 2, 3, 4, 6], score=0)
     _score(fsm, "sixes", "p2", dice=[1, 2, 3, 4, 6], score=0)

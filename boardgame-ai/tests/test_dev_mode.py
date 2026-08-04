@@ -53,7 +53,7 @@ def test_synthetic_seats_are_spread_around_the_table():
     positions = [s.body_xy for s in seats]
 
     for i, a in enumerate(positions):
-        for b in positions[i + 1:]:
+        for b in positions[i + 1 :]:
             distance = math.dist(a, b)
             assert distance > 0.2, f"좌석이 너무 붙어 있다: {a} {b}"
 

@@ -49,9 +49,9 @@ def test_yacht_cue_returns_before_modal_closes(cue_name: str, budget: int):
     """
     cue = YACHT_CUES[cue_name]
 
-    assert cue.fits_within(budget), (
-        f"{cue_name}: 복귀까지 {cue.total_ms}ms인데 연출은 {budget}ms에 끝난다"
-    )
+    assert cue.fits_within(
+        budget
+    ), f"{cue_name}: 복귀까지 {cue.total_ms}ms인데 연출은 {budget}ms에 끝난다"
 
 
 def test_every_fsm_cue_name_has_a_mapping():
@@ -270,9 +270,7 @@ async def test_game_end_celebrates_then_returns_to_default():
         game="yacht",
     )
     controller.on_message(
-        WSMessage.make_cue(
-            "yacht_game_finish", {"duration_ms": _GAME_FINISH_CUE_DURATION_MS}
-        ),
+        WSMessage.make_cue("yacht_game_finish", {"duration_ms": _GAME_FINISH_CUE_DURATION_MS}),
         game="yacht",
     )
     await asyncio.sleep(4.0)

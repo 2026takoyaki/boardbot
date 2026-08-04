@@ -76,6 +76,23 @@ export const IconSparkle = (p) => (
     <path d="m6 6 3 3M15 15l3 3M6 18l3-3M15 9l3-3" />
   </Icon>
 )
+/** 주사위 눈 다시 맞추기. 연필(작성)이 아니라 다시 읽힌다는 뜻이라 회전 화살표를 쓴다. */
+export const IconRefresh = (p) => (
+  <Icon {...p}>
+    <path d="M20.5 12a8.5 8.5 0 0 1-14.6 5.9" />
+    <path d="M3.5 12a8.5 8.5 0 0 1 14.6-5.9" />
+    <path d="M18.5 2.5v4h-4" />
+    <path d="M5.5 21.5v-4h4" />
+  </Icon>
+)
+export const IconExpand = (p) => (
+  <Icon {...p}>
+    <path d="M4 9V4h5" />
+    <path d="M15 4h5v5" />
+    <path d="M20 15v5h-5" />
+    <path d="M9 20H4v-5" />
+  </Icon>
+)
 export const IconShuffle = (p) => (
   <Icon {...p}>
     <path d="M16 3h5v5" />
