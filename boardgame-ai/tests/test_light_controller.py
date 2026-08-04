@@ -355,10 +355,10 @@ async def test_reset_wins_over_a_scene_that_is_still_in_flight():
     controller = _controller(driver, command_timeout_s=5.0)
 
     controller.on_message(_state("night_start"), game="werewolf")
-    await asyncio.sleep(0.02)   # 암전 적용이 아직 날아가는 중
+    await asyncio.sleep(0.02)  # 암전 적용이 아직 날아가는 중
 
     await controller.reset()
-    await asyncio.sleep(0.3)    # 취소된 명령이 뒤늦게 끝날 여유
+    await asyncio.sleep(0.3)  # 취소된 명령이 뒤늦게 끝날 여유
 
     assert driver.last is not None
     assert driver.last[0] == NEUTRAL_SCENE.color
