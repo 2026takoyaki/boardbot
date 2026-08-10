@@ -8,6 +8,7 @@ import {
   IconRefresh,
   IconVolume,
 } from '../components/common/Icons'
+import BonusGauge from '../components/common/BonusGauge'
 import DevPanel from '../components/common/DevPanel'
 import DiceFace from '../components/common/DiceFace'
 import RoundBanner from '../components/common/RoundBanner'
@@ -138,19 +139,43 @@ const s = {
     overflow: 'hidden',
   },
   turnRow: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
+  /**
+   * 누구 차례인지.
+   *
+   * 원색 금색으로 채우고 같은 색 드롭섀도까지 두니 화면에서 여기만 형광펜을
+   * 그은 것처럼 튀었다 — 글로우를 가진 요소가 이것 하나뿐이라 더 그랬다.
+   * 게다가 점수판에서 금색은 "지금 누를 만한 칸"에 쓰기로 했으므로, 채움까지
+   * 금색이면 왼쪽의 안내와 오른쪽의 선택지가 같은 무게로 보인다.
+   *
+   * 존재감은 채도가 아니라 크기와 굵기로 가져간다. 색은 점 하나만 남긴다.
+   */
   turnBadge: {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 10,
-    background: 'linear-gradient(180deg, var(--y-gold), var(--y-gold-deep))',
-    color: 'oklch(0.20 0.03 55)',
+    gap: 11,
+    background: 'color-mix(in oklch, var(--y-gold) 10%, oklch(0.26 0.028 168))',
+    border: '1px solid color-mix(in oklch, var(--y-gold) 30%, transparent)',
+    color: 'var(--y-text)',
     borderRadius: 999,
-    padding: '11px 22px',
+    padding: '10px 21px',
     fontSize: 25,
     fontWeight: 850,
-    boxShadow: '0 8px 22px color-mix(in oklch, var(--y-gold) 28%, transparent)',
   },
-  roundText: { fontSize: 20, fontWeight: 750, color: 'var(--y-text-soft)' },
+  turnDot: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    background: 'var(--y-gold)',
+    flexShrink: 0,
+  },
+  roundText: {
+    fontSize: 20,
+    fontWeight: 750,
+    color: 'var(--y-text-soft)',
+    // 라운드 배너가 이 자리로 날아와 앉는다. 날아오는 동안은 비워둬야 같은
+    // 것이 두 개로 보이지 않는다.
+    transition: 'opacity 260ms ease',
+  },
 
   rollRow: { display: 'flex', alignItems: 'center', gap: 11 },
   rollLabel: { fontSize: 16, fontWeight: 750, color: 'var(--y-text-mute)' },
@@ -312,8 +337,15 @@ const s = {
   row: ({ alt, filled, suggested, zero, clickable }) => {
     if (suggested) {
       return {
-        background: 'color-mix(in oklch, var(--y-gold) 26%, var(--y-panel))',
-        boxShadow: 'inset 0 -1px 0 color-mix(in oklch, var(--y-gold) 45%, transparent)',
+        // 아래에만 금색 선을 그으면 줄이 밑줄 그어진 것처럼 보여, 강조가 아니라
+        // 표의 구분선이 하나 더 생긴 꼴이 된다. 구분선은 다른 줄과 똑같이 두고
+        // 대신 면 자체를 안에서 빛나게 한다.
+        background:
+          'linear-gradient(180deg, color-mix(in oklch, var(--y-gold) 30%, var(--y-panel)),'
+          + ' color-mix(in oklch, var(--y-gold) 19%, var(--y-panel)))',
+        boxShadow:
+          'inset 0 0 26px color-mix(in oklch, var(--y-gold) 26%, transparent),'
+          + ' inset 0 -1px 0 var(--y-line-soft)',
         cursor: 'pointer',
       }
     }
@@ -365,17 +397,45 @@ const s = {
     color: 'var(--y-text-mute)',
     opacity: 0.75,
   },
-  bonusRow: {
-    background: 'color-mix(in oklch, var(--y-gold) 14%, var(--y-panel))',
-    boxShadow: 'inset 0 -1px 0 var(--y-line)',
-    color: 'var(--y-gold)',
-    fontWeight: 800,
+  /**
+   * 요약 줄(보너스·합계)은 프레임이지 선택지가 아니다.
+   *
+   * 예전에는 보너스가 금색 틴트라 추천 칸과 같은 색이었다. 하나는 "정보"고
+   * 하나는 "눌러라"인데 같은 색을 쓰니, 눌러야 하는 영역과 판의 테두리가
+   * 갈리지 않았다. 요약 줄은 색을 빼고 중립 밴드로 내리되, 위쪽에 굵은 선을
+   * 그어 목록이 여기서 한 번 끊긴다는 것을 구조로 말한다.
+   */
+  frameRow: {
+    background: 'var(--y-panel-head)',
+    borderTop: '2px solid var(--y-line)',
   },
-  bonusCell: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 9 },
+  frameCell: { padding: '9px 16px' },
+  frameLabel: {
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: '0.06em',
+    color: 'var(--y-text-mute)',
+    whiteSpace: 'nowrap',
+  },
+  bonusTop: {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: 10,
+    marginBottom: 7,
+  },
+  bonusNums: {
+    marginLeft: 'auto',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 15,
+    fontWeight: 750,
+    color: 'var(--y-text-soft)',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  bonusNow: { fontSize: 18, fontWeight: 850, color: 'var(--y-text)' },
   bonusBadge: earned => ({
     display: 'inline-flex',
     alignItems: 'center',
-    height: 23,
+    height: 22,
     padding: '0 9px',
     borderRadius: 999,
     background: earned ? 'var(--y-gold)' : 'transparent',
@@ -383,11 +443,24 @@ const s = {
     color: earned ? 'oklch(0.20 0.03 55)' : 'var(--y-text-mute)',
     fontSize: 12,
     fontWeight: 850,
+    whiteSpace: 'nowrap',
   }),
+  // 합계는 판의 바닥이다. 굵은 선 위에 올려 목록의 일부가 아님을 분명히 한다.
   totalRow: {
     background: 'var(--y-panel-head)',
-    fontWeight: 850,
-    fontSize: 21,
+    borderTop: '2px solid var(--y-line)',
+  },
+  totalLabel: {
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: '0.06em',
+    color: 'var(--y-text-mute)',
+  },
+  totalValue: {
+    fontSize: 26,
+    fontWeight: 900,
+    color: 'var(--y-text)',
+    fontVariantNumeric: 'tabular-nums',
   },
 
   // ── 오버레이 ────────────────────────────────────────────────────────────
@@ -436,18 +509,45 @@ const s = {
     fontSize: 17,
     cursor: 'pointer',
   },
-  boardGrid: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'grid', gap: 1 },
-  boardColumn: {
+  /**
+   * 열은 판으로 세우지 않는다.
+   *
+   * 배경·테두리·둥근 모서리·그림자를 겹겹이 얹으니 창 안에 창이 셋 더 생긴 꼴이
+   * 되어 오히려 복잡해졌다. 구분에 필요한 건 층이 아니라 **뚜렷한 세로선** 하나다
+   * — 가로줄이 세 사람을 관통하는 것만 끊어주면 된다.
+   */
+  boardGrid: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'grid' },
+  boardColumn: divided => ({
     minWidth: 0,
-    borderRight: '1px solid var(--y-line-soft)',
-  },
+    // 원래 1px 흐린 선이라 가로줄에 묻혔다. 굵기와 밝기를 함께 올린다.
+    // 마지막 열은 오른쪽이 곧 창 테두리라 선을 하나 더 그을 이유가 없다.
+    borderRight: divided ? '3px solid var(--y-line)' : undefined,
+  }),
   boardName: {
-    padding: '11px 16px',
-    fontSize: 17,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 9,
+    padding: '12px 16px',
+    fontSize: 18,
     fontWeight: 850,
-    color: 'var(--y-gold)',
-    background: 'var(--y-row-alt)',
+    color: 'var(--y-text)',
+    background: 'var(--y-panel-head)',
+    borderBottom: '1px solid var(--y-line)',
   },
+  boardRank: leading => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    height: 22,
+    padding: '0 9px',
+    borderRadius: 999,
+    background: leading ? 'var(--y-gold)' : 'transparent',
+    border: `1px solid ${leading ? 'transparent' : 'var(--y-line)'}`,
+    color: leading ? 'oklch(0.20 0.03 55)' : 'var(--y-text-mute)',
+    fontSize: 12,
+    fontWeight: 850,
+    fontVariantNumeric: 'tabular-nums',
+    flexShrink: 0,
+  }),
 
   // ── 결과 화면 ───────────────────────────────────────────────────────────
   endShell: {
@@ -510,6 +610,9 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const [ttsEnabled, setTtsEnabled] = useState(true)
   const [bgmEnabled, setBgmEnabled] = useState(true)
   const [turnPulseKey, setTurnPulseKey] = useState(0)
+  // 라운드 배너가 상시 표시 자리로 날아오는 동안은 그 자리를 비워둔다.
+  const [roundBannerActive, setRoundBannerActive] = useState(false)
+  const roundAnchorRef = useRef(null)
   const [recentScore, setRecentScore] = useState(null)
   // 연출 대기열. 득점과 보너스처럼 한 번에 두 사건이 겹칠 수 있어 순서대로 튼다.
   // 밀리면 오래된 것부터 버린다 — 지나간 턴의 연출을 뒤늦게 보여줄 이유가 없다.
@@ -690,6 +793,14 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     () => [...(state?.players || [])].sort((a, b) => b.total - a.total),
     [state],
   )
+  // 동점은 같은 순위를 나눠 갖는다. 백엔드 _ranking과 같은 규칙이라 역전 연출이
+  // 보여주는 순위와 전체 점수판의 순위가 어긋나지 않는다.
+  const ranks = useMemo(() => {
+    const players = state?.players || []
+    const totals = [...new Set(players.map(p => p.total))].sort((a, b) => b - a)
+    const rankOfTotal = new Map(totals.map((total, index) => [total, index + 1]))
+    return new Map(players.map(p => [p.player_id, rankOfTotal.get(p.total)]))
+  }, [state])
   const statusMessage = useMemo(() => {
     const latestError = messages.find(m => m.msg_type === 'error')
     return latestError?.payload?.message || state?.last_message
@@ -848,7 +959,24 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     <div style={s.page} className="yacht-root">
       {palette}
       <ScoreMoment moment={momentQueue[0] ?? null} onDone={dismissMoment} />
-      <RoundBanner round={round} total={TOTAL_ROUNDS} />
+      {/* 튜토리얼에서는 띄우지 않는다. 각자 한 턴씩만 굴리고 끝나는 자리라
+          라운드가 넘어간다는 개념 자체가 아직 없고, 배우는 중에 화면을 가로막는
+          연출이 하나 더 끼어들 이유도 없다.
+
+          득점 연출이 남아 있는 동안은 기다린다. 마지막 사람이 점수를 넣는
+          순간 라운드도 함께 오르므로, 그대로 두면 둘이 화면 가운데에서 겹친다. */}
+      {!isTutorial && (
+        <RoundBanner
+          round={round}
+          total={TOTAL_ROUNDS}
+          anchorRef={roundAnchorRef}
+          // 창을 열어둔 동안에도 기다린다. 띠는 화면 맨 위에 그려지므로 그냥
+          // 두면 펼쳐놓은 전체 점수판을 가로질러 뚫고 나온다. 라운드 안내는
+          // 급할 것이 없으니 창을 닫은 뒤에 알려도 된다.
+          paused={momentQueue.length > 0 || leaderboardOpen || rulesOpen}
+          onActiveChange={setRoundBannerActive}
+        />
+      )}
       <DevPanel
         title="요트"
         actions={[
@@ -916,9 +1044,15 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
               className={turnPulseKey ? 'yacht-turn-pulse' : undefined}
               style={s.turnBadge}
             >
+              <span style={s.turnDot} />
               {currentPlayer?.playername || '-'} 님 차례
             </div>
-            <div style={s.roundText}>라운드 {round} / {TOTAL_ROUNDS}</div>
+            <div
+              ref={roundAnchorRef}
+              style={{ ...s.roundText, opacity: roundBannerActive ? 0 : 1 }}
+            >
+              라운드 {round} / {TOTAL_ROUNDS}
+            </div>
           </div>
 
           <div style={s.rollRow}>
@@ -1063,9 +1197,19 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
               }}
               className="scroll"
             >
-              {state.players.map(player => (
-                <div key={player.player_id} style={s.boardColumn}>
-                  <div style={s.boardName}>{player.playername} · {player.total}점</div>
+              {state.players.map((player, index) => (
+                <div
+                  key={player.player_id}
+                  style={s.boardColumn(index < state.players.length - 1)}
+                >
+                  {/* 합계는 각 열 맨 아래에 이미 있다. 이름 옆에 또 쓰는 대신
+                      혼자서는 알 수 없는 것 — 몇 등인지 — 을 보여준다. */}
+                  <div style={s.boardName}>
+                    <span style={s.boardRank(ranks.get(player.player_id) === 1)}>
+                      {ranks.get(player.player_id)}위
+                    </span>
+                    {player.playername}
+                  </div>
                   <ScoreTable state={state} player={player} compact recentScore={recentScore} />
                 </div>
               ))}
@@ -1112,17 +1256,26 @@ function ScoreTable({ state, player, compact = false, recentScore, onScore }) {
             const subtotal = upperSubtotal(player?.scores || {})
             const earned = subtotal >= BONUS_THRESHOLD
             return (
-              <tr key={key} style={s.bonusRow}>
-                <td style={tdName}>{label}</td>
-                <td style={tdScore}>
-                  <div style={s.bonusCell}>
-                    <span>{subtotal} / {BONUS_THRESHOLD}</span>
-                    {!compact && (
-                      <span style={s.bonusBadge(earned)}>
-                        {earned ? `+${BONUS_SCORE}` : `${Math.max(0, BONUS_THRESHOLD - subtotal)}점 남음`}
-                      </span>
-                    )}
+              <tr key={key} style={s.frameRow}>
+                {/* 막대가 줄 전체를 가로질러야 얼마나 왔는지 읽힌다. 점수 열
+                    안에 가두면 폭이 좁아 눈금 구실을 못 한다. */}
+                <td colSpan={2} style={s.frameCell}>
+                  <div style={s.bonusTop}>
+                    <span style={s.frameLabel}>{label}</span>
+                    <span style={s.bonusNums}>
+                      <span style={s.bonusNow}>{subtotal}</span> / {BONUS_THRESHOLD}
+                    </span>
+                    <span style={s.bonusBadge(earned)}>
+                      {earned
+                        ? `+${BONUS_SCORE}`
+                        : `${Math.max(0, BONUS_THRESHOLD - subtotal)}점 남음`}
+                    </span>
                   </div>
+                  <BonusGauge
+                    subtotal={subtotal}
+                    threshold={BONUS_THRESHOLD}
+                    height={compact ? 5 : 7}
+                  />
                 </td>
               </tr>
             )
@@ -1186,9 +1339,9 @@ function ScoreTable({ state, player, compact = false, recentScore, onScore }) {
           )
         })}
         <tr style={s.totalRow}>
-          <td style={tdName}>합계</td>
+          <td style={tdName}><span style={s.totalLabel}>합계</span></td>
           <td style={tdScore}>
-            <CountUpTotal value={player?.total ?? 0} />
+            <span style={s.totalValue}><CountUpTotal value={player?.total ?? 0} /></span>
           </td>
         </tr>
       </tbody>

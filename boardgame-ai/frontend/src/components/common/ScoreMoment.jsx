@@ -1,4 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
+import { CATEGORY_LABELS } from './yachtCategories'
+
+/**
+ * 화면에 쓰는 칸 이름.
+ *
+ * payload의 category_label은 **TTS 발음용**이다("파이브", "포카드"). 귀로 들을
+ * 때는 그게 맞지만 눈으로 볼 때는 아니다 — 점수판에는 Fives, 4 of a Kind로
+ * 적혀 있어서, 모달만 발음을 찍으면 방금 어느 칸에 들어갔는지 대조가 안 된다.
+ * 이 줄이 하는 일이 곧 "점수판 저 칸을 보라"는 것이므로 표기를 맞춘다.
+ */
+const DISPLAY_LABEL = Object.fromEntries(CATEGORY_LABELS)
+
+function slotLabel(moment) {
+  return DISPLAY_LABEL[moment.category] || moment.category_label || ''
+}
 
 /**
  * 요트 연출 오버레이.
@@ -39,6 +54,34 @@ function kindOf(moment) {
   return moment.variant || 'normal'
 }
 
+/**
+ * 사건의 무게. 화면을 얼마나 눌러 덮을지, 빛을 얼마나 크게 낼지를 정한다.
+ *
+ * 예전에는 굴림 축하·득점 확정·라운드 전환이 전부 "화면을 어둡게 깔고 가운데에
+ * 금색 글자"였다. 셋이 구별되지 않으니 무슨 일이 일어난 건지 알려면 글자를
+ * 읽어야 했고, 그러면 연출이 아니라 공지가 된다.
+ *
+ * 이제 셋은 이렇게 갈린다.
+ *   굴림 축하 — 화면 전체를 덮고 빛이 퍼지며 **솟구친다**. 가장 짜릿한 순간이다
+ *   득점 확정 — 얕게 깔고 위에서 **내려앉는다**. 기록되는 사건이라 차분하다
+ *   라운드    — 가로 띠가 열린다. 무채색이고 화면을 덮지 않는다(RoundBanner)
+ */
+const WEIGHT = {
+  hand: { veil: 1, glow: 1 },
+  lead_change: { veil: 0.72, glow: 0.82 },
+  bonus: { veil: 0.72, glow: 0.86 },
+  highlight: { veil: 0.58, glow: 0.72 },
+  zero: { veil: 0.5, glow: 0.52 },
+  normal: { veil: 0.44, glow: 0.6 },
+}
+
+/** 굴림 축하만 솟구친다. 나머지는 점수판에 얹히는 사건이라 내려앉는다. */
+function entranceOf(kind) {
+  if (kind === 'hand') return 'ym-rise'
+  if (kind === 'zero') return 'ym-drop'
+  return 'ym-settle'
+}
+
 export default function ScoreMoment({ moment, onDone }) {
   const kind = kindOf(moment)
   const look = LOOKS[kind]
@@ -67,6 +110,7 @@ function Moment({ moment, kind, look, onDone }) {
   const tier = TIERS[moment.tier] ?? TIERS.great
   const showRays = kind === 'hand' ? tier.rays : false
   const bodyScale = kind === 'hand' ? tier.scale : 1
+  const weight = WEIGHT[kind] ?? WEIGHT.normal
 
   return (
     <div style={styles.overlay}>
@@ -83,6 +127,14 @@ function Moment({ moment, kind, look, onDone }) {
           72%  { transform: translateY(0) scale(1); }
           78%  { opacity: 1; transform: scale(1); }
           100% { opacity: 0; transform: scale(1.06); }
+        }
+        /* 득점 확정. 위에서 내려와 자리를 잡는다 — 점수판에 얹히는 사건이다. */
+        @keyframes ym-settle {
+          0%   { opacity: 0; transform: translateY(-30px) scale(1.1); }
+          38%  { opacity: 1; transform: translateY(5px) scale(1); }
+          56%  { transform: translateY(0) scale(1); }
+          80%  { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(0) scale(0.97); }
         }
         @keyframes ym-drop {
           0%   { opacity: 0; transform: translateY(-20px) scale(1.04); }
@@ -125,12 +177,21 @@ function Moment({ moment, kind, look, onDone }) {
       <div
         style={{
           ...styles.veil,
+          // 사건이 가벼울수록 얕게 깐다. 매 턴 오는 득점까지 화면을 통째로
+          // 덮으면 정작 크게 알려야 할 순간이 묻힌다.
+          background:
+            'radial-gradient(ellipse at center,'
+            + ` rgba(0,0,0,${(0.62 * weight.veil).toFixed(3)}) 0%,`
+            + ` rgba(0,0,0,${(0.34 * weight.veil).toFixed(3)}) 55%,`
+            + ` rgba(0,0,0,${(0.12 * weight.veil).toFixed(3)}) 100%)`,
           animation: `ym-veil ${d}ms ease-out forwards`,
         }}
       />
       <div
         style={{
           ...styles.glow,
+          width: `min(${170 * weight.glow}vw, ${Math.round(1200 * weight.glow)}px)`,
+          height: `min(${170 * weight.glow}vw, ${Math.round(1200 * weight.glow)}px)`,
           background: `radial-gradient(circle, ${look.glow} 0%, transparent 62%)`,
           animation: `ym-glow ${d}ms cubic-bezier(.2,.9,.3,1) forwards`,
         }}
@@ -149,8 +210,7 @@ function Moment({ moment, kind, look, onDone }) {
         style={{
           ...styles.stage,
           '--tier-scale': bodyScale,
-          animation: `${kind === 'zero' ? 'ym-drop' : 'ym-rise'} ${d}ms `
-            + 'cubic-bezier(.2,.9,.25,1.1) forwards',
+          animation: `${entranceOf(kind)} ${d}ms cubic-bezier(.2,.9,.25,1.1) forwards`,
         }}
       >
         <Content kind={kind} moment={moment} look={look} enterMs={enterMs} scale={bodyScale} />
@@ -218,13 +278,17 @@ function ScoreConfirmed({ moment, look, enterMs }) {
         +{shown}
         <span style={styles.unit}>점</span>
       </div>
+      {/* 사람이 먼저다. "파이브 · 병진 님"은 칸이 점수를 넣은 것처럼 읽힌다.
+          누가 넣었는지가 주어이고, 어느 칸인지는 그 뒤에 붙는 설명이다. */}
       <div
         style={{
           ...styles.sub,
           animation: `ym-sub ${enterMs * 2}ms ease-out ${enterMs}ms both`,
         }}
       >
-        {moment.category_label} · {moment.scorer_name} 님
+        <strong style={styles.subName}>{moment.scorer_name}</strong> 님
+        <span style={styles.subDot}>·</span>
+        {slotLabel(moment)}
       </div>
     </>
   )
@@ -429,6 +493,8 @@ const styles = {
     color: 'var(--fg-soft)',
     textShadow: '0 2px 12px rgba(0,0,0,0.6)',
   },
+  subName: { fontWeight: 800, color: 'var(--fg)' },
+  subDot: { margin: '0 9px', opacity: 0.45 },
   standings: {
     position: 'relative',
     marginTop: 22,
