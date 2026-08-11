@@ -177,13 +177,47 @@ async def test_gesture_advances_passive_night_phase() -> None:
 
 
 @pytest.mark.anyio
-async def test_gesture_advances_from_night_start() -> None:
-    """night_start도 OK 사인으로 첫 밤 역할 페이즈로 진입한다."""
+async def test_gesture_ignored_during_night_start() -> None:
+    """night_start 안내 화면은 OK 사인으로 넘어가지 않는다.
+
+    직전 card_setup_confirm에서 든 OK 손이 그대로 남아 있으면 페이즈 전환 직후
+    같은 손이 재발화해 안내 화면이 1~2초 만에 사라졌다.
+    """
     fsm = _make_fsm()
     assert fsm.state.phase == WerewolfPhase.NIGHT_START.value
 
-    fsm.handle_event(_gesture())
+    assert fsm.handle_event(_gesture()) == []
 
+    assert fsm.state.phase == WerewolfPhase.NIGHT_START.value
+    _cancel_timers(fsm)
+
+
+@pytest.mark.anyio
+async def test_night_start_auto_advances_after_duration() -> None:
+    """일반 모드는 NIGHT_START_DURATION 초 뒤 첫 밤 역할 페이즈로 자동 전이한다."""
+    fsm = _make_fsm()
+
+    with patch("games.werewolf.fsm.NIGHT_START_DURATION", 0):
+        fsm.start()
+        await asyncio.sleep(0.05)
+
+    assert fsm.state.phase != WerewolfPhase.NIGHT_START.value
+    _cancel_timers(fsm)
+
+
+@pytest.mark.anyio
+async def test_night_start_has_no_backend_timer_in_practice_mode() -> None:
+    """튜토리얼 모드는 안내 TTS 종료 후 프론트가 start_now로 전이를 주도한다."""
+    fsm = _make_fsm(practice_mode=True)
+
+    with patch("games.werewolf.fsm.NIGHT_START_DURATION", 0):
+        fsm.start()
+        await asyncio.sleep(0.05)
+
+    assert fsm.state.phase == WerewolfPhase.NIGHT_START.value
+    assert fsm._passive_timer_task is None
+
+    fsm.handle_input(WerewolfInputType.START_NOW, {})
     assert fsm.state.phase != WerewolfPhase.NIGHT_START.value
     _cancel_timers(fsm)
 

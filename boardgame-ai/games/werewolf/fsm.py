@@ -33,6 +33,7 @@ VOTE_LOCK_GRACE = 0.5        # 카운트다운 0 도달 후 지목 유예 시간
 
 PASSIVE_PHASE_DURATION = 10  # 패시브 역할 안내 화면 표시 시간(초)
 ACTIVE_PHASE_TIMEOUT = 12    # 액티브 역할 OK 사인 대기 타임아웃(초). 제스처 유실 시 폴백.
+NIGHT_START_DURATION = 5     # "밤이 되었습니다" 안내 화면 표시 시간(초)
 
 ACTIVE_NIGHT_PHASES = frozenset({
     WerewolfPhase.NIGHT_DOPPELGANGER,
@@ -64,8 +65,19 @@ class WerewolfFSM(BaseFSM):
     # ── Public API ──────────────────────────────────────────────────────────────
 
     def start(self) -> list[WSMessage]:
-        """게임을 시작한다. NIGHT_START 페이즈에서 대기 (start_now 입력 대기)."""
+        """게임을 시작한다. NIGHT_START 안내 화면에서 대기.
+
+        일반 모드는 NIGHT_START_DURATION 초 후 자동으로 첫 야간 역할로 전이한다.
+        튜토리얼 모드는 안내 TTS가 길어 프론트가 TTS 종료 후 start_now로 전이를
+        주도하므로(다른 페이즈와 동일) 백엔드 타이머를 걸지 않는다.
+        """
         self.state.state_version += 1
+        if not self._practice_mode:
+            self._passive_timer_task = asyncio.create_task(
+                self._run_passive_timer(
+                    WerewolfPhase.NIGHT_START, NIGHT_START_DURATION
+                )
+            )
         ctx_msg = WSMessage.make_fusion_context(
             self.get_fusion_context(),
             state_version=self.state.state_version,
@@ -124,9 +136,29 @@ class WerewolfFSM(BaseFSM):
                 params={"pointing_stabilization_frames": 1},
             )
 
-        # 야간 페이즈 전체 (NIGHT_START + NIGHT_PHASES): 행동을 마친 플레이어가
-        # OK 사인을 보이면 다음 페이즈로 넘어간다.
-        if phase == WerewolfPhase.NIGHT_START or phase in NIGHT_PHASES:
+        # NIGHT_START("밤이 되었습니다")는 확인할 행동이 없는 안내 화면이라 OK 사인을
+        # 받지 않는다. 직전 card_setup_confirm 단계에서 든 OK 손이 그대로 남아 있는데,
+        # 페이즈가 바뀌면 FusionEngine의 1회 발화 가드(_gesture_confirmed_emitted)가
+        # 초기화되므로 같은 손이 곧바로 재발화해 안내 화면이 1~2초 만에 넘어갔다.
+        if phase == WerewolfPhase.NIGHT_START:
+            return FusionContext(
+                fsm_state=phase.value,
+                game_type="werewolf",
+                active_player=None,
+                allowed_actors=[],
+                expected_events=[],
+                reject_events=[
+                    CommonEventType.GESTURE_CONFIRMED,
+                    WerewolfEventType.VOTE_POINT,
+                ],
+                valid_targets=None,
+                zones={},
+                anchors={},
+                params={},
+            )
+
+        # 야간 역할 페이즈: 행동을 마친 플레이어가 OK 사인을 보이면 다음으로 넘어간다.
+        if phase in NIGHT_PHASES:
             return FusionContext(
                 fsm_state=phase.value,
                 game_type="werewolf",
@@ -304,14 +336,18 @@ class WerewolfFSM(BaseFSM):
         return messages
 
     def _handle_gesture_confirmed(self) -> list[WSMessage]:
-        """OK 사인으로 야간 페이즈를 진행한다.
+        """OK 사인으로 야간 역할 페이즈를 진행한다.
 
-        패시브·액티브 구분 없이 모든 야간 페이즈에서 유효하다. 역할을 모르므로
+        패시브·액티브 구분 없이 모든 야간 "역할" 페이즈에서 유효하다. 역할을 모르므로
         누가 보낸 신호인지는 검증하지 않는다 — 눈을 뜨고 있는 사람만 신호를 보낼 수
         있다는 게임 규칙 자체가 게이트 역할을 한다.
+
+        NIGHT_START는 제외한다. get_fusion_context()에서 이미 OK 사인을 받지 않지만,
+        컨텍스트 갱신(백엔드 스레드)과 프레임 처리(비전 스레드)가 별개라 전환 직전
+        프레임에서 만들어진 이벤트가 뒤늦게 도착할 수 있어 여기서도 막는다.
         """
         current = WerewolfPhase(self.state.phase)
-        if current != WerewolfPhase.NIGHT_START and current not in NIGHT_PHASES:
+        if current not in NIGHT_PHASES:
             return []
         for task_attr in ("_passive_timer_task", "_active_timer_task"):
             task = getattr(self, task_attr)
@@ -453,10 +489,19 @@ class WerewolfFSM(BaseFSM):
         except asyncio.CancelledError:
             pass
 
-    async def _run_passive_timer(self, phase: WerewolfPhase) -> None:
-        """패시브 역할 안내 화면을 PASSIVE_PHASE_DURATION 초 표시 후 다음 페이즈로 전이."""
+    async def _run_passive_timer(
+        self,
+        phase: WerewolfPhase,
+        duration: float | None = None,
+    ) -> None:
+        """패시브 안내 화면을 duration 초 표시 후 다음 페이즈로 전이.
+
+        duration 생략 시 PASSIVE_PHASE_DURATION(역할 안내 기본값)을 쓴다.
+        """
         try:
-            await asyncio.sleep(PASSIVE_PHASE_DURATION)
+            await asyncio.sleep(
+                PASSIVE_PHASE_DURATION if duration is None else duration
+            )
             if WerewolfPhase(self.state.phase) == phase:
                 self.state.state_version += 1
                 for msg in self._advance_to_next_phase():

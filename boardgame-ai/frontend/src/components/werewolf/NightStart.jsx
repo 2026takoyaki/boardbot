@@ -54,9 +54,13 @@ export default function NightStart({ onComplete, send, onExit, isPracticeMode })
         earlyTtsTimer = setTimeout(stopWolf, WOLF_MIN_MS - elapsed)
       }
 
-      // 이 안내 TTS가 끝난 뒤 일정 시간 후 다음 화면으로 전환
+      // 이 안내 TTS가 끝난 뒤 일정 시간 후 다음 화면으로 전환.
+      // 일반 모드에서 이 화면이 머무는 시간은 여기가 아니라 백엔드가 정한다
+      // (fsm.py NIGHT_START_DURATION, 5초). 이 타이머는 그보다 늦게 잡아 둔
+      // 폴백일 뿐이므로, 화면 시간을 바꾸려면 NIGHT_START_DURATION을 고쳐야 한다.
+      // 튜토리얼 모드는 백엔드 타이머가 없어 이 경로가 실제 전환을 주도한다.
       unsubscribeEnd = audio.onNextTtsEnded(() => {
-        timer = setTimeout(onComplete, isPracticeMode ? 5000 : 8000)
+        timer = setTimeout(onComplete, isPracticeMode ? 5000 : 10000)
       })
     })
 

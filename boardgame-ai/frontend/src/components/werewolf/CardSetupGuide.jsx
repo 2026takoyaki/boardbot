@@ -97,7 +97,7 @@ const SENTENCES_NORMAL = [
   { text: '각자 카드를 한 장씩 가져가고, 본인만 확인해주세요.',                 holdMs: 10000 },
   { text: '본인의 카드는 각자 자기 앞에 엎어서 놓아주세요.',                   holdMs: 10000 },
   { text: '나머지 카드는 역할이 보이지 않게 뒤집어 중앙에 놓아주세요.',         holdMs: 10000 },
-  { text: '역할 등록을 위해 모두 눈을 잠시 감아주세요.' },
+  { text: '모두 눈을 감아주세요.', holdMs: 3000 },
 ]
 
 const SENTENCES_PRACTICE = [
