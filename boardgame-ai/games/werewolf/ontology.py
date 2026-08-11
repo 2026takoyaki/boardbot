@@ -120,10 +120,3 @@ PASSIVE_NIGHT_PHASES: frozenset[WerewolfPhase] = frozenset({
     WerewolfPhase.NIGHT_MINION,
     WerewolfPhase.NIGHT_MASON,
 })
-
-# 튜토리얼 모드에서 등록 여부와 무관하게 항상 진행하는 늑대팀 패시브 안내 페이즈
-TUTORIAL_ALWAYS_PHASES: frozenset[WerewolfPhase] = frozenset({
-    WerewolfPhase.NIGHT_WEREWOLF,
-    WerewolfPhase.NIGHT_MINION,
-    WerewolfPhase.NIGHT_MASON,
-})

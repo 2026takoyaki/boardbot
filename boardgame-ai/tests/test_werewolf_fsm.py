@@ -474,12 +474,13 @@ def test_night_phase_included_even_if_card_may_sit_in_center() -> None:
     assert fsm._night_phase_included(WerewolfPhase.NIGHT_SEER) is True
 
 
-def test_tutorial_mode_always_includes_werewolf_team_passive() -> None:
-    """튜토리얼 모드: 덱 구성과 무관하게 늑대팀 패시브 안내는 항상 진행한다."""
+def test_tutorial_mode_skips_roles_not_selected_for_this_game() -> None:
+    """튜토리얼 모드도 일반 모드와 동일하게 이번 판 덱 구성만 따른다."""
     fsm = _make_fsm(["seer", "villager", "robber"], practice_mode=True)
-    assert fsm._night_phase_included(WerewolfPhase.NIGHT_WEREWOLF) is True
-    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MINION) is True
-    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MASON) is True
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_WEREWOLF) is False
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MINION) is False
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MASON) is False
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_SEER) is True
 
 
 @pytest.mark.anyio

@@ -20,7 +20,6 @@ from games.werewolf.ontology import (
     NIGHT_PHASES,
     PASSIVE_NIGHT_PHASES,
     PHASE_TO_ROLE,
-    TUTORIAL_ALWAYS_PHASES,
     WerewolfEventType,
     WerewolfInputType,
     WerewolfPhase,
@@ -200,14 +199,10 @@ class WerewolfFSM(BaseFSM):
         누가 어떤 역할을 가졌는지 모르므로 이번 판의 역할 덱에 카드가 들어 있으면
         진행한다. 덱에 있어도 실제로는 센터에 깔려 아무도 행동하지 않을 수 있는데,
         그 경우에도 호명해야 어떤 역할이 플레이어에게 갔는지 들키지 않는다
-        (원나잇 정석 진행과 동일).
-
-        튜토리얼 모드는 학습을 위해 늑대팀 패시브 안내(늑대인간·하수인·프리메이슨)를
-        덱 구성과 무관하게 항상 표시한다.
+        (원나잇 정석 진행과 동일). 튜토리얼 모드도 동일하게 덱 구성을 따르므로,
+        이번 판에 선택하지 않은 역할은 소개되지 않는다.
         """
         role = PHASE_TO_ROLE[phase]
-        if self._practice_mode and phase in TUTORIAL_ALWAYS_PHASES:
-            return True
         return role.value in self.state.deck_roles
 
     def _make_state_update(self) -> WSMessage:
