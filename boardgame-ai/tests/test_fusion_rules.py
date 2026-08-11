@@ -1,18 +1,21 @@
-"""WerewolfRules 단위 테스트 — ROLE_DETECTED 감지 조건 검증.
+"""WerewolfRules 단위 테스트 — VOTE_POINT 감지 조건 검증.
+
+카드 인식(ROLE_DETECTED 등)은 인식률 문제로 제거됐다. 늑대인간 비전이 만드는
+이벤트는 이제 투표 포인팅 하나뿐이며, 야간 진행은 FusionEngine이 직접 다루는
+공용 GESTURE_CONFIRMED로 처리한다.
 
 검증 항목:
-  - face_up + bbox 크기 + 손 근접 + stable_frames 모두 충족 시 발화
-  - 조건별 개별 실패 케이스 (손 없음 / 손 너무 멀리 / bbox 너무 작음 / stable_frames 부족)
-  - Card_Back / face_down 무시
-  - 동일 플레이어 중복 발화 방지
-  - active_player 전환 시 stable_frames 리셋 (연쇄 인식 방지)
-  - CardTracker.reset_stable_frames 단위 동작
+  - vote_countdown / vote 두 페이즈 모두에서 좌석 ray 매칭이 동작
+  - 자기 자신은 지목 대상에서 제외
+  - 같은 대상 반복 지목은 억제, 대상이 바뀌면 재발화
+  - 투표 외 페이즈에서는 어떤 후보도 만들지 않음
+  - CardTracker.reset_stable_frames 단위 동작 (데모·디버그 도구에서 계속 사용)
 """
 
 from __future__ import annotations
 
 from core.events import FusionContext
-from vision.fusion.werewolf_rules import ROLE_DETECTED, VOTE_POINT, WerewolfRules
+from vision.fusion.werewolf_rules import VOTE_POINT, WerewolfRules
 from vision.schemas import BBox, FramePerception, HandDet
 from vision.tracking.card_tracker import CardTracker
 from vision.werewolf.schemas import TrackedCard
@@ -20,314 +23,127 @@ from vision.werewolf.schemas import TrackedCard
 # ── 픽스처 헬퍼 ────────────────────────────────────────────────────────────────
 
 
-def _ctx_role_reg(player_id: str = "p_1", in_game_roles: list[str] | None = None) -> FusionContext:
+def _frame(hands: list[HandDet] | None = None, ts: float = 100.0) -> FramePerception:
+    return FramePerception(frame_id=0, ts=ts, image_hw=(1080, 1920), hands=hands or [])
+
+
+def _ctx_vote(fsm_state: str) -> FusionContext:
+    """좌석 좌표 기반 투표 컨텍스트. p_1 은 자기 자신(제외 대상), p_2 는 오른쪽."""
     return FusionContext(
-        fsm_state="role_registration",
+        fsm_state=fsm_state,
         game_type="werewolf",
-        active_player=player_id,
-        allowed_actors=[player_id],
-        expected_events=[ROLE_DETECTED],
-        params={"in_game_roles": in_game_roles} if in_game_roles is not None else {},
+        active_player=None,
+        allowed_actors=["p_1", "p_2"],
+        expected_events=[VOTE_POINT],
+        anchors={
+            "seat_p_1": {"x": 0.5, "y": 0.5},
+            "seat_p_2": {"x": 0.85, "y": 0.5},
+        },
     )
 
 
-def _card(
-    cls_name: str = "Seer",
-    face_up: bool = True,
-    stable_frames: int = 15,
-    bbox_cx: float = 0.45,
-    bbox_cy: float = 0.45,
-    bbox_w: float = 0.15,
-    bbox_h: float = 0.20,
-    track_id: int = 1,
-    conf: float = 0.9,
-    player_id: str = "p_1",
-) -> TrackedCard:
-    x1 = bbox_cx - bbox_w / 2
-    y1 = bbox_cy - bbox_h / 2
-    return TrackedCard(
-        track_id=track_id,
-        bbox=BBox(x1, y1, x1 + bbox_w, y1 + bbox_h, conf, cls_name),
-        cls_name=cls_name,
-        face_up=face_up,
-        player_id=player_id,
-        card_index=0,
-        stable_frames=stable_frames,
-    )
-
-
-def _hand_at(cx: float = 0.45, cy: float = 0.45) -> HandDet:
+def _pointing_hand_at(target_cx: float, target_cy: float) -> HandDet:
+    """손목(0.5,0.5)에서 target 방향을 가리키는 포인팅 손."""
+    landmarks = [(0.0, 0.0)] * 21
+    landmarks[0] = (0.5, 0.5)  # wrist
+    landmarks[8] = (target_cx, target_cy)  # index tip — 지목 방향
     return HandDet(
         handedness="Right",
-        wrist_xy=(cx, cy),
-        landmarks_21=[(0.0, 0.0)] * 21,
+        wrist_xy=(0.5, 0.5),
+        landmarks_21=landmarks,
         gesture="neutral",
         player_id="p_1",
     )
 
 
-# 기본 ts는 진입 유예(_ROLE_REG_GRACE_SEC) 이후 시점으로 둔다. 그래야 None을 기대하는
-# 테스트가 grace 단락이 아니라 의도한 조건으로 검증된다. grace 자체를 검증하는 테스트만
-# 작은 ts(예: 0.0)를 명시해 유예 구간에 진입한다.
-def _frame(hands: list[HandDet] | None = None, ts: float = 100.0) -> FramePerception:
-    return FramePerception(frame_id=0, ts=ts, image_hw=(1080, 1920), hands=hands or [])
+# ── VOTE_POINT 페이즈 게이트 ────────────────────────────────────────────────────
 
 
-class _MockTracker:
-    """CardTracker 스텁 — 주입된 카드 목록을 반환하고 reset 호출 횟수를 기록한다."""
+def test_vote_point_detected_in_vote_countdown() -> None:
+    """포인팅 투표가 vote_countdown 페이즈에서 VOTE_POINT 후보를 생성한다.
 
-    def __init__(self, cards: list[TrackedCard] | None = None) -> None:
-        self._cards: list[TrackedCard] = cards or []
-        self.reset_called_count: int = 0
-
-    def get_tracked_cards(self) -> list[TrackedCard]:
-        return self._cards
-
-    def reset_stable_frames(self) -> None:
-        self.reset_called_count += 1
-        for card in self._cards:
-            card.stable_frames = 0
-            card.just_flipped_up = False
-
-
-# ── ROLE_DETECTED 기본 발화 조건 ────────────────────────────────────────────────
-
-
-def test_role_detected_happy_path() -> None:
-    """face_up + 신뢰도 >= 0.5 + stable_frames >= 2 → ROLE_DETECTED 발화."""
-    tracker = _MockTracker([_card()])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at(0.45, 0.45)])
-
-    result = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-
-    assert result is not None
-    event_type, data, conf = result
-    assert event_type == ROLE_DETECTED
-    assert data["actor_id"] == "p_1"
-    assert data["role"] == "seer"
-    assert conf > 0
-
-
-def test_role_detected_no_hand_still_fires() -> None:
-    """손 근접 조건은 제거됨 — 손이 없어도 발화한다."""
-    tracker = _MockTracker([_card()])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[])
-
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is not None
-
-
-def test_role_detected_hand_far_still_fires() -> None:
-    """손 근접 조건은 제거됨 — 손목이 카드에서 멀어도 발화한다."""
-    tracker = _MockTracker([_card(bbox_cx=0.45, bbox_cy=0.45)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    far_hand = _hand_at(cx=0.90, cy=0.45)
-
-    perception = _frame(hands=[far_hand])
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is not None
-
-
-def test_role_detected_small_bbox_still_fires() -> None:
-    """절대 bbox 크기 조건은 제거됨 — 작게 잡혀도(카메라가 멀어도) 발화한다."""
-    small_card = _card(bbox_w=0.04, bbox_h=0.05)
-    tracker = _MockTracker([small_card])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
-
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is not None
-
-
-def test_role_detected_high_conf_not_low_flag() -> None:
-    """신뢰도 >= 0.5 → 발화하며 low_confidence=False."""
-    tracker = _MockTracker([_card(conf=0.8)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
-
-    result = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-    assert result is not None
-    _etype, data, _conf = result
-    assert data["low_confidence"] is False
-
-
-def test_role_detected_low_conf_still_fires_with_flag() -> None:
-    """신뢰도 < 0.5 여도 차단하지 않고 low_confidence=True 로 발화한다."""
-    tracker = _MockTracker([_card(conf=0.4)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
-
-    result = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-    assert result is not None
-    _etype, data, _conf = result
-    assert data["role"] == "seer"
-    assert data["low_confidence"] is True
-
-
-def test_role_detected_off_list_role_excluded() -> None:
-    """욜로 top-1이 이 게임에 없는 역할이면 후보에서 제외 → 발화 안 됨."""
-    tracker = _MockTracker([_card(cls_name="Hunter")])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg(in_game_roles=["seer", "werewolf", "villager"])
-    perception = _frame(hands=[_hand_at()])
-
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is None
-
-
-def test_role_detected_in_game_role_picked_over_off_list() -> None:
-    """게임에 포함된 역할만 후보가 된다 — off-list 카드가 더 커도 in-game 카드를 고른다."""
-    off_list_large = _card(cls_name="Hunter", bbox_w=0.30, bbox_h=0.40, track_id=2, player_id="p_2")
-    in_game_small = _card(cls_name="Seer", bbox_w=0.10, bbox_h=0.14, track_id=1, player_id="p_1")
-    tracker = _MockTracker([off_list_large, in_game_small])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg(in_game_roles=["seer", "werewolf", "villager"])
-    perception = _frame(hands=[_hand_at()])
-
-    result = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-    assert result is not None
-    _etype, data, _conf = result
-    assert data["role"] == "seer"
-
-
-def test_role_detected_picks_largest_face_up_card() -> None:
-    """여러 face_up 후보 중 bbox 면적이 가장 큰 카드를 선택한다.
-
-    테이블에 놓인 작은 카드가 다른 역할로 오분류돼도, 카메라에 가깝게 들어 보인
-    큰 카드(활성 플레이어의 카드)를 우선한다.
+    FSM은 투표를 vote_countdown으로 진입시키고 전원 투표 전까지 머무므로,
+    이 페이즈에서 감지되지 않으면 손 지목이 영영 이벤트가 되지 않는다(회귀 방지).
     """
-    small_misdetect = _card(
-        cls_name="Werewolf", bbox_w=0.05, bbox_h=0.07, track_id=2, player_id="p_2"
-    )
-    large_held = _card(cls_name="Seer", bbox_w=0.20, bbox_h=0.28, track_id=1, player_id="p_1")
-    tracker = _MockTracker([small_misdetect, large_held])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg("p_1")
-    perception = _frame(hands=[_hand_at()])
-
-    result = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-    assert result is not None
-    _etype, data, _conf = result
-    assert data["role"] == "seer"  # 큰 카드 선택
+    rules = WerewolfRules()
+    hand = _pointing_hand_at(0.8, 0.5)  # p_2 좌석(0.85,0.5) 방향
+    cands = rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
+    assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands)
 
 
-def test_role_detected_insufficient_stable_frames() -> None:
-    """stable_frames < 2 이면 발화 안 됨."""
-    tracker = _MockTracker([_card(stable_frames=1)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
-
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is None
+def test_vote_point_detected_in_vote_phase() -> None:
+    """레거시 'vote' 페이즈에서도 동일하게 감지된다."""
+    rules = WerewolfRules()
+    hand = _pointing_hand_at(0.8, 0.5)
+    cands = rules.build_candidates(_ctx_vote("vote"), _frame([hand]))
+    assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands)
 
 
-def test_role_detected_exactly_2_stable_frames_passes() -> None:
-    """stable_frames == 2 이면 발화됨 (경계값)."""
-    tracker = _MockTracker([_card(stable_frames=2)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
-
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is not None
-
-
-def test_role_detected_card_back_cls_ignored() -> None:
-    """cls_name=Card_Back 은 face_up 이어도 발화 안 됨."""
-    tracker = _MockTracker([_card(cls_name="Card_Back", face_up=True)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
-
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is None
+def test_vote_point_skips_self() -> None:
+    """자기 좌석 방향으로 가리켜도 본인은 지목 대상에서 제외된다."""
+    rules = WerewolfRules()
+    # p_1 손목(0.5,0.5) → 자기 좌석(0.5,0.5)은 t<=0 으로 제외, 다른 방향엔 좌석 없음
+    hand = _pointing_hand_at(0.5, 0.2)  # 위쪽 — 어떤 좌석도 없음
+    cands = rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
+    assert not any(c[0] == VOTE_POINT for c in cands)
 
 
-def test_role_detected_face_down_ignored() -> None:
-    """face_down 카드는 발화 안 됨."""
-    tracker = _MockTracker([_card(cls_name="Seer", face_up=False, stable_frames=20)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg()
-    perception = _frame(hands=[_hand_at()])
+def test_vote_point_retarget_fires_on_target_change() -> None:
+    """같은 투표자가 A→B로 대상을 바꾸면 재발화한다."""
+    rules = WerewolfRules()
+    ctx = _ctx_vote("vote_countdown")
 
-    assert rules._check_role_detected(ctx, perception, tracker.get_tracked_cards()) is None
+    # 첫 지목: p_2
+    cands1 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+    assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands1)
 
+    # 같은 대상 연속: 발화 없음
+    cands2 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+    assert not any(c[0] == VOTE_POINT for c in cands2)
 
-def test_role_detected_fires_only_once_per_player() -> None:
-    """같은 플레이어는 1회만 발화 (중복 방지)."""
-    tracker = _MockTracker([_card()])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg("p_1")
-    perception = _frame(hands=[_hand_at()])
-
-    r1 = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-    r2 = rules._check_role_detected(ctx, perception, tracker.get_tracked_cards())
-
-    assert r1 is not None
-    assert r2 is None
+    # 대상 변경: p_2 → (no valid target) — 방향 바꿔 hit 없는 경우엔 None 반환
+    cands3 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.5, 0.2)]))
+    assert not any(c[0] == VOTE_POINT for c in cands3)
 
 
-# ── active_player 전환 → stable_frames 리셋 ──────────────────────────────────
+def test_vote_point_same_target_suppressed() -> None:
+    """같은 대상을 계속 가리키면 재발화하지 않는다(매 프레임 스팸 방지)."""
+    rules = WerewolfRules()
+    ctx = _ctx_vote("vote_countdown")
 
-
-def test_player_change_triggers_reset_stable_frames() -> None:
-    """build_candidates에서 active_player 전환 감지 시 reset_stable_frames 호출."""
-    card = _card(stable_frames=20)
-    tracker = _MockTracker([card])
-    rules = WerewolfRules(tracker)
-    perception = _frame(hands=[_hand_at()])
-
-    # p1 첫 진입
-    rules.build_candidates(_ctx_role_reg("p_1"), perception)
-    assert tracker.reset_called_count == 1
-
-    # p2로 전환
-    rules.build_candidates(_ctx_role_reg("p_2"), perception)
-    assert tracker.reset_called_count == 2
-    assert card.stable_frames == 0  # 리셋 확인
-
-
-def test_same_player_no_extra_reset() -> None:
-    """같은 active_player가 유지되는 동안 reset은 최초 진입 1회만."""
-    tracker = _MockTracker([_card(stable_frames=20)])
-    rules = WerewolfRules(tracker)
-    ctx = _ctx_role_reg("p_1")
-    perception = _frame(hands=[_hand_at()])
+    first = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+    assert any(c[0] == VOTE_POINT for c in first)
 
     for _ in range(5):
-        rules.build_candidates(ctx, perception)
+        repeat = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+        assert not any(c[0] == VOTE_POINT for c in repeat)
 
-    assert tracker.reset_called_count == 1
+
+def test_phase_change_clears_vote_memory() -> None:
+    """페이즈가 바뀌면 1인 1표 기억이 초기화돼 다음 판에서 다시 지목할 수 있다."""
+    rules = WerewolfRules()
+    hand = _pointing_hand_at(0.8, 0.5)
+
+    assert rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
+    # 다른 페이즈를 거쳤다가 돌아오면 같은 대상도 다시 발화한다.
+    rules.build_candidates(_ctx_vote("day_discussion"), _frame([hand]))
+    assert rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
 
 
-def test_phase_change_clears_last_reg_player() -> None:
-    """페이즈 전환 후 같은 플레이어가 다시 role_registration에 진입하면 리셋 발생."""
-    tracker = _MockTracker([_card(stable_frames=20)])
-    rules = WerewolfRules(tracker)
-    perception = _frame(hands=[_hand_at()])
+# ── 투표 외 페이즈는 후보 없음 ─────────────────────────────────────────────────
 
-    # p1 역할 등록
-    rules.build_candidates(_ctx_role_reg("p_1"), perception)
-    assert tracker.reset_called_count == 1
 
-    # 다른 페이즈로 전환
-    other_ctx = FusionContext(
-        fsm_state="night_start",
-        game_type="werewolf",
-        active_player=None,
-        allowed_actors=[],
-        expected_events=[],
-    )
-    rules.build_candidates(other_ctx, perception)
-
-    # 다시 role_registration으로 p1 진입 → _last_reg_player가 초기화됐으므로 리셋
-    rules.build_candidates(_ctx_role_reg("p_1"), perception)
-    assert tracker.reset_called_count == 2
+def test_night_phases_produce_no_candidates() -> None:
+    """야간 진행은 공용 GESTURE_CONFIRMED가 담당한다. WerewolfRules는 관여하지 않는다."""
+    rules = WerewolfRules()
+    hand = _pointing_hand_at(0.8, 0.5)
+    for phase in ("night_start", "night_seer", "night_robber", "card_setup", "result"):
+        ctx = _ctx_vote(phase)
+        assert rules.build_candidates(ctx, _frame([hand])) == [], phase
 
 
 # ── CardTracker.reset_stable_frames 단위 테스트 ───────────────────────────────
+# 늑대인간 게임 경로에서는 더 이상 쓰지 않지만 demos/·tools/ 진단 스크립트가 사용한다.
 
 
 def test_card_tracker_reset_stable_frames_clears_all_cards() -> None:
@@ -366,122 +182,3 @@ def test_card_tracker_reset_stable_frames_empty_tracker() -> None:
     real_tracker = CardTracker()
     real_tracker.reset_stable_frames()  # 예외 없이 통과
     assert real_tracker.get_tracked_cards() == []
-
-
-# ── VOTE_POINT 페이즈 게이트 ────────────────────────────────────────────────────
-
-
-def _ctx_vote(fsm_state: str) -> FusionContext:
-    """좌석 좌표 기반 투표 컨텍스트. p_1 은 자기 자신(제외 대상), p_2 는 오른쪽."""
-    return FusionContext(
-        fsm_state=fsm_state,
-        game_type="werewolf",
-        active_player=None,
-        allowed_actors=["p_1", "p_2"],
-        expected_events=[VOTE_POINT],
-        anchors={
-            "seat_p_1": {"x": 0.5, "y": 0.5},
-            "seat_p_2": {"x": 0.85, "y": 0.5},
-        },
-    )
-
-
-def _pointing_hand_at(target_cx: float, target_cy: float) -> HandDet:
-    """손목(0.5,0.5)에서 target 방향을 가리키는 포인팅 손."""
-    landmarks = [(0.0, 0.0)] * 21
-    landmarks[0] = (0.5, 0.5)  # wrist
-    landmarks[8] = (target_cx, target_cy)  # index tip — 지목 방향
-    return HandDet(
-        handedness="Right",
-        wrist_xy=(0.5, 0.5),
-        landmarks_21=landmarks,
-        gesture="neutral",
-        player_id="p_1",
-    )
-
-
-def test_vote_point_detected_in_vote_countdown() -> None:
-    """포인팅 투표가 vote_countdown 페이즈에서 VOTE_POINT 후보를 생성한다.
-
-    FSM은 투표를 vote_countdown으로 진입시키고 전원 투표 전까지 머무므로,
-    이 페이즈에서 감지되지 않으면 손 지목이 영영 이벤트가 되지 않는다(회귀 방지).
-    """
-    rules = WerewolfRules(_MockTracker())
-    hand = _pointing_hand_at(0.8, 0.5)  # p_2 좌석(0.85,0.5) 방향
-    cands = rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
-    assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands)
-
-
-def test_vote_point_detected_in_vote_phase() -> None:
-    """레거시 'vote' 페이즈에서도 동일하게 감지된다."""
-    rules = WerewolfRules(_MockTracker())
-    hand = _pointing_hand_at(0.8, 0.5)
-    cands = rules.build_candidates(_ctx_vote("vote"), _frame([hand]))
-    assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands)
-
-
-def test_vote_point_skips_self() -> None:
-    """자기 좌석 방향으로 가리켜도 본인은 지목 대상에서 제외된다."""
-    rules = WerewolfRules(_MockTracker())
-    # p_1 손목(0.5,0.5) → 자기 좌석(0.5,0.5)은 t<=0 으로 제외, 다른 방향엔 좌석 없음
-    hand = _pointing_hand_at(0.5, 0.2)  # 위쪽 — 어떤 좌석도 없음
-    cands = rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
-    assert not any(c[0] == VOTE_POINT for c in cands)
-
-
-# ── final_role_reveal 페이즈 ROLE_DETECTED ─────────────────────────────────────
-
-
-def test_vote_point_retarget_fires_on_target_change() -> None:
-    """같은 투표자가 A→B로 대상을 바꾸면 재발화한다."""
-    rules = WerewolfRules(_MockTracker())
-    ctx = _ctx_vote("vote_countdown")
-
-    # 첫 지목: p_2
-    cands1 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
-    assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands1)
-
-    # 같은 대상 연속: 발화 없음
-    cands2 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
-    assert not any(c[0] == VOTE_POINT for c in cands2)
-
-    # 대상 변경: p_2 → (no valid target) — 방향 바꿔 hit 없는 경우엔 None 반환
-    cands3 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.5, 0.2)]))
-    assert not any(c[0] == VOTE_POINT for c in cands3)
-
-
-def test_vote_point_same_target_suppressed() -> None:
-    """같은 대상을 계속 가리키면 재발화하지 않는다(매 프레임 스팸 방지)."""
-    rules = WerewolfRules(_MockTracker())
-    ctx = _ctx_vote("vote_countdown")
-
-    first = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
-    assert any(c[0] == VOTE_POINT for c in first)
-
-    for _ in range(5):
-        repeat = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
-        assert not any(c[0] == VOTE_POINT for c in repeat)
-
-
-def test_role_detected_in_final_role_reveal() -> None:
-    """최종 재확인 단계에서도 카메라 ROLE_DETECTED 가 생성된다.
-
-    이전엔 build_candidates가 'role_registration'에서만 _check_role_detected를
-    호출해, final_role_reveal에서는 카메라 인식이 영영 동작하지 않았다(회귀 방지).
-    """
-    card = _card()
-    tracker = _MockTracker([card])
-    rules = WerewolfRules(tracker)
-    ctx = FusionContext(
-        fsm_state="final_role_reveal",
-        game_type="werewolf",
-        active_player="p_1",
-        allowed_actors=["p_1"],
-        expected_events=[ROLE_DETECTED],
-    )
-    # 1프레임: 플레이어 진입 → reset_stable_frames로 stable_frames=0, 진입 유예 시작 → 발화 안 함.
-    assert rules.build_candidates(ctx, _frame(hands=[_hand_at(0.45, 0.45)], ts=0.0)) == []
-    # 실제 CardTracker처럼 카드가 안정 추적되고 진입 유예가 지난 뒤엔 발화.
-    card.stable_frames = 15
-    cands = rules.build_candidates(ctx, _frame(hands=[_hand_at(0.45, 0.45)]))
-    assert any(c[0] == ROLE_DETECTED and c[1]["actor_id"] == "p_1" for c in cands)

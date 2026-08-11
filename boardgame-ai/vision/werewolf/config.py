@@ -16,20 +16,11 @@ class WerewolfVisionConfig:
     target_fps: int = 30
     frame_skip: int = 0
 
-    # YOLO 카드 감지 모델
-    # 학습 완료 후 이 경로에 .pt 파일을 두면 자동 로드
-    card_weights_path: str | Path = "weights/werewolf_v8.pt"
-    yolo_conf: float = 0.25
-    yolo_iou: float = 0.45
-    yolo_imgsz: int = 640
-
     # MediaPipe Hand
+    # 카드 인식은 인식률 문제로 제거됐다. 이 파이프라인은 손만 본다.
     mp_max_num_hands: int = 8
     mp_min_detection_confidence: float = 0.5
     mp_min_tracking_confidence: float = 0.5
-
-    # 카드-플레이어 근접 매칭 임계 (정규화 거리)
-    card_player_match_threshold: float = 0.25
 
     # 시작 시 워밍업 프레임 (이 기간은 GameEvent 송신 skip)
     warmup_frames: int = 60
@@ -39,6 +30,5 @@ class WerewolfVisionConfig:
     jsonl_log_path: Path | None = None
 
     def __post_init__(self) -> None:
-        self.card_weights_path = Path(self.card_weights_path)
         if self.jsonl_log_path is not None:
             self.jsonl_log_path = Path(self.jsonl_log_path)

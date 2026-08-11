@@ -14,7 +14,7 @@ import WerewolfGame from './pages/WerewolfGame'
 import YachtGame from './pages/YachtGame'
 
 const WEREWOLF_PHASES = new Set([
-  'role_registration',
+  'card_setup',
   'night_start', 'night_doppelganger', 'night_werewolf', 'night_minion',
   'night_mason', 'night_seer', 'night_robber', 'night_troublemaker',
   'night_drunk', 'night_insomniac',

@@ -1,8 +1,12 @@
-"""한밤의 늑대인간 승리 판정."""
+"""한밤의 늑대인간 투표 집계.
+
+시스템은 플레이어의 역할을 알지 못하므로 승패를 판정하지 않는다. 누가 몇 표를
+받았고 누가 처형됐는지까지만 계산하고, 그 뒤의 카드 공개와 승패 판단은
+플레이어들이 직접 한다.
+"""
 
 from __future__ import annotations
 
-from games.werewolf.ontology import WEREWOLF_TEAM, WerewolfRole
 from games.werewolf.state import WerewolfGameState
 
 
@@ -28,31 +32,3 @@ def find_executed(state: WerewolfGameState) -> list[str]:
     if max_votes == 1 and len(state.players) >= 3:
         return []
     return [pid for pid, cnt in counts.items() if cnt == max_votes]
-
-
-def judge_winner(state: WerewolfGameState) -> str:
-    """승리 팀을 반환한다.
-
-    Returns:
-        "werewolf" | "village" | "tanner"
-    """
-    executed = find_executed(state)
-
-    # 태너가 처형되면 태너 승리 (최우선)
-    for pid in executed:
-        if state.get_player(pid).current_role == WerewolfRole.TANNER:
-            return "tanner"
-
-    werewolf_players = [
-        p for p in state.players if p.current_role in WEREWOLF_TEAM
-    ]
-    executed_werewolves = [
-        pid for pid in executed if state.get_player(pid).current_role in WEREWOLF_TEAM
-    ]
-
-    if werewolf_players:
-        # 늑대인간이 존재하는 게임
-        return "village" if executed_werewolves else "werewolf"
-    else:
-        # 늑대인간이 없는 게임: 아무도 처형되지 않으면 마을 승리
-        return "village" if not executed else "werewolf"

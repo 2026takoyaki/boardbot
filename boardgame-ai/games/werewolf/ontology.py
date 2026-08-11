@@ -54,26 +54,21 @@ class WerewolfPhase(StrEnum):
     DAY_DISCUSSION = "day_discussion"    # 300초 타이머
     VOTE_COUNTDOWN = "vote_countdown"
     VOTE = "vote"
-    FINAL_ROLE_REVEAL = "final_role_reveal"
     RESULT = "result"
 
 
 class WerewolfEventType(StrEnum):
     """비전팀이 발생시키는 늑대인간 전용 이벤트.
 
+    카드 인식 이벤트(ROLE_DETECTED·CARD_PEEK·CARD_SWAP 등)는 인식률 문제로 제거됐다.
+    시스템은 플레이어의 역할을 알지 못하며, 야간 진행은 공용 GESTURE_CONFIRMED(OK 사인)로
+    처리한다.
+
     data 스키마:
-        CARD_PEEK:     {"card_owner_id": str|None, "card_index": int}
-        CARD_SWAP:     {"from_id": str, "to_id": str}
-        VOTE_POINT:    {"target_id": str}
-        ROLE_DETECTED: {"role": str}  — 역할 등록 단계 카메라 인식
+        VOTE_POINT: {"target_id": str}
     """
 
-    CARD_PEEK = "werewolf_card_peek"          # 카드 들여다보기 감지
-    CARD_SWAP = "werewolf_card_swap"          # 카드 교환 제스처 감지
     VOTE_POINT = "werewolf_vote_point"        # 투표 포인팅 감지
-    ROLE_DETECTED = "werewolf_role_detected"  # 역할 등록 단계 카드 인식
-    CARD_PLACED_DOWN = "werewolf_card_placed_down"  # 역할 등록 전환 중 카드 안정 감지
-    CARD_UNSTABLE    = "werewolf_card_unstable"     # 역할 등록 전환 중 안정됐던 카드가 다시 움직임
 
 
 class WerewolfInputType(StrEnum):

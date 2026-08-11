@@ -1,6 +1,8 @@
+import { useEffect, useMemo } from 'react'
+
 const ROLE_NAMES = {
   doppelganger: '도플갱어',
-  werewolf: '늑대인간', werewolf_1: '늑대인간', werewolf_2: '늑대인간',
+  werewolf: '늑대인간',
   minion: '하수인',
   seer: '예언자',
   robber: '강도',
@@ -9,44 +11,82 @@ const ROLE_NAMES = {
   insomniac: '불면증환자',
   tanner: '무두장이',
   hunter: '사냥꾼',
-  mason: '프리메이슨', mason_1: '프리메이슨', mason_2: '프리메이슨',
-  villager: '마을주민', villager_1: '마을주민', villager_2: '마을주민', villager_3: '마을주민',
+  mason: '프리메이슨',
+  villager: '마을주민',
 }
 
-const WINNER_CONFIG = {
-  village: {
-    team: '마을팀 승리',
-    headline: '늑대인간을 찾아냈습니다!',
-    teamColor: '#F6D568',
-    headlineColor: '#fff8e1',
-    sky: 'linear-gradient(180deg, #0f0800 0%, #2d1400 25%, #6e3510 50%, #b86018 70%, #d4920a 85%, #e8b830 100%)',
-    glow: 'rgba(230,180,40,0.18)',
-  },
-  werewolf: {
-    team: '늑대인간 팀 승리',
-    headline: '마을이 어둠에 잠식됐습니다!',
-    teamColor: '#c06060',
-    headlineColor: '#fce8e8',
-    sky: 'linear-gradient(180deg, #050008 0%, #120018 25%, #2a0830 50%, #4a0a20 70%, #6a1010 100%)',
-    glow: 'rgba(150,30,30,0.2)',
-  },
-  tanner: {
-    team: '무두장이 승리',
-    headline: '무두장이가 처형됐습니다!',
-    teamColor: '#a07840',
-    headlineColor: '#fff0d0',
-    sky: 'linear-gradient(180deg, #080400 0%, #1a0e00 25%, #3a1e08 50%, #6a3a10 70%, #8a5018 100%)',
-    glow: 'rgba(150,100,30,0.18)',
-  },
-}
+const normalizeRoleId = (id) => (id ?? '').replace(/_\d+$/, '')
 
-import { useEffect } from 'react'
+// 시스템은 역할을 모르므로 승리팀 색이 없다. 투표 결과를 담담하게 비추는 새벽 톤 하나로 간다.
+const SKY = 'linear-gradient(180deg, #0f0800 0%, #2d1400 25%, #6e3510 50%, #b86018 70%, #d4920a 85%, #e8b830 100%)'
+const GLOW = 'rgba(230,180,40,0.18)'
+const ACCENT = '#F6D568'
 
-export default function GameEndWW({ players = [], finalRoles = {}, originalRoles = {}, winner = 'village', onChangePlayers, onChangeGame, onRestart, send }) {
-  const cfg = WINNER_CONFIG[winner] ?? WINNER_CONFIG.village
+/**
+ * 투표 결과 발표 화면.
+ *
+ * 시스템은 각 플레이어의 역할을 알지 못한다. 따라서 승패를 판정하지 않고
+ * 득표 집계와 처형자까지만 발표한 뒤, 카드 공개와 승패 판단은 플레이어에게 넘긴다.
+ *
+ * @param players    [{ player_id, playername }]
+ * @param votes      { voter_player_id: target_player_id }
+ * @param executed   최다 득표자 player_id 배열. 빈 배열이면 처형 없음(전원 분산)
+ * @param deckRoles  이번 판에 사용한 역할 카드 문자열 배열
+ */
+export default function GameEndWW({
+  players = [],
+  votes = {},
+  executed = [],
+  deckRoles = [],
+  onChangePlayers,
+  onChangeGame,
+  onRestart,
+  send,
+}) {
+  const nameOf = useMemo(() => {
+    const map = {}
+    players.forEach(p => { map[p.player_id] = p.playername ?? p.player_id })
+    return map
+  }, [players])
+
+  // 득표 집계 + 나를 찍은 사람 목록
+  const tally = useMemo(() => {
+    const counts = {}
+    const votersByTarget = {}
+    Object.entries(votes).forEach(([voter, target]) => {
+      if (!target) return
+      counts[target] = (counts[target] ?? 0) + 1
+      ;(votersByTarget[target] ??= []).push(voter)
+    })
+    return players
+      .map(p => ({
+        player_id: p.player_id,
+        playername: p.playername ?? p.player_id,
+        count: counts[p.player_id] ?? 0,
+        voters: votersByTarget[p.player_id] ?? [],
+        isExecuted: executed.includes(p.player_id),
+      }))
+      .sort((a, b) => b.count - a.count)
+  }, [players, votes, executed])
+
+  const headline = useMemo(() => {
+    if (executed.length === 0) return '아무도 처형되지 않았습니다'
+    if (executed.length === 1) return `${nameOf[executed[0]] ?? executed[0]} 님이 처형되었습니다`
+    return `${executed.map(id => nameOf[id] ?? id).join(', ')} 님이 동률로 처형되었습니다`
+  }, [executed, nameOf])
+
+  const uniqueDeck = useMemo(() => {
+    const counts = {}
+    deckRoles.map(normalizeRoleId).filter(Boolean).forEach(r => {
+      counts[r] = (counts[r] ?? 0) + 1
+    })
+    return Object.entries(counts)
+  }, [deckRoles])
 
   useEffect(() => {
-    send?.('TTS_REQUEST', { text: `${cfg.headline} ${cfg.team}` })
+    send?.('TTS_REQUEST', {
+      text: `${headline}. 이제 각자 자신의 카드를 공개해 주세요. 승패는 여러분이 직접 확인하시면 됩니다.`,
+    })
   }, [])
 
   return (
@@ -69,10 +109,10 @@ export default function GameEndWW({ players = [], finalRoles = {}, originalRoles
         }
       `}</style>
 
-      <div style={{ ...styles.page, background: cfg.sky }}>
+      <div style={{ ...styles.page, background: SKY }}>
 
         {/* 배경 오버레이 */}
-        <div style={{ ...styles.overlay, background: `radial-gradient(ellipse at 50% 35%, ${cfg.glow}, transparent 60%)` }} />
+        <div style={{ ...styles.overlay, background: `radial-gradient(ellipse at 50% 35%, ${GLOW}, transparent 60%)` }} />
 
         {/* 마을 실루엣 */}
         <svg viewBox="0 0 800 160" preserveAspectRatio="xMidYMax slice" style={styles.silhouette}>
@@ -102,61 +142,66 @@ export default function GameEndWW({ players = [], finalRoles = {}, originalRoles
         {/* 컨텐츠 */}
         <div style={styles.content}>
 
-          {/* 승리 팀 */}
-          <div style={{ ...styles.teamLabel, color: cfg.teamColor, animation: 'flicker 4s ease-in-out infinite' }}>
-            {cfg.team}
+          <div style={{ ...styles.teamLabel, color: ACCENT, animation: 'flicker 4s ease-in-out infinite' }}>
+            투표 결과
           </div>
 
-          {/* 헤드라인 */}
-          <div style={{ ...styles.headline, color: cfg.headlineColor, animation: 'headlinePop 0.7s cubic-bezier(0.22,0.61,0.36,1) 0.1s both' }}>
-            {cfg.headline}
+          <div style={{ ...styles.headline, animation: 'headlinePop 0.7s cubic-bezier(0.22,0.61,0.36,1) 0.1s both' }}>
+            {headline}
           </div>
 
-          {/* 최종 역할 공개 */}
+          {/* 득표 집계 */}
           <div style={{ ...styles.sectionLabel, animation: 'fadeUp 0.5s ease-out 0.3s both' }}>
-            최종 역할 공개
+            득표 집계
           </div>
 
           <div style={{ ...styles.roleList, animation: 'fadeUp 0.5s ease-out 0.4s both' }}>
-            {players.map((p, i) => {
-              const roleId = finalRoles[p.player_id]
-              const origRoleId = originalRoles[p.player_id]
-              const roleName = ROLE_NAMES[roleId] ?? roleId ?? '미공개'
-              const origRoleName = ROLE_NAMES[origRoleId] ?? origRoleId ?? '미공개'
-              const roleChanged = origRoleId && roleId && origRoleId !== roleId
-              const isWerewolfTeam = ['werewolf', 'werewolf_1', 'werewolf_2', 'minion'].includes(roleId)
-              return (
-                <div key={p.player_id} style={{
-                  ...styles.roleRow,
-                  animationDelay: `${0.4 + i * 0.07}s`,
-                  animation: `fadeUp 0.4s ease-out ${0.4 + i * 0.07}s both`,
-                }}>
-                  <span style={styles.playerName}>{p.playername}</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-                    {roleChanged && (
-                      <span style={styles.origRole}>{origRoleName} →</span>
-                    )}
-                    <span style={{
-                      ...styles.roleName,
-                      color: isWerewolfTeam ? '#ff9980' : 'rgba(248,241,221,0.85)',
-                    }}>
-                      {roleName}
+            {tally.map((row, i) => (
+              <div key={row.player_id} style={{
+                ...styles.roleRow,
+                ...(row.isExecuted ? styles.roleRowExecuted : {}),
+                animation: `fadeUp 0.4s ease-out ${0.4 + i * 0.07}s both`,
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <span style={styles.playerName}>{row.playername}</span>
+                  {row.voters.length > 0 && (
+                    <span style={styles.voterList}>
+                      {row.voters.map(v => nameOf[v] ?? v).join(', ')} 지목
                     </span>
-                  </div>
+                  )}
                 </div>
-              )
-            })}
+                <span style={{
+                  ...styles.voteCount,
+                  color: row.isExecuted ? '#ff9980' : 'rgba(248,241,221,0.85)',
+                }}>
+                  {row.count}표
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* 카드 공개 안내 — 승패 판정은 플레이어 몫 */}
+          <div style={{ ...styles.revealNotice, animation: 'fadeUp 0.5s ease-out 0.55s both' }}>
+            이제 각자 카드를 공개하세요. 승패는 직접 확인해 주세요.
+            {uniqueDeck.length > 0 && (
+              <div style={styles.deckLine}>
+                이번 판 구성 ·{' '}
+                {uniqueDeck.map(([role, n]) =>
+                  `${ROLE_NAMES[role] ?? role}${n > 1 ? ` ×${n}` : ''}`
+                ).join(', ')}
+              </div>
+            )}
           </div>
 
           {/* 하단 버튼 */}
-          <div style={{ ...styles.btnRow, animation: 'fadeUp 0.5s ease-out 0.6s both' }}>
+          <div style={{ ...styles.btnRow, animation: 'fadeUp 0.5s ease-out 0.7s both' }}>
             <button onClick={onChangePlayers} style={styles.btnSecondary}>
               플레이어 변경
             </button>
             <button onClick={onChangeGame} style={styles.btnSecondary}>
               게임 변경
             </button>
-            <button onClick={onRestart} style={{ ...styles.btnPrimary, background: `linear-gradient(135deg, ${cfg.teamColor}, #8a5010)` }}>
+            <button onClick={onRestart} style={{ ...styles.btnPrimary, background: `linear-gradient(135deg, ${ACCENT}, #8a5010)` }}>
               게임 재시작
             </button>
           </div>
@@ -202,7 +247,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 20,
+    gap: 18,
     width: '100%',
     maxWidth: 560,
     padding: '0 36px',
@@ -218,10 +263,11 @@ const styles = {
   },
 
   headline: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: 800,
     letterSpacing: -0.5,
     textAlign: 'center',
+    color: '#fff8e1',
     textShadow: '0 2px 16px rgba(0,0,0,0.5)',
   },
 
@@ -248,8 +294,13 @@ const styles = {
     background: 'rgba(0,0,0,0.3)',
     border: '1px solid rgba(255,255,255,0.07)',
     borderRadius: 12,
-    padding: '16px 24px',
+    padding: '14px 24px',
     backdropFilter: 'blur(6px)',
+  },
+
+  roleRowExecuted: {
+    border: '1px solid rgba(255,153,128,0.45)',
+    background: 'rgba(60,0,0,0.35)',
   },
 
   playerName: {
@@ -258,15 +309,31 @@ const styles = {
     color: '#F8F1DD',
   },
 
-  roleName: {
-    fontSize: 18,
-    fontWeight: 600,
-  },
-
-  origRole: {
+  voterList: {
     fontSize: 13,
     color: 'rgba(248,241,221,0.38)',
     fontWeight: 400,
+  },
+
+  voteCount: {
+    fontSize: 18,
+    fontWeight: 700,
+  },
+
+  revealNotice: {
+    width: '100%',
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: 600,
+    color: 'rgba(248,241,221,0.7)',
+    lineHeight: 1.6,
+  },
+
+  deckLine: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: 400,
+    color: 'rgba(248,241,221,0.35)',
   },
 
   btnRow: {
