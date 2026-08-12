@@ -1,0 +1,12 @@
+{
+  "werewolf.night_start": "인자 밤 됐응게 다들 눈 감어라잉.",
+  "werewolf.morning": "아침 밝았다잉.",
+  "werewolf.morning_open_eyes": "눈 떠라잉.",
+  "werewolf.setup_flip": "카드 싹 다 뒤집어놔라잉. 역할 안 보이게.",
+  "werewolf.setup_close_eyes": "다들 눈 감어라잉.",
+  "werewolf.vote_intro": "인자 투표 헐 것잉게, 세는 소리 나면 손가락으로 짚어라잉.",
+  "rules.wrong_turn": "시방 {player} 차례여. 손 떼라잉.",
+  "rules.invalid_action": "시방 그거 허면 안 되야.",
+  "tempo.hurry": "얼릉 혀라잉. 시간 다 되야가.",
+  "yacht.turn_start": "{player}야, 주사위 굴려라잉."
+}

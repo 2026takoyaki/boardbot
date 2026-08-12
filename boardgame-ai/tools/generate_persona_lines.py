@@ -1,0 +1,187 @@
+"""고정 멘트를 페르소나 말투로 일괄 변환한다.
+
+발화할 때마다 LLM을 부르지 않는다. 매 페이즈에 생성+합성 지연이 겹치면
+진행이 끊긴다. 페르소나를 고르는 시점에 한 번에 바꿔 파일로 갖고 있다가
+런타임에는 읽기만 한다.
+
+    python tools/generate_persona_lines.py granny
+    python tools/generate_persona_lines.py granny --dry-run   # 프롬프트만 확인
+    python tools/generate_persona_lines.py --all
+
+출력은 `agents/tools/persona_lines/<id>.json`.
+검사(agents/tools/line_validator.py)에 걸린 줄은 저장하지 않는다 — 그 줄은
+런타임에 중립 원문으로 발화된다. 말투가 안 바뀐 문장 하나가 게임이 멈추는
+것보다 낫다.
+
+실패 리포트가 곧 프롬프트 수정의 근거다. "슬롯 유실 5건"이면 슬롯 규칙을
+강화하고, "영문 표기 유실 2건"이면 점수판 칸 이름 예시를 추가한다.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import json
+import os
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+from agents.personas import PERSONAS, get_persona  # noqa: E402
+from agents.tools import lines  # noqa: E402
+from agents.tools.line_validator import format_report, validate_all  # noqa: E402
+from core.persona import Persona  # noqa: E402
+
+# 한 번에 넘길 줄 수. 너무 크면 뒤쪽 문장의 말투가 흐려지고, 너무 작으면
+# 호출 수만 늘어난다.
+_BATCH = 20
+_TIMEOUT = 60.0
+
+# 유형별 예시. 페이즈 안내 하나만 보여주면 점수 발표나 긴 규칙문에서 무너진다.
+# 실제 LINES에서 성격이 다른 것들을 골랐다.
+_SAMPLE_IDS = (
+    "werewolf.night_start",        # 짧은 지시
+    "yacht.score_recorded",        # 슬롯 + 숫자
+    "rules.wrong_turn",            # 경고 + 존칭
+    "coach.hand_four_of_a_kind",   # 영문 칸 이름 + 숫자
+    "werewolf_practice.night_seer",  # 긴 규칙문
+)
+
+_TASK_RULES = """\
+아래 문장들을 당신의 말투로 바꾸세요.
+
+반드시 지킬 것:
+- {} 로 감싼 슬롯은 글자 그대로 남긴다. 값을 채워 넣지 않는다.
+  ("{player}님 차례입니다" → "{player} 니 차례다"  ○
+   "{player}님 차례입니다" → "성민이 차례다"        ×)
+- 숫자를 바꾸거나 빼지 않는다. "카드 2장"은 그대로 2장이다.
+- 영문 표기(4 of a Kind, L. Straight, Yacht 등)는 화면 점수판에 적힌 이름이므로
+  번역하지 않고 그대로 둔다.
+- 역할 이름(예언자, 도둑, 늑대인간 등)과 지시 내용을 바꾸지 않는다.
+- 설명을 덧붙이지 않는다. 원문보다 길어지면 안 된다.
+- 빈 문자열은 빈 문자열 그대로 둔다.
+
+입력은 {"line_id": "원문"} JSON이다. 같은 key로 {"line_id": "바꾼 문장"} JSON만
+출력한다. 다른 말은 하지 않는다."""
+
+
+def build_prompt(persona: Persona, batch: dict[str, str]) -> tuple[str, str]:
+    """(system, user). 프롬프트를 눈으로 확인할 수 있게 함수로 뺀다."""
+    samples = {
+        line_id: lines.LINES[line_id]
+        for line_id in _SAMPLE_IDS
+        if line_id in lines.LINES
+    }
+    system = f"{persona.style_prompt}\n\n{_TASK_RULES}"
+    user = (
+        "예시로 다룰 문장 유형:\n"
+        + json.dumps(samples, ensure_ascii=False, indent=2)
+        + "\n\n바꿀 문장:\n"
+        + json.dumps(batch, ensure_ascii=False, indent=2)
+    )
+    return system, user
+
+
+async def _convert_batch(client, model: str, persona: Persona, batch: dict[str, str]) -> dict:
+    system, user = build_prompt(persona, batch)
+    resp = await asyncio.wait_for(
+        client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            response_format={"type": "json_object"},
+        ),
+        timeout=_TIMEOUT,
+    )
+    content = resp.choices[0].message.content
+    if not content:
+        return {}
+    parsed = json.loads(content)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+async def generate(persona_id: str, model: str, dry_run: bool) -> int:
+    persona = get_persona(persona_id)
+    if persona.id != persona_id:
+        print(f"'{persona_id}'는 없는 페르소나입니다. 가능: {', '.join(PERSONAS)}")
+        return 1
+
+    originals = dict(lines.LINES)
+    items = list(originals.items())
+    batches = [dict(items[i : i + _BATCH]) for i in range(0, len(items), _BATCH)]
+
+    if dry_run:
+        system, user = build_prompt(persona, batches[0])
+        print("-- system " + "-" * 50)
+        print(system)
+        print(f"\n-- user (1/{len(batches)} 배치) " + "-" * 40)
+        print(user[:1500] + ("\n... (생략)" if len(user) > 1500 else ""))
+        return 0
+
+    from openai import AsyncOpenAI
+
+    if not os.environ.get("OPENAI_API_KEY"):
+        print("OPENAI_API_KEY가 없습니다. .env를 확인하세요.")
+        return 1
+    client = AsyncOpenAI()
+
+    converted: dict[str, str] = {}
+    for index, batch in enumerate(batches, start=1):
+        print(f"  배치 {index}/{len(batches)} ({len(batch)}줄) ...", flush=True)
+        try:
+            converted.update(await _convert_batch(client, model, persona, batch))
+        except Exception as exc:  # noqa: BLE001 — 배치 하나가 죽어도 나머지는 살린다
+            print(f"    실패: {type(exc).__name__}: {exc}")
+
+    accepted, rejected = validate_all(originals, converted)
+    print()
+    print(format_report(originals, accepted, rejected))
+
+    if not accepted:
+        print("\n저장할 것이 없습니다.")
+        return 1
+
+    lines.PERSONA_LINES_DIR.mkdir(parents=True, exist_ok=True)
+    out = lines.PERSONA_LINES_DIR / f"{persona.id}.json"
+    out.write_text(
+        json.dumps(accepted, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"\n저장: {out} ({len(accepted)}줄)")
+    return 0
+
+
+def main() -> int:
+    # 윈도우 콘솔 기본 인코딩(cp949)으로는 한글 문장이 섞인 출력이 깨진다.
+    with contextlib.suppress(AttributeError, OSError):
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("persona", nargs="?", help="페르소나 id")
+    parser.add_argument("--all", action="store_true", help="모든 페르소나 변환")
+    parser.add_argument("--model", default=os.environ.get("LLM_MODEL", "gpt-4o-mini"))
+    parser.add_argument("--dry-run", action="store_true", help="프롬프트만 출력")
+    args = parser.parse_args()
+
+    from dotenv import load_dotenv
+
+    load_dotenv(_PROJECT_ROOT / ".env")
+
+    targets = list(PERSONAS) if args.all else ([args.persona] if args.persona else [])
+    if not targets:
+        parser.error("페르소나 id를 주거나 --all을 쓰세요.")
+
+    code = 0
+    for persona_id in targets:
+        print(f"\n=== {persona_id} ===")
+        code |= asyncio.run(generate(persona_id, args.model, args.dry_run))
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

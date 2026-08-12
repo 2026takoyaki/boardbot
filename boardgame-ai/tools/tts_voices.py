@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 from collections import defaultdict
@@ -34,6 +35,10 @@ def _family(name: str) -> str:
 
 
 def main() -> int:
+    # 윈도우 콘솔 기본 인코딩(cp949)으로는 한글이 섞인 출력이 깨진다.
+    with contextlib.suppress(AttributeError, OSError):
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--all", action="store_true", help="한국어 외 보이스도 표시")
     args = parser.parse_args()
@@ -77,7 +82,7 @@ def main() -> int:
         voices = sorted(by_family.get(family, []))
         if not voices:
             continue
-        print(f"── {family} ({len(voices)}개) " + "─" * max(0, 40 - len(family)))
+        print(f"-- {family} ({len(voices)}개) " + "-" * max(0, 40 - len(family)))
         for name, gender, rate in voices:
             print(f"  {name:<28} {gender:<8} {rate}Hz")
         print()
@@ -86,7 +91,7 @@ def main() -> int:
     # 지금 값은 결제가 막혀 목록을 못 본 상태에서 넣은 잠정치다.
     from agents.personas import PERSONAS
 
-    print("── 페르소나가 쓰는 보이스 " + "─" * 22)
+    print("-- 페르소나가 쓰는 보이스 " + "-" * 22)
     known = {name: gender for names in by_family.values() for name, gender, _ in names}
     for persona in PERSONAS.values():
         gender = known.get(persona.voice_name, "?? 목록에 없음")
