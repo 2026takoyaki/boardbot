@@ -822,9 +822,11 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     if (diceEditMode && !canManualDiceInput) setDiceEditMode(false)
   }, [diceEditMode, canManualDiceInput])
 
-  const narrate = useCallback((text) => {
-    if (!connected || !text) return
-    send('TTS_REQUEST', { text, interrupt_existing: true })
+  // 인트로 낭독. 문장이 아니라 line_id를 보낸다 — 문장의 소유자는 백엔드
+  // (agents/lines.py)라 페르소나를 바꾸면 여기를 건드리지 않아도 말투가 바뀐다.
+  const narrateLine = useCallback((lineId) => {
+    if (!connected || !lineId) return
+    send('NARRATION_REQUEST', { line_id: lineId, interrupt_existing: true })
   }, [connected, send])
 
   // 새 판으로 넘어갈 때는 앞 판의 흔적을 남기지 않는다. 대기열에 남은 연출은
@@ -1220,7 +1222,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
       {rulesOpen && <YachtRules onClose={() => setRulesOpen(false)} />}
       {introOpen && (
-        <YachtTutorial onDone={() => setIntroOpen(false)} onNarrate={narrate} />
+        <YachtTutorial onDone={() => setIntroOpen(false)} onNarrateLine={narrateLine} />
       )}
     </div>
   )

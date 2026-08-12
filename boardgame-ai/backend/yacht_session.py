@@ -62,8 +62,30 @@ class YachtSession:
         # FSM 상태 변경 직렬화 — 비전 스레드와 WS 스레드가 동시에 호출 가능
         self._fsm_lock = threading.Lock()
 
+    async def _speak(self, text: str | None, interrupt_existing: bool = False) -> None:
+        """프론트가 요청한 발화. 같은 문장이 연달아 오면 한 번만 읽는다.
+
+        튜토리얼 화면이 리렌더될 때마다 같은 안내를 다시 보내는 경로가 있어,
+        중복 억제가 없으면 같은 말을 두세 번 반복한다.
+        """
+        if not text or self._audio_manager is None:
+            return
+        if interrupt_existing:
+            await self._audio_manager.interrupt_interruptible("tutorial_step_changed")
+        now = time.monotonic()
+        last_text, last_at = self._last_tts_request
+        if text == last_text and now - last_at < 4.0:
+            return
+        self._last_tts_request = (text, now)
+        state_version = self.fsm.state.state_version if self.fsm is not None else 0
+        await self._audio_manager.enqueue_tts(text=text, state_version=state_version)
+
     async def send_hello(self) -> None:
-        await self.send(WSMessage.make_hello({"game_type": "yacht"}))
+        # 멘트 카탈로그를 접속 시 통째로 준다. 프론트도 같은 문장을 화면에 그려야
+        # 하는데(튜토리얼 인트로 등) 발화마다 왕복하면 타이밍이 흔들린다.
+        await self.send(
+            WSMessage.make_hello({"game_type": "yacht", "lines": lines.catalog()})
+        )
 
     async def dispatch_vision_event(self, event: GameEvent) -> None:
         """yacht_runner가 호출. 비전 이벤트를 FSM에 전달하고 응답을 클라이언트로."""
@@ -106,18 +128,22 @@ class YachtSession:
                 self._agent.set_strategy_enabled(bool(payload.get("enabled", False)))
             return
 
+        if input_type == "NARRATION_REQUEST":
+            # 프론트가 문장이 아니라 line_id를 보낸다. 문장은 백엔드가 소유하므로
+            # 페르소나를 바꾸면 프론트를 건드리지 않아도 말투가 바뀐다.
+            await self._speak(
+                lines.render(
+                    str(payload.get("line_id", "")), **dict(payload.get("params") or {})
+                ),
+                interrupt_existing=bool(payload.get("interrupt_existing")),
+            )
+            return
+
         if input_type == "TTS_REQUEST":
-            text = str(payload.get("text") or "").strip()
-            if text and self._audio_manager is not None:
-                if bool(payload.get("interrupt_existing")):
-                    await self._audio_manager.interrupt_interruptible("tutorial_step_changed")
-                now = time.monotonic()
-                last_text, last_at = self._last_tts_request
-                if text == last_text and now - last_at < 4.0:
-                    return
-                self._last_tts_request = (text, now)
-                state_version = self.fsm.state.state_version if self.fsm is not None else 0
-                await self._audio_manager.enqueue_tts(text=text, state_version=state_version)
+            await self._speak(
+                str(payload.get("text") or "").strip(),
+                interrupt_existing=bool(payload.get("interrupt_existing")),
+            )
             return
 
         if input_type == "BGM_SET":

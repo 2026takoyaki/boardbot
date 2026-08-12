@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agents import lines
@@ -220,25 +222,196 @@ def test_narrate는_None_파라미터를_버린다() -> None:
     assert fsm.state.narration == {"line_id": "yacht.turn_start", "params": {}}
 
 
-# ── 4. TTS 캐시 정합성 현황 ────────────────────────────────────────────────────
+# ── 4. TTS 캐시 정합성 ─────────────────────────────────────────────────────────
 # STATIC_LINES에 없는 멘트는 부팅 prewarm을 못 받아 첫 발화에 합성 지연이 붙는다.
-# 아래는 이관 시점의 기존 갭을 그대로 기록한 것 — 이관이 만든 문제가 아니다.
-# 갭을 메우거나 새 멘트를 추가하면 이 테스트가 알려준다.
+# 갭 전체를 스냅샷으로 박으면 멘트를 추가할 때마다 깨져서 쓸모가 없다. 정작
+# 위험한 것은 "지금 캐시되던 멘트가 조용히 빠지는 것"이라, 그쪽만 감시한다.
 
-_기존_캐시_갭 = {
-    "werewolf.night_robber",
-    "werewolf.night_troublemaker",
-    *{f"werewolf_practice.{p.value}" for p in (WerewolfPhase.NIGHT_START, *NIGHT_PHASES)},
+# 현재 prewarm이 되고 있는 line_id. 여기서 빠지면 그 멘트에 합성 지연이 생긴다.
+_PREWARMED = {
+    "werewolf.night_start",
+    "werewolf.night_doppelganger",
+    "werewolf.night_werewolf",
+    "werewolf.night_minion",
+    "werewolf.night_mason",
+    "werewolf.night_seer",
+    "werewolf.night_drunk",
+    "werewolf.night_insomniac",
+    "werewolf.morning",
 }
 
 
-def test_캐시_갭_현황이_그대로다() -> None:
-    실제_갭 = {
-        line_id
-        for line_id, text in lines.LINES.items()
-        if line_id.startswith("werewolf") and text not in STATIC_LINES
-    }
-    assert 실제_갭 == _기존_캐시_갭, (
-        "prewarm 대상이 달라졌다. 멘트를 고쳤다면 audio/catalog.py의 "
-        "STATIC_LINES도 같이 고칠 것 (캐시 키가 텍스트 기반이라 한 글자만 달라도 miss)."
+@pytest.mark.parametrize("line_id", sorted(_PREWARMED))
+def test_prewarm되던_멘트가_캐시를_잃지_않았다(line_id: str) -> None:
+    text = lines.get(line_id)
+    assert text in STATIC_LINES, (
+        f"{line_id}가 STATIC_LINES와 어긋났다. 캐시 키가 텍스트 기반이라 한 글자만 "
+        "달라도 miss가 나 첫 발화에 합성 지연이 붙는다. audio/catalog.py도 같이 고칠 것."
     )
+
+
+def test_야간_페이즈_캐시_미적용_현황() -> None:
+    """아직 prewarm을 못 받는 야간 멘트. 메우면 이 테스트가 알려준다."""
+    미적용 = {
+        f"werewolf.{p.value}"
+        for p in (WerewolfPhase.NIGHT_START, *NIGHT_PHASES)
+        if lines.get(f"werewolf.{p.value}") not in STATIC_LINES
+    }
+    assert 미적용 == {"werewolf.night_robber", "werewolf.night_troublemaker"}
+
+
+# ── 5. 프론트 이관 계약 (NARRATION_REQUEST + 카탈로그) ────────────────────────
+# 프론트는 문장이 아니라 line_id를 보내고, 화면에 그릴 문장은 접속 시 받은
+# 카탈로그에서 읽는다. 둘 중 하나만 깨져도 화면이 비거나 음성이 사라진다.
+
+
+class _FakeWS:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_json(self, data: dict) -> None:
+        self.sent.append(data)
+
+
+class _FakeAudio:
+    """세션이 붙잡는 AudioManager 표면만 흉내낸다. 발화 텍스트만 관찰하면 된다."""
+
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+
+    async def enqueue_tts(self, text: str, **kwargs: object) -> str:
+        self.spoken.append(text)
+        return "pb"
+
+    def get_session_id(self) -> str | None:
+        return None
+
+    def attach_broadcast(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def detach_broadcast_if(self, *args: object, **kwargs: object) -> None:
+        pass
+
+
+def _werewolf_session(audio: _FakeAudio | None = None):
+    from backend.werewolf_session import WerewolfSession
+
+    return WerewolfSession(
+        websocket=_FakeWS(),
+        send_fusion_context_fn=lambda ctx, sv: None,
+        loop=asyncio.get_event_loop(),
+        audio_manager=audio,
+    )
+
+
+def test_카탈로그에_프론트가_쓰는_line_id가_전부_있다() -> None:
+    """프론트 컴포넌트가 참조하는 id. 빠지면 그 화면이 빈칸으로 뜬다."""
+    필요 = [
+        "werewolf.setup_intro", "werewolf.setup_flip", "werewolf.setup_take",
+        "werewolf.setup_place", "werewolf.setup_center", "werewolf.setup_close_eyes",
+        "werewolf.setup_confirm", "werewolf.role_select_prompt",
+        "werewolf.morning", "werewolf.discussion_start",
+        "werewolf.vote_intro", "werewolf.game_end",
+        "werewolf_practice.setup_no_hide", "werewolf_practice.morning",
+        "werewolf_practice.day_rules",
+        # 튜토리얼도 확인/투표 문구는 일반 모드를 물려받아야 한다.
+        "werewolf_practice.setup_confirm", "werewolf_practice.vote_intro",
+        *[f"werewolf.vote_count_{n}" for n in range(6)],
+    ]
+    catalog = lines.catalog()
+    빠진_것 = [line_id for line_id in 필요 if not catalog.get(line_id)]
+    assert 빠진_것 == []
+
+
+def test_튜토리얼은_일반모드를_물려받되_다른_것만_덮어쓴다() -> None:
+    assert lines.get("werewolf_practice.setup_confirm") == lines.get("werewolf.setup_confirm")
+    assert lines.get("werewolf_practice.setup_take") != lines.get("werewolf.setup_take")
+
+
+@pytest.mark.anyio
+async def test_hello가_카탈로그를_실어_보낸다() -> None:
+    session = _werewolf_session()
+    await session.send_hello()
+    hello = [m for m in session.websocket.sent if m["msg_type"] == "hello"][-1]
+    assert hello["payload"]["lines"]["werewolf.morning"] == lines.get("werewolf.morning")
+
+
+@pytest.mark.anyio
+async def test_NARRATION_REQUEST가_line_id를_문장으로_바꿔_발화한다() -> None:
+    audio = _FakeAudio()
+    session = _werewolf_session(audio)
+    await session.handle_client_message(
+        {
+            "input_type": "NARRATION_REQUEST",
+            "data": {"line_id": "werewolf.role_select_prompt", "params": {"count": "다섯"}},
+        }
+    )
+    assert audio.spoken == [
+        "이번 게임에 사용할 카드 다섯장을 선택해주세요. "
+        "선택한 카드만 테이블에 올려두고 나머지 카드는 정리해주세요."
+    ]
+
+
+@pytest.mark.anyio
+async def test_없는_line_id는_조용히_무시한다() -> None:
+    """오타 하나로 세션이 죽으면 안 된다. 그 멘트만 빠지고 게임은 계속된다."""
+    audio = _FakeAudio()
+    session = _werewolf_session(audio)
+    await session.handle_client_message(
+        {"input_type": "NARRATION_REQUEST", "data": {"line_id": "werewolf.없는거"}}
+    )
+    assert audio.spoken == []
+
+
+def test_요트_인트로_line_id가_전부_있다() -> None:
+    """YachtTutorial.jsx의 STEPS가 참조하는 id. 빠지면 그 카드가 무음이 된다."""
+    catalog = lines.catalog()
+    빠진_것 = [
+        line_id
+        for line_id in (
+            "yacht.intro_what", "yacht.intro_turn",
+            "yacht.intro_table", "yacht.intro_score",
+        )
+        if not catalog.get(line_id)
+    ]
+    assert 빠진_것 == []
+
+
+def test_아침_안내가_제목과_부제로_나뉜다() -> None:
+    """화면이 큰 제목 + 작은 부제로 보여주므로 문자열도 그 단위로 쪼개져 있어야
+    프론트가 사본을 따로 들지 않는다."""
+    assert lines.get("werewolf.morning") == "아침이 밝았습니다."
+    assert lines.get("werewolf.morning_open_eyes") == "모두 눈을 뜨세요."
+    # 튜토리얼은 눈을 감지 않았으므로 부제가 없다.
+    assert lines.get("werewolf_practice.morning_open_eyes") == ""
+
+
+@pytest.mark.anyio
+async def test_요트_NARRATION_REQUEST가_문장으로_바꿔_발화한다() -> None:
+    from backend.yacht_session import YachtSession
+
+    ws = _FakeWS()
+    session = YachtSession(ws)
+    audio = _FakeAudio()
+    session._audio_manager = audio  # type: ignore[assignment]
+
+    await session.handle_client_message(
+        {"input_type": "NARRATION_REQUEST", "data": {"line_id": "yacht.intro_turn"}}
+    )
+    assert audio.spoken == [lines.get("yacht.intro_turn")]
+
+
+@pytest.mark.anyio
+async def test_요트_같은_안내를_연달아_보내면_한_번만_읽는다() -> None:
+    """튜토리얼 화면이 리렌더될 때마다 같은 요청을 보내는 경로가 있다."""
+    from backend.yacht_session import YachtSession
+
+    session = YachtSession(_FakeWS())
+    audio = _FakeAudio()
+    session._audio_manager = audio  # type: ignore[assignment]
+
+    for _ in range(3):
+        await session.handle_client_message(
+            {"input_type": "NARRATION_REQUEST", "data": {"line_id": "yacht.intro_what"}}
+        )
+    assert len(audio.spoken) == 1

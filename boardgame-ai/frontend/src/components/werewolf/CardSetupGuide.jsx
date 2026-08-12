@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { audio as audioApi } from '../../hooks/useAudioPlayer'
+import { narrate, useLines } from '../../lines'
 
 const ROLE_NAMES = {
   doppelganger: '도플갱어',
@@ -91,23 +92,26 @@ const ROLE_INFO = {
   },
 }
 
-const SENTENCES_NORMAL = [
-  { text: '이번 게임에 사용할 역할 카드입니다.',                               showCards: true },
-  { text: '모든 카드를 역할이 보이지 않게 뒤집어주세요.',                       holdMs: 10000 },
-  { text: '각자 카드를 한 장씩 가져가고, 본인만 확인해주세요.',                 holdMs: 10000 },
-  { text: '본인의 카드는 각자 자기 앞에 엎어서 놓아주세요.',                   holdMs: 10000 },
-  { text: '나머지 카드는 역할이 보이지 않게 뒤집어 중앙에 놓아주세요.',         holdMs: 10000 },
-  { text: '모두 눈을 감아주세요.', holdMs: 3000 },
+// 문장이 아니라 line_id를 들고 있다. 문장은 백엔드(agents/lines.py)가 소유하고
+// 접속 시 카탈로그로 내려온다 — 화면 타이핑과 음성이 같은 문장을 쓰므로
+// 페르소나를 바꾸면 둘 다 함께 바뀐다.
+const STEPS_NORMAL = [
+  { id: 'setup_intro',      showCards: true },
+  { id: 'setup_flip',       holdMs: 10000 },
+  { id: 'setup_take',       holdMs: 10000 },
+  { id: 'setup_place',      holdMs: 10000 },
+  { id: 'setup_center',     holdMs: 10000 },
+  { id: 'setup_close_eyes', holdMs: 3000 },
 ]
 
-const SENTENCES_PRACTICE = [
-  { text: '이번 게임에 사용할 역할 카드입니다.',                               showCards: true },
-  { text: '모든 카드를 역할이 보이지 않게 뒤집어주세요.',                       holdMs: 10000 },
-  { text: '각자 카드를 한 장씩 가져가주세요.',                                 holdMs: 10000 },
-  { text: '튜토리얼 모드이므로 역할을 숨기지 않고 진행합니다.',                   holdMs: 10000 },
-  { text: '본인의 카드는 각자 자기 앞에 놓아주세요.',                         holdMs: 10000 },
-  { text: '나머지 카드는 역할이 보이도록 중앙에 놓아주세요.',                   holdMs: 10000 },
-  { text: '튜토리얼 모드에서는 눈을 감지 않고 진행하겠습니다.' },
+const STEPS_PRACTICE = [
+  { id: 'setup_intro',      showCards: true },
+  { id: 'setup_flip',       holdMs: 10000 },
+  { id: 'setup_take',       holdMs: 10000 },
+  { id: 'setup_no_hide',    holdMs: 10000 },
+  { id: 'setup_place',      holdMs: 10000 },
+  { id: 'setup_center',     holdMs: 10000 },
+  { id: 'setup_close_eyes' },
 ]
 
 const KOREAN_ORDINALS = ['첫 번째', '두 번째', '세 번째', '네 번째', '다섯 번째', '여섯 번째', '일곱 번째', '여덟 번째', '아홉 번째', '열 번째', '열한 번째', '열두 번째']
@@ -118,10 +122,12 @@ const FADE_MS = 600
 const ROLE_EXPLAIN_DELAY_MS = 4000
 // TTS 시작/종료 신호가 끝내 오지 않는 경우(합성 실패·TTS 비활성 등)의 안전장치.
 const ROLE_EXPLAIN_SAFETY_MS = 30000
-const CONFIRM_TEXT = '모든 준비가 완료 되었으면 OK 싸인을 해주세요.'
 
 export default function CardSetupGuide({ roles = [], onComplete, send, wsState, onExit, isPracticeMode }) {
-  const SENTENCES = isPracticeMode ? SENTENCES_PRACTICE : SENTENCES_NORMAL
+  const line = useLines()
+  const game = isPracticeMode ? 'werewolf_practice' : 'werewolf'
+  const SENTENCES = isPracticeMode ? STEPS_PRACTICE : STEPS_NORMAL
+  const CONFIRM_TEXT = line(`${game}.setup_confirm`)
   const [step, setStep]                         = useState(0)
   const [typed, setTyped]                       = useState('')
   const [visible, setVisible]                   = useState(false)
@@ -134,6 +140,12 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
   // 중복 제거한 역할 목록 (역할 설명은 역할 종류당 1회)
   const uniqueRoles = [...new Set(roles)]
 
+  // 현재 스텝의 line_id와 문장. 카탈로그가 늦게 도착할 수 있어 effect의
+  // 의존성으로도 쓴다 — deps에 없으면 아래 `if (!stepText) return`에 걸린
+  // 스텝이 영원히 재시도되지 않아 진행이 멈춘다.
+  const stepLineId = SENTENCES[step] ? `${game}.${SENTENCES[step].id}` : ''
+  const stepText = stepLineId ? line(stepLineId) : ''
+
   // 문장 진행 페이즈
   useEffect(() => {
     if (roleExplainIdx !== null) return
@@ -143,19 +155,22 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
     }
 
     const sentence = SENTENCES[step]
+    const text = stepText
+    if (!text) return
+
     setTyped('')
     setVisible(true)
 
-    send?.('TTS_REQUEST', { text: sentence.tts ?? sentence.text })
+    narrate(send, stepLineId)
 
     let charIdx = 0
     const typeTimer = setInterval(() => {
       charIdx++
-      setTyped(sentence.text.slice(0, charIdx))
-      if (charIdx >= sentence.text.length) clearInterval(typeTimer)
+      setTyped(text.slice(0, charIdx))
+      if (charIdx >= text.length) clearInterval(typeTimer)
     }, CHAR_MS)
 
-    const typingMs = sentence.text.length * CHAR_MS
+    const typingMs = text.length * CHAR_MS
     const holdMs   = sentence.holdMs ?? HOLD_MS
 
     // 스텝 0 완료 후 튜토리얼 모드에서 역할 설명 페이즈로 전환
@@ -175,7 +190,7 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
       clearInterval(typeTimer)
       clearTimeout(fadeOut)
       clearTimeout(next)
-      setTyped(sentence.text)
+      setTyped(text)
       setVisible(false)
       setTimeout(goNext, FADE_MS)
     }
@@ -186,7 +201,7 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
       clearTimeout(next)
       skipRef.current = null
     }
-  }, [step, roleExplainIdx])
+  }, [step, roleExplainIdx, stepText, stepLineId])
 
   // 역할 설명 페이즈
   useEffect(() => {
@@ -262,10 +277,13 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
   // 확인 단계 진입: 타이핑 애니메이션 + TTS + 제스처 가드 초기화
   useEffect(() => {
     if (!confirming) return
+    // 카탈로그를 아직 못 받았으면 기다린다 — 빈 문장을 타이핑하면 OK 사인
+    // 안내가 사라져 진행이 막힌다.
+    if (!CONFIRM_TEXT) return
     setTyped('')
     setVisible(true)
     send?.('CARD_SETUP_CONFIRM_READY', {})
-    send?.('TTS_REQUEST', { text: CONFIRM_TEXT })
+    narrate(send, `${game}.setup_confirm`)
     let charIdx = 0
     const typeTimer = setInterval(() => {
       charIdx++
@@ -273,7 +291,7 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
       if (charIdx >= CONFIRM_TEXT.length) clearInterval(typeTimer)
     }, CHAR_MS)
     return () => clearInterval(typeTimer)
-  }, [confirming])
+  }, [confirming, CONFIRM_TEXT])
 
   // OK 싸인 감지 → 즉시 진행
   useEffect(() => {
@@ -403,7 +421,7 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
               {!confirming && sentence && <span style={s.cursor}>|</span>}
             </p>
 
-            {confirming && typed.length >= CONFIRM_TEXT.length && (
+            {confirming && CONFIRM_TEXT && typed.length >= CONFIRM_TEXT.length && (
               <p style={s.hint}>화면을 터치하거나 OK 싸인을 해주세요</p>
             )}
 
@@ -486,15 +504,21 @@ const s = {
 
   sentence: {
     margin: 0,
-    fontSize: 38,
+    // 문장 길이가 고정이 아니다 — 페르소나에 따라 같은 안내가 길어질 수 있어
+    // 뷰포트 폭에 맞춰 줄어들게 둔다. nowrap이면 긴 문장이 화면 밖으로 나간다.
+    fontSize: 'clamp(24px, 3.4vw, 38px)',
     fontWeight: 600,
     color: '#F8F1DD',
     textAlign: 'center',
     letterSpacing: 1,
     textShadow: '0 0 32px rgba(220,185,120,0.4)',
     lineHeight: 1.6,
-    minHeight: 60,
-    whiteSpace: 'nowrap',
+    // 두 줄까지는 자리를 미리 잡아둔다. 타이핑 도중 줄이 늘면 아래 카드가
+    // 밀려 내려가 화면이 출렁인다.
+    minHeight: 124,
+    // 단어 중간에서 끊기지 않게. 한국어는 어절 단위로 끊겨야 읽힌다.
+    wordBreak: 'keep-all',
+    overflowWrap: 'break-word',
   },
 
   cursor: {
