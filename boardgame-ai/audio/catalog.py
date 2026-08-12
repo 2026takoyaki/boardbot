@@ -44,7 +44,7 @@ DYNAMIC_CACHE_DIR = TTS_CACHE_DIR / "dynamic"
 #
 # 아래는 페르소나가 아직 주입되지 않았을 때의 최소 폴백이다. 실제 운영에서는
 # 항상 페르소나가 설정되므로 쓰이지 않는다.
-DEFAULT_VOICE = VoiceConfig(name="ko-KR-Neural2-A")
+DEFAULT_VOICE = VoiceConfig(name="")
 
 
 # ── STATIC: 플레이어 이름 없는 완전 고정 멘트 ──────────────────────────────────

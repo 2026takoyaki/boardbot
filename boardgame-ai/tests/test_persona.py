@@ -81,36 +81,52 @@ def test_매니저가_페르소나_목소리로_합성한다() -> None:
 
 
 def test_페르소나를_주입하지_않아도_죽지_않는다() -> None:
-    """목소리 조회가 죽으면 발화가 통째로 사라진다. 밋밋한 게 침묵보다 낫다."""
+    """목소리 조회가 죽으면 발화가 통째로 사라진다. 합성이 실패하더라도
+    조회 자체는 예외 없이 끝나야 자막이라도 나간다."""
     mgr = AudioManager(TTSEngine())
     voice = mgr._voice_for(_request("아무 말", AgentRole.NARRATOR.value))
-    assert voice.name
+    assert voice.provider
 
 
 @pytest.mark.anyio
-async def test_페르소나를_바꾸면_목소리가_바뀐다() -> None:
-    first, second = sorted(PERSONAS)[0], sorted(PERSONAS)[1]
-    mgr = AudioManager(TTSEngine(), get_persona(first))
+async def test_페르소나를_바꾸면_합성_설정이_바뀐다() -> None:
+    """voice_id를 아직 안 채운 상태에서도 말투(속도·감정)는 이미 다르다."""
+    mgr = AudioManager(TTSEngine(), _persona(voice_name="v1", base=Delivery(1.0)))
     before = mgr._voice_for(_request("안녕", AgentRole.NARRATOR.value))
-    # prewarm=False: 합성 없이 목소리만 교체 (TTS 자격증명 없이도 검증 가능)
-    await mgr.set_persona(get_persona(second), prewarm=False)
+    # prewarm=False: 합성 없이 설정만 교체 (API 키 없이도 검증 가능)
+    await mgr.set_persona(_persona(voice_name="v2", base=Delivery(1.4)), prewarm=False)
     after = mgr._voice_for(_request("안녕", AgentRole.NARRATOR.value))
 
-    assert before.name != after.name
-    assert mgr.persona.id == second
+    assert (before.name, before.speaking_rate) != (after.name, after.speaking_rate)
 
 
 # ── 3. 캐시 정합성 ────────────────────────────────────────────────────────────
 
 
-def test_페르소나가_다르면_캐시_키가_다르다() -> None:
+def test_목소리가_다르면_캐시_키가_다르다() -> None:
     """같은 문장이라도 목소리가 다르면 다른 파일이어야 한다. 안 그러면 페르소나를
     바꿔도 옛 목소리가 그대로 재생된다."""
     text = "밤이 되었습니다."
-    keys = {
-        _make_cache_key(text, persona.voice_for()) for persona in PERSONAS.values()
-    }
-    assert len(keys) == len(PERSONAS)
+    a = _persona(voice_name="voice-a")
+    b = _persona(voice_name="voice-b")
+    assert _make_cache_key(text, a.voice_for()) != _make_cache_key(text, b.voice_for())
+
+
+def test_엔진이_다르면_캐시_키가_다르다() -> None:
+    """엔진을 갈아끼웠는데 옛 엔진이 만든 파일이 hit되면 목소리가 안 바뀐다."""
+    text = "밤이 되었습니다."
+    same_voice = _persona(voice_name="v1")
+    other_engine = _persona(voice_name="v1", provider="other")
+    assert _make_cache_key(text, same_voice.voice_for()) != _make_cache_key(
+        text, other_engine.voice_for()
+    )
+
+
+def test_설정된_보이스는_서로_달라야_한다() -> None:
+    """두 페르소나가 같은 voice_id를 쓰면 목소리로 구분이 안 되고, 말투가
+    같은 구간에서는 캐시까지 겹친다."""
+    configured = [p.voice_name for p in PERSONAS.values() if p.voice_name]
+    assert len(configured) == len(set(configured))
 
 
 def test_같은_페르소나의_다른_말투도_캐시_키가_다르다() -> None:
@@ -148,7 +164,7 @@ def test_모든_페르소나가_말투_지시를_갖는다(persona_id: str) -> N
     persona = PERSONAS[persona_id]
     assert persona.style_prompt
     assert persona.display_name
-    assert persona.voice_name.startswith("ko-KR-")
+    assert persona.provider
 
 
 @pytest.mark.parametrize("persona_id", sorted(PERSONAS))

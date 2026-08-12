@@ -114,8 +114,11 @@ _YACHT: dict[str, str] = {
     "wrong_turn":       "지금은 {player}님 차례입니다.",
     "dice_unreadable":  "읽히지 않은 주사위 값이 있습니다. 화면에서 값을 입력해주세요.",
     "undo_roll":        "{player}님의 주사위 굴림을 되돌렸습니다.",
-    "score_recorded":   "{scorer}님 {label} {score}점입니다. {next}님 차례입니다.",
-    "game_finish":      "{scorer}님 {label} {score}점입니다. 게임이 종료되었습니다.",
+    # 이름 슬롯과 족보 이름 사이에 쉼표를 둔다. TTS가 공백을 끊어 읽을 자리로
+    # 보는데, 쉼표가 없으면 "성민님풀 / 하우스 / 25점입니다"처럼 엉뚱한 데서
+    # 끊긴다. 쉼표 하나가 그 자리를 잡아준다.
+    "score_recorded":   "{scorer}님, {label} {score}점입니다. {next}님 차례입니다.",
+    "game_finish":      "{scorer}님, {label} {score}점입니다. 게임이 종료되었습니다.",
     # 튜토리얼: 매 턴 반복되므로 짧게. 굴리는 법은 화면 인트로가 한 번만 설명한다.
     "tutorial_turn_start": "{player}님 차례입니다. 주사위를 굴려주세요.",
     "tutorial_complete":   "튜토리얼이 끝났습니다. 게임 선택 화면으로 돌아가거나 정식 게임을 시작해보세요.",

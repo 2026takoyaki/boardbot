@@ -40,49 +40,63 @@ from core.persona import Persona  # noqa: E402
 _BATCH = 20
 _TIMEOUT = 60.0
 
-# 유형별 예시. 페이즈 안내 하나만 보여주면 점수 발표나 긴 규칙문에서 무너진다.
-# 실제 LINES에서 성격이 다른 것들을 골랐다.
-_SAMPLE_IDS = (
-    "werewolf.night_start",        # 짧은 지시
-    "yacht.score_recorded",        # 슬롯 + 숫자
-    "rules.wrong_turn",            # 경고 + 존칭
-    "coach.hand_four_of_a_kind",   # 영문 칸 이름 + 숫자
-    "werewolf_practice.night_seer",  # 긴 규칙문
-)
-
 _TASK_RULES = """\
-아래 문장들을 당신의 말투로 바꾸세요.
+아래 문장들을 당신의 말투로 다시 쓰세요.
 
-반드시 지킬 것:
-- {} 로 감싼 슬롯은 글자 그대로 남긴다. 값을 채워 넣지 않는다.
-  ("{player}님 차례입니다" → "{player} 니 차례다"  ○
-   "{player}님 차례입니다" → "성민이 차례다"        ×)
-- 숫자를 바꾸거나 빼지 않는다. "카드 2장"은 그대로 2장이다.
-- 영문 표기(4 of a Kind, L. Straight, Yacht 등)는 화면 점수판에 적힌 이름이므로
-  번역하지 않고 그대로 둔다.
-- 역할 이름(예언자, 도둑, 늑대인간 등)과 지시 내용을 바꾸지 않는다.
-- 설명을 덧붙이지 않는다. 원문보다 길어지면 안 된다.
-- 빈 문자열은 빈 문자열 그대로 둔다.
+이것은 번역이 아니라 캐릭터 연기다. 어미만 다듬고 끝내지 말 것.
+당신의 말버릇, 호칭, 감탄사, 끊어 치는 리듬을 실제로 넣어야 한다.
+바꾼 문장만 따로 읽었을 때 누가 말하는지 알 수 있어야 한다.
+
+바꿔야 하는 것:
+- 어미와 말투 (존댓말/반말, 사투리, 특유의 종결어미)
+- 호칭과 부르는 말
+- 문장 리듬 (짧게 끊거나, 늘어뜨리거나)
+- 감탄사·말버릇·비속어
+
+바꾸면 안 되는 것:
+- {} 로 감싼 슬롯. 글자 그대로 남기고 값을 채워 넣지 않는다.
+  ("{player}님 차례입니다" → "{player} 니 차례다"  O
+   "{player}님 차례입니다" → "성민이 차례다"        X)
+- 숫자. "카드 2장"은 그대로 2장이다.
+- 영문 표기(4 of a Kind, L. Straight, Yacht 등). 화면 점수판에 적힌 이름이라
+  번역하면 플레이어가 그 칸을 못 찾는다.
+- 역할 이름(예언자, 도둑, 늑대인간 등)과 지시 내용.
+- 빈 문자열은 빈 문자열 그대로.
+
+길이는 원문과 비슷하게. 설명을 덧붙이지 말 것.
+
+읽히는 문장이라는 것을 잊지 말 것:
+- 이름 슬롯과 뒤따르는 말 사이에는 쉼표를 둔다. 쉼표가 없으면 TTS가 엉뚱한
+  자리에서 끊는다("성민님풀 / 하우스 / 25점입니다").
+- 붙여 쓴 이름(풀하우스, 스몰스트레이트 등)을 임의로 띄어 쓰지 않는다.
+  띄우면 두 단어로 갈려 읽힌다.
 
 입력은 {"line_id": "원문"} JSON이다. 같은 key로 {"line_id": "바꾼 문장"} JSON만
 출력한다. 다른 말은 하지 않는다."""
 
 
 def build_prompt(persona: Persona, batch: dict[str, str]) -> tuple[str, str]:
-    """(system, user). 프롬프트를 눈으로 확인할 수 있게 함수로 뺀다."""
-    samples = {
-        line_id: lines.LINES[line_id]
-        for line_id in _SAMPLE_IDS
+    """(system, user). 프롬프트를 눈으로 확인할 수 있게 함수로 뺀다.
+
+    예시는 원문만 보여주면 안 된다. 그러면 모델이 "이런 게 들어오는구나"까지만
+    알고 어미만 살짝 다듬고 만다. 원문→변환 쌍을 보여줘야 "이 정도까지
+    바꾸라"가 전달된다.
+    """
+    system = f"{persona.style_prompt}\n\n{_TASK_RULES}"
+
+    shots = {
+        line_id: {"원문": lines.LINES[line_id], "변환": converted}
+        for line_id, converted in persona.style_examples.items()
         if line_id in lines.LINES
     }
-    system = f"{persona.style_prompt}\n\n{_TASK_RULES}"
-    user = (
-        "예시로 다룰 문장 유형:\n"
-        + json.dumps(samples, ensure_ascii=False, indent=2)
-        + "\n\n바꿀 문장:\n"
-        + json.dumps(batch, ensure_ascii=False, indent=2)
-    )
-    return system, user
+    parts = []
+    if shots:
+        parts.append(
+            "다음은 당신의 말투로 바꾼 예시다. 이 정도로 확실히 바꿔야 한다:\n"
+            + json.dumps(shots, ensure_ascii=False, indent=2)
+        )
+    parts.append("바꿀 문장:\n" + json.dumps(batch, ensure_ascii=False, indent=2))
+    return system, "\n\n".join(parts)
 
 
 async def _convert_batch(client, model: str, persona: Persona, batch: dict[str, str]) -> dict:

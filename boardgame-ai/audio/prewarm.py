@@ -35,13 +35,18 @@ async def prewarm_static(engine: TTSEngine, persona: Persona) -> dict[str, int]:
 
     Returns: {"total": N, "cached": M, "synthesized": K, "failed": F}
     """
-    if not engine.is_available():
-        logger.warning("prewarm_static: TTS unavailable, skipping (STATIC will fail at runtime)")
-        total = len(STATIC_LINES) + len(EXCITED_LINES)
-        return {"total": total, "cached": 0, "synthesized": 0, "failed": 0}
-
     base_voice = persona.voice_for()
     excited_voice = persona.voice_for(DELIVERY_EXCITED)
+
+    # 페르소나가 고른 엔진 기준으로 판단한다. 기본 엔진만 보면 Typecast
+    # 페르소나가 쓰는 엔진이 아니라 다른 엔진을 보고 건너뛰는 일이 생긴다.
+    if not engine.is_available(base_voice):
+        logger.warning(
+            "prewarm_static: %s 엔진을 쓸 수 없어 건너뜁니다 (런타임에 STATIC이 실패함)",
+            base_voice.provider,
+        )
+        total = len(STATIC_LINES) + len(EXCITED_LINES)
+        return {"total": total, "cached": 0, "synthesized": 0, "failed": 0}
 
     # (voice, text) 쌍으로 통합 처리
     pairs: list[tuple[object, str]] = []
@@ -86,15 +91,15 @@ async def prewarm_session(
     좌석 등록 완료 직후 호출. session_id는 플레이어 구성과 1:1 매핑되어야 한다
     (예: 플레이어 이름 정렬 hash).
     """
-    if not engine.is_available():
-        logger.warning("prewarm_session: TTS unavailable, skipping (session=%s)", session_id)
+    # 페르소나가 없으면 엔진 기본 목소리로 떨어진다(테스트 경로).
+    voice = persona.voice_for() if persona is not None else None
+
+    if not engine.is_available(voice):
+        logger.warning("prewarm_session: TTS 엔진을 쓸 수 없어 건너뜁니다 (session=%s)", session_id)
         return {"total": 0, "cached": 0, "synthesized": 0, "failed": 0}
 
     if not player_names:
         return {"total": 0, "cached": 0, "synthesized": 0, "failed": 0}
-
-    # 페르소나가 없으면 엔진 기본 목소리로 떨어진다(테스트 경로).
-    voice = persona.voice_for() if persona is not None else None
     expanded = expand_session_lines(player_names)  # [(template, formatted), ...]
     formatted_lines = [text for _, text in expanded]
 

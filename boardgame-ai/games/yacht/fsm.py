@@ -26,6 +26,11 @@ from games.yacht.state import (
 
 logger = logging.getLogger(__name__)
 
+# 낭독용 족보 이름. **띄어쓰지 않는다.**
+#
+# TTS는 공백을 끊어 읽을 자리로 본다. "풀 하우스"는 "풀"과 "하우스"로 갈려
+# 앞말과 붙어버린다 — "성민님풀 / 하우스 / 25점입니다"처럼 들린다.
+# 한 덩어리로 읽혀야 할 이름은 붙여 쓴다.
 _CATEGORY_TTS_LABELS: dict[str, str] = {
     "ones": "에이스",
     "twos": "투",
@@ -35,9 +40,9 @@ _CATEGORY_TTS_LABELS: dict[str, str] = {
     "sixes": "식스",
     "choice": "초이스",
     "four_of_a_kind": "포카드",
-    "full_house": "풀 하우스",
-    "small_straight": "스몰 스트레이트",
-    "large_straight": "라지 스트레이트",
+    "full_house": "풀하우스",
+    "small_straight": "스몰스트레이트",
+    "large_straight": "라지스트레이트",
     "yacht": "요트",
 }
 

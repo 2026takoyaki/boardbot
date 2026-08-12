@@ -31,20 +31,41 @@ DELIVERY_EXCITED = "excited"
 
 @dataclass(frozen=True)
 class VoiceConfig:
-    """TTS 합성 파라미터. 캐시 키가 이 값들로 만들어진다."""
+    """TTS 합성 파라미터. 캐시 키가 이 값들로 만들어진다.
 
-    name: str  # ex: "ko-KR-Neural2-C"
+    엔진마다 이름이 다르지만 뜻은 같은 것들을 여기 하나로 모은다.
+        name           Typecast voice_id
+        speaking_rate  Typecast audio_tempo (0.5~2.0)
+        pitch          Typecast audio_pitch (-12~12 반음)
+    """
+
+    name: str  # Typecast voice_id
     language_code: str = "ko-KR"
     speaking_rate: float = 1.0
     pitch: float = 0.0
+    # 어느 엔진으로 합성할지. 캐시 키에 들어가므로 엔진을 바꾸면 옛 음성이
+    # 재생되지 않는다.
+    provider: str = "typecast"
+    # 엔진별 추가 파라미터. Typecast의 model("ssfm-v30")·emotion 등.
+    # 값이 없는 항목은 캐시 키에서 빠진다.
+    model: str | None = None
+    emotion: str | None = None
+    # 감정 강도 0.0~2.0. None이면 엔진 기본값.
+    emotion_intensity: float | None = None
 
 
 @dataclass(frozen=True)
 class Delivery:
-    """같은 사람의 다른 말투. 목소리(voice name)는 바꾸지 않는다."""
+    """같은 사람의 다른 말투. 목소리(voice name)는 바꾸지 않는다.
+
+    emotion은 엔진이 지원할 때만 쓰인다(Typecast 등). 지원하지 않는 엔진에서는
+    무시되고 speaking_rate로만 차이가 난다.
+    """
 
     speaking_rate: float = 1.0
     pitch: float = 0.0
+    emotion: str | None = None
+    emotion_intensity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +76,10 @@ class Persona:
     display_name: str
     voice_name: str
     language_code: str = "ko-KR"
+    # 이 페르소나를 합성할 엔진. 페르소나마다 다른 엔진을 쓸 수 있다 —
+    # 캐릭터가 강한 목소리는 그 목소리가 있는 엔진에서만 나온다.
+    provider: str = "typecast"
+    model: str | None = None
     # 기본 말투. 대부분의 발화가 이걸 쓴다.
     base: Delivery = field(default_factory=Delivery)
     # 상황별 말투. 키는 AgentRole 값 또는 DELIVERY_EXCITED.
@@ -63,6 +88,11 @@ class Persona:
     # LLM이 고정 멘트를 이 페르소나 말투로 바꿀 때 주입할 지시.
     # 말투만 규정하고 게임 지식은 넣지 않는다 — 그래야 게임마다 재사용된다.
     style_prompt: str = ""
+    # 변환 예시 {line_id: 변환된 문장}. 규칙만 주면 모델이 보수적으로 굴어
+    # 어미만 살짝 다듬고 만다 — "이 정도까지 바꾸라"를 결과로 보여줘야 한다.
+    # 문장 성격이 다른 것들(짧은 지시·슬롯+숫자·경고·영문 칸이름·긴 규칙문)을
+    # 고루 담을 것. 한 종류만 있으면 나머지 유형에서 무너진다.
+    style_examples: dict[str, str] = field(default_factory=dict)
 
     def voice_for(self, role: str | None = None) -> VoiceConfig:
         """해당 상황에서 쓸 합성 파라미터."""
@@ -72,6 +102,10 @@ class Persona:
             language_code=self.language_code,
             speaking_rate=delivery.speaking_rate,
             pitch=delivery.pitch,
+            provider=self.provider,
+            model=self.model,
+            emotion=delivery.emotion,
+            emotion_intensity=delivery.emotion_intensity,
         )
 
     def deliveries(self) -> list[tuple[str, VoiceConfig]]:

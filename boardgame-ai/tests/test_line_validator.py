@@ -238,3 +238,13 @@ def test_깨진_json은_전체를_원문으로_돌린다(tmp_path, monkeypatch) 
 
     assert applied == 0
     assert "__file__" in rejected
+
+
+def test_말끝을_늘이는_물결표는_허용한다() -> None:
+    """사투리·능청 말투에서 '햐유~'의 물결표를 막으면 캐릭터가 죽는다."""
+    assert validate_line("천천히 하세요.", "천천히 햐유~") == []
+
+
+def test_마크다운_취소선은_잡는다() -> None:
+    """물결표 하나는 말끝, 둘은 마크다운이다."""
+    assert validate_line("천천히 하세요.", "천천히 ~~햐유~~") != []
