@@ -138,6 +138,30 @@ class AudioManager:
         # 등록될 때 새로 만든다.
         self._session_texts = frozenset()
 
+    async def add_static_texts(
+        self, texts: Iterable[str], prewarm: bool = True
+    ) -> dict[str, int]:
+        """뒤늦게 정해진 문장을 static 목록에 더하고 합성해 둔다.
+
+        페르소나를 고르는 시점에는 아직 없고 조금 뒤에 만들어지는 문장이 있다
+        (LLM이 만드는 템포 변형). 그것을 기다렸다 부팅을 마치면 서버가 10초
+        늦게 뜨므로, 먼저 뜨고 나중에 더한다.
+
+        목록에 넣지 않으면 계층 판정이 dynamic으로 떨어져 그 문장이 처음
+        나올 때마다 합성 지연이 붙는다 — 미리 만들어 둔 의미가 없어진다.
+        """
+        items = [t for t in texts if t.strip()]
+        if not items:
+            return {}
+        self._static_texts = self._static_texts | frozenset(items)
+        if not prewarm:
+            return {}
+        from audio.prewarm import prewarm_static
+
+        stats = await prewarm_static(self._engine, self._persona, items)
+        logger.info("add_static_texts(%d줄): prewarm %s", len(items), stats)
+        return stats
+
     # ── 페르소나 ──────────────────────────────────────────────────────────────
 
     @property

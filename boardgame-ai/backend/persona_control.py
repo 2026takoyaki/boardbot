@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -63,6 +64,38 @@ def catalog_message() -> WSMessage:
     )
 
 
+_tempo_task: asyncio.Task[None] | None = None
+
+
+def _schedule_tempo_pool(persona: Persona, audio_manager: AudioManager) -> None:
+    """재촉 변형을 뒤에서 만들어 캐시에 올린다.
+
+    앞선 전환의 작업이 남아 있으면 취소한다 — 옛 페르소나 목소리로 합성한
+    문장이 뒤늦게 목록에 얹히면, 지금 페르소나와 섞여 나간다.
+    """
+    global _tempo_task
+    if _tempo_task is not None and not _tempo_task.done():
+        _tempo_task.cancel()
+
+    async def _run() -> None:
+        try:
+            texts = await tempo_pool.regenerate(persona)
+            # 만드는 동안 사람이 페르소나를 또 바꿨을 수 있다. 그러면 이건
+            # 남의 목소리로 합성될 문장이라 버린다.
+            if lines.active_persona_id() != persona.id:
+                logger.info("[tempo] 페르소나가 바뀌어 변형을 버림 (%s)", persona.id)
+                tempo_pool.clear()
+                return
+            await audio_manager.add_static_texts(texts)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 변형이 없으면 고정 멘트로 재촉한다. 진행이 막히지는 않는다.
+            logger.exception("[tempo] 변형 준비 실패 — 고정 멘트로 재촉합니다")
+
+    _tempo_task = asyncio.create_task(_run())
+
+
 async def apply_persona(
     persona_id: str | None,
     audio_manager: AudioManager | None = None,
@@ -80,23 +113,20 @@ async def apply_persona(
     # 뒤이어 나가는 카탈로그가 새 문장을 담는다.
     applied, rejected = lines.use_persona(persona.id)
 
-    # 재촉 멘트 변형은 지금 만들어야 한다. TempoAgent는 발화 시점에 LLM을 부를
-    # 수 없고(재촉이 늦으면 재촉이 아니다), 여기서 만든 문장이 아래 prewarm에
-    # 함께 실려야 캐시에 올라간다.
-    tempo_texts: list[str] = []
-    if prewarm:
-        tempo_texts = await tempo_pool.regenerate(persona)
-    else:
-        tempo_pool.clear()
+    tempo_pool.clear()
 
     prewarm_stats: dict[str, int] = {}
     if audio_manager is not None:
         # 미리 만들어 둘 문장 목록을 먼저 갱신한다. 이게 옛 문장으로 남아 있으면
         # 새 페르소나로 데우는 것이 아니라 아무도 안 쓸 문장을 데우게 된다.
         audio_manager.set_line_catalog(
-            [*lines.static_texts(), *tempo_texts], lines.session_templates()
+            lines.static_texts(), lines.session_templates()
         )
         prewarm_stats = await audio_manager.set_persona(persona, prewarm=prewarm)
+        # 재촉 변형은 여기서 기다리지 않는다. LLM 생성만 10초가 걸려 부팅이
+        # 그만큼 늦어지는데, 정작 재촉이 필요한 시점은 한참 뒤다.
+        if prewarm:
+            _schedule_tempo_pool(persona, audio_manager)
 
     if broadcast is not None:
         try:
