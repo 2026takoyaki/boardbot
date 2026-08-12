@@ -19,6 +19,7 @@ from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
 from agents.tools import lines, werewolf_coach, yacht_coach
 from core.audio import AudioPriority
+from core.persona import DELIVERY_EXCITED
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +141,15 @@ class StrategyAgent(BaseAgent):
             self._seen_coach_hints.add("reroll")
             fragments.insert(0, ("coach.reroll_mechanic", {}))
 
-        return self._coach_intervention(fragments, transient=advice.transient)
+        return self._coach_intervention(
+            fragments, transient=advice.transient, excited=advice.excited
+        )
 
     def _coach_intervention(
         self,
         fragments: list[tuple[str, dict[str, object]]],
         transient: bool,
+        excited: bool = False,
     ) -> Intervention | None:
         parts = [lines.render(line_id, **params) for line_id, params in fragments]
         text = " ".join(p for p in parts if p)
@@ -158,6 +162,7 @@ class StrategyAgent(BaseAgent):
             suppress_lower=False,
             display=True,
             transient=transient,
+            delivery=DELIVERY_EXCITED if excited else None,
         )
 
     def _clear_coach(self) -> Intervention:

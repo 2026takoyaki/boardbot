@@ -66,6 +66,11 @@ _HAND_ORDER: tuple[str, ...] = (
     "yacht", "large_straight", "four_of_a_kind", "full_house", "small_straight",
 )
 
+# 흥분해서 외칠 족보. 한 판에 몇 번 안 나오는 것만 넣는다 — 스몰스트레이트까지
+# 소리 지르면 요트가 터졌을 때 올릴 톤이 남지 않는다.
+# games/yacht/fsm.py의 _HAND_TIERS에서 legendary·epic에 해당한다.
+_EXCITING_HANDS: frozenset[str] = frozenset({"yacht", "large_straight"})
+
 # 숫자를 읽었을 때 받침이 있는지. 일·삼·육은 있고 이·사·오는 없다.
 # "5이 세 개"는 눈에 거슬리고, TTS로 읽히면 더 티가 난다.
 _HAS_FINAL_CONSONANT = {1: True, 2: False, 3: True, 4: False, 5: False, 6: True}
@@ -125,6 +130,8 @@ class Advice:
     fragments: list[tuple[str, dict[str, object]]]
     key: str  # 같은 조언을 반복하지 않기 위한 식별자
     transient: bool = False  # True면 화면에서 잠시 후 사라진다
+    # 흥분해서 말할 순간인가. 모든 족보에 흥분하면 아무것도 특별하지 않다.
+    excited: bool = False
     extras: dict[str, object] = field(default_factory=dict)
 
 
@@ -167,7 +174,11 @@ def advise(dice: list[int], available: list[str], roll_count: int) -> Advice | N
         None,
     )
     if completed:
-        return Advice(_hand(completed, values, open_categories, rolls_left), key)
+        return Advice(
+            _hand(completed, values, open_categories, rolls_left),
+            key,
+            excited=completed in _EXCITING_HANDS,
+        )
     if rolls_left == 0:
         return Advice(_last_call(best_key, best_score), key)
     return Advice(_keep(values, open_categories, best_key, best_score), key)

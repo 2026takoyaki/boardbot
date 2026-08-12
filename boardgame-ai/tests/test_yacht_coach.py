@@ -216,3 +216,51 @@ async def test_새_판에서는_조작법을_다시_설명한다() -> None:
     agent.reset_coach()
     again = await agent.on_state_change_async(_ctx("AWAITING_ROLL", [], 0))
     assert again is not None and again.tts_text == lines.get("coach.first_roll")
+
+
+# ── 흥분 톤 ────────────────────────────────────────────────────────────────────
+# 모든 족보에 흥분하면 아무것도 특별하지 않다. 요트가 터졌을 때 올릴 톤이
+# 남아 있어야 한다.
+
+
+@pytest.mark.parametrize(
+    ("dice", "expected"),
+    [
+        ([5, 5, 5, 5, 5], True),    # 요트
+        ([2, 3, 4, 5, 6], True),    # 라지스트레이트
+        ([3, 3, 3, 3, 1], False),   # 포카드
+        ([2, 2, 2, 5, 5], False),   # 풀하우스
+        ([1, 2, 3, 4, 6], False),   # 스몰스트레이트
+    ],
+)
+def test_희귀한_족보에만_흥분한다(dice: list[int], expected: bool) -> None:
+    advice = yacht_coach.advise(dice, ALL_OPEN, 1)
+    assert advice is not None
+    assert advice.excited is expected
+
+
+def test_굴리는_중_조언은_흥분하지_않는다() -> None:
+    """아직 아무것도 안 터졌는데 소리를 지르면 김이 샌다."""
+    advice = yacht_coach.advise([2, 2, 3, 5, 6], ALL_OPEN, 1)
+    assert advice is not None and advice.excited is False
+
+
+@pytest.mark.anyio
+async def test_흥분한_조언은_다른_말투를_요청한다() -> None:
+    """목소리는 그대로고 톤만 올라간다."""
+    from core.persona import DELIVERY_EXCITED
+
+    agent = StrategyAgent()
+    ctx = _ctx("AWAITING_SCORE", [5, 5, 5, 5, 5], 1)
+    result = await agent.on_state_change_async(ctx)
+
+    assert result is not None
+    assert result.delivery == DELIVERY_EXCITED
+
+
+@pytest.mark.anyio
+async def test_평범한_조언은_기본_말투다() -> None:
+    agent = StrategyAgent()
+    result = await agent.on_state_change_async(_ctx("AWAITING_KEEP", [3, 3, 3, 1, 2], 1))
+    assert result is not None
+    assert result.delivery is None

@@ -141,10 +141,13 @@ class AgentOrchestrator:
         if intervention.display:
             await self._send_agent_message(intervention)
         if intervention.tts_text:
+            # delivery가 있으면 그 말투로. 목소리는 페르소나 것 그대로고
+            # 톤만 갈린다(AudioManager가 agent 값으로 말투를 고른다).
             await self._send_tts(
                 intervention.tts_text,
                 intervention.priority,
-                agent=_AGENT_ROLE_MAP.get(intervention.agent, AgentRole.NARRATOR.value),
+                agent=intervention.delivery
+                or _AGENT_ROLE_MAP.get(intervention.agent, AgentRole.NARRATOR.value),
             )
 
     async def _send_agent_message(self, intervention: Intervention) -> None:

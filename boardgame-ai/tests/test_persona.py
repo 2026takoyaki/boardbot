@@ -241,3 +241,63 @@ async def test_화면_갱신에_실패해도_음성은_바뀐다() -> None:
 async def test_없는_페르소나로_전환하면_기본값() -> None:
     report = await apply_persona("없는거", None, prewarm=False)
     assert report.persona.id == DEFAULT_PERSONA_ID
+
+
+# ── 6. 흥분 말투가 실제로 전달되는가 ─────────────────────────────────────────
+# 페르소나에 정의만 해두고 부르는 코드가 없으면 아무 일도 일어나지 않는다.
+# 실제로 그랬다 — DELIVERY_EXCITED가 정의만 되고 한 번도 쓰이지 않았다.
+
+
+@pytest.mark.anyio
+async def test_흥분_개입은_흥분_말투로_발화된다() -> None:
+    from agents.base import Intervention
+    from agents.orchestrator import AgentOrchestrator
+    from core.audio import AudioPriority
+
+    spoken: list[tuple[str, str]] = []
+
+    class _Audio:
+        async def enqueue_tts(self, text: str, agent: str = "narrator", **kw: object) -> str:
+            spoken.append((text, agent))
+            return "pb"
+
+    orch = AgentOrchestrator(_Audio())  # type: ignore[arg-type]
+    await orch._dispatch(
+        Intervention(
+            agent="strategy",
+            tts_text="요트입니다!",
+            priority=AudioPriority.LOW,
+            delivery=DELIVERY_EXCITED,
+        )
+    )
+    assert spoken == [("요트입니다!", DELIVERY_EXCITED)]
+
+
+@pytest.mark.anyio
+async def test_말투_지정이_없으면_에이전트_기본값() -> None:
+    from agents.base import Intervention
+    from agents.orchestrator import AgentOrchestrator
+    from core.audio import AudioPriority
+
+    spoken: list[tuple[str, str]] = []
+
+    class _Audio:
+        async def enqueue_tts(self, text: str, agent: str = "narrator", **kw: object) -> str:
+            spoken.append((text, agent))
+            return "pb"
+
+    orch = AgentOrchestrator(_Audio())  # type: ignore[arg-type]
+    await orch._dispatch(
+        Intervention(agent="rules", tts_text="잠깐만요", priority=AudioPriority.CRITICAL)
+    )
+    assert spoken == [("잠깐만요", AgentRole.REFEREE.value)]
+
+
+def test_흥분_말투가_기본과_다르다() -> None:
+    """정의는 있는데 값이 같으면 연결해도 티가 안 난다."""
+    for persona in PERSONAS.values():
+        base = persona.voice_for()
+        excited = persona.voice_for(DELIVERY_EXCITED)
+        assert (base.speaking_rate, base.emotion, base.emotion_intensity) != (
+            excited.speaking_rate, excited.emotion, excited.emotion_intensity
+        ), f"{persona.id}: 흥분 말투가 기본과 같다"

@@ -25,6 +25,10 @@ class Intervention:
     # 화면에서 잠시 후 사라져야 하는지. 지금 테이블에 놓인 눈에 대한 말은
     # 눈이 그대로인 동안 남아 있어야 한다.
     transient: bool = False
+    # 어떤 말투로 말할지. None이면 그 에이전트의 기본 말투.
+    # 목소리는 바뀌지 않는다 — 같은 사람이 톤을 올리는 것뿐이다.
+    # 요트 대박이 터졌는데 진행 안내와 같은 톤으로 읽으면 김이 샌다.
+    delivery: str | None = None
 
 
 class BaseAgent(ABC):
