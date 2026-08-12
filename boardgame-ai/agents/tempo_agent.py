@@ -11,19 +11,20 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
-from core.audio import AudioPriority
-
+from agents import lines
 from agents.context import AgentContext
+from core.audio import AudioPriority
 
 logger = logging.getLogger(__name__)
 
 TtsCb = Callable[[str, AudioPriority], Awaitable[None]]
 
-# (경과 비율, 안내 멘트) — 타임아웃의 해당 비율 시점에 발화
+# (경과 비율, line_id) — 타임아웃의 해당 비율 시점에 발화.
+# 멘트 원문은 agents/lines.py가 소유한다 (페르소나 일괄 변환 대상).
 _MILESTONES: list[tuple[float, str]] = [
-    (0.5,  "절반의 시간이 지났습니다."),
-    (0.8,  "시간이 얼마 남지 않았습니다."),
-    (0.95, "시간이 거의 다 됐습니다!"),
+    (0.5,  "tempo.half"),
+    (0.8,  "tempo.hurry"),
+    (0.95, "tempo.almost"),
 ]
 
 
@@ -73,7 +74,7 @@ class TempoAgent:
             except Exception:
                 logger.exception("[TempoAgent] TTS 발화 실패")
         else:
-            for ratio, text in _MILESTONES:
+            for ratio, line_id in _MILESTONES:
                 fire_at = start_time + timeout * ratio
                 wait = fire_at - time.time()
                 if wait > 0:
@@ -81,6 +82,9 @@ class TempoAgent:
                         await asyncio.sleep(wait)
                     except asyncio.CancelledError:
                         return
+                text = lines.get(line_id)
+                if not text:
+                    continue
                 try:
                     await self._tts_cb(text, AudioPriority.HIGH)
                 except Exception:

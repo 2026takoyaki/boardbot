@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from core.audio import AudioPriority
-from core.events import GameEvent
-
+from agents import lines
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
+from core.audio import AudioPriority
+from core.events import GameEvent
 
 
 class RulesAgent(BaseAgent):
@@ -25,9 +25,9 @@ class RulesAgent(BaseAgent):
         if actor not in ctx.allowed_actors:
             active_name = ctx.player_name(ctx.active_player)
             msg = (
-                f"지금은 {active_name}님의 차례입니다."
+                lines.render("rules.wrong_turn", player=active_name)
                 if active_name
-                else "지금은 다른 플레이어의 차례입니다."
+                else lines.get("rules.wrong_turn_unknown")
             )
             return Intervention(
                 agent=self.name,
@@ -40,7 +40,7 @@ class RulesAgent(BaseAgent):
         if ctx.expected_events and event.event_type not in ctx.expected_events:
             return Intervention(
                 agent=self.name,
-                tts_text="지금은 해당 행동을 할 수 없습니다.",
+                tts_text=lines.get("rules.invalid_action"),
                 priority=AudioPriority.CRITICAL,
                 suppress_lower=True,
             )

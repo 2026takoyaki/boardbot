@@ -2,57 +2,25 @@
 
 모든 TTS 발화는 FSM이 아닌 이 에이전트가 전담한다.
 - 요트: FSM의 last_message를 읽어 매 굴림/상태마다 동적으로 발화.
-- 늑대인간: 페이즈별 고정 스크립트(_WEREWOLF_SCRIPTS)를 사용하며, 중복 발화를 방지.
-스크립트는 게임별 dict로 관리하며, {player} 등 템플릿 변수를 지원한다.
+- 늑대인간: 페이즈별 고정 스크립트를 사용하며, 중복 발화를 방지.
+
+멘트 원문은 `agents/lines.py`가 소유한다 — 페르소나가 말투를 바꾸려면 문장이
+한 곳에 모여 있어야 한다. 여기는 "언제 어떤 line_id를 발화할지"만 결정한다.
+
+line_id는 `<game_type>.<fsm_state>`로 그대로 조립한다. 매핑 테이블을 따로 두면
+그 테이블이 또 하나의 문장 소유자가 되어 모아둔 의미가 없어진다.
+
+vote_countdown/final_role_reveal/result는 FUSION_CONTEXT를 emit하지 않으므로 제외.
+day_discussion은 NightEnd 컴포넌트가 "아침이 밝았습니다 → 토론 시작" 순서를
+관리하므로 여기서 발화하면 순서가 충돌한다.
 """
 
 from __future__ import annotations
 
+from agents import lines
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
 from core.audio import AudioPriority
-
-
-# ── 늑대인간 페이즈 스크립트 ────────────────────────────────────────────────────
-# FSM은 상태 전환만 담당. TTS 발화는 ProgressAgent가 전담.
-# catalog.py STATIC_LINES와 동일 문자열 → AudioManager static 캐시 hit.
-# vote_countdown/final_role_reveal/result는 FUSION_CONTEXT를 emit하지 않으므로 제외.
-_WEREWOLF_SCRIPTS: dict[str, str] = {
-    "night_start":        "밤이 되었습니다. 모두 눈을 감아주세요.",
-    "night_doppelganger": "도플갱어는 깨어나세요. 다른 플레이어 1명의 카드를 확인하세요. 그 역할이 됩니다.",
-    "night_werewolf":     "늑대인간은 깨어나세요. 서로를 확인하고 다시 눈을 감으세요.",
-    "night_minion":       "하수인은 깨어나세요. 늑대인간들은 엄지를 들어올려 자신을 알려주세요.",
-    "night_mason":        "프리메이슨은 깨어나세요. 서로를 확인하고 다시 눈을 감으세요.",
-    "night_seer":         "예언자는 깨어나세요. 다른 플레이어 1명 또는 중앙 카드 2장을 확인할 수 있습니다.",
-    "night_robber":       "도둑은 깨어나세요. 다른 플레이어 1명의 카드와 자신의 카드를 교환할 수 있습니다.",
-    "night_troublemaker": "말썽꾼은 깨어나세요. 자신을 제외한 두 플레이어의 카드를 서로 교환하세요.",
-    "night_drunk":        "주정뱅이는 깨어나세요. 중앙 카드 1장을 가져와 자신의 카드와 교환하세요. 새 카드는 볼 수 없습니다.",
-    "night_insomniac":    "불면증환자는 깨어나세요. 자신의 카드를 확인하세요.",
-    # day_discussion: NightEnd 컴포넌트가 "아침이 밝았습니다 → 토론 시작" 순서를 관리.
-    # ProgressAgent가 여기서 발화하면 NightEnd TTS와 순서 충돌 → 제거.
-    # vote_countdown: VoteCountdown.jsx 마운트 시 직접 발화 — FUSION_CONTEXT 타이밍 불일치 방지.
-}
-
-# 튜토리얼 모드 — 눈을 감지 않고 진행하므로 "깨어나세요" 대신 차례 안내,
-# 각 역할 플레이어가 직접 행동을 수행하는 방식으로 발화. NightRoleAnnounce.jsx의
-# tutorialAnnounce/tutorialAction 문구와 일치시킨다.
-_WEREWOLF_PRACTICE_SCRIPTS: dict[str, str] = {
-    "night_start":        "밤이 되었습니다. 튜토리얼 모드에서는 눈을 감지 않고 역할 순서대로 행동을 진행합니다.",
-    "night_doppelganger": "도플갱어는 기본적으로 마을주민팀이지만 팀이 바뀔 수 있는 역할입니다. 밤 시간에 다른 플레이어 1명의 카드를 확인하고 본인도 그 역할이 됩니다. 확인한 역할이 늑대인간이나 하수인이면 늑대인간팀, 무두장이면 무두장이팀으로 변경됩니다. 낮 시간에 바뀐 역할을 주장하며 혼란을 줄 수 있습니다.",
-    "night_werewolf":     "늑대인간은 늑대인간팀 역할입니다. 밤 시간에 눈을 떠 다른 늑대인간들과 서로를 확인합니다. 낮 시간에 마을주민인 척 행동하며 다른 늑대인간들과 협력해 마을주민들을 처단하도록 유도합니다.",
-    "night_minion":       "하수인은 늑대인간팀 역할입니다. 밤 시간에 늑대인간들이 엄지를 들면 눈을 떠 누가 늑대인간인지 확인합니다. 단, 늑대인간들은 하수인이 누구인지 모릅니다. 낮 시간에 늑대인간으로 의심받을 행동을 하여 늑대인간 대신 본인이 처단당하도록 유도합니다.",
-    "night_mason":        "프리메이슨은 마을주민팀 역할입니다. 프리메이슨은 항상 두 명입니다. 밤 시간에 다른 프리메이슨과 눈을 마주치며 서로를 확인합니다. 낮 시간에 서로를 믿고 협력하며 함께 늑대인간을 찾아냅니다.",
-    "night_seer":         "예언자는 마을주민팀 역할입니다. 밤 시간에 다른 플레이어 1명의 카드를 확인하거나, 중앙 카드 2장을 확인할 수 있습니다. 낮 시간에 본인이 확인한 정보를 바탕으로 마을주민들의 추리를 돕습니다.",
-    "night_robber":       "강도는 마을주민팀 역할입니다. 밤 시간에 다른 플레이어 1명의 카드를 자신의 카드와 맞교환하고 바뀐 역할을 확인합니다. 단, 카드를 빼앗긴 플레이어는 이 사실을 모릅니다. 낮 시간에 바뀐 역할로 행동하며 역할을 빼앗긴 플레이어에게 혼란을 줍니다.",
-    "night_troublemaker": "말썽쟁이는 마을주민팀 역할입니다. 밤 시간에 자신을 제외한 두 플레이어의 카드를 맞교환하며 두 플레이어의 역할은 확인하지 않습니다. 단, 역할이 맞교환된 두 플레이어는 이 사실을 모릅니다. 낮 시간에 플레이어들이 본인의 역할을 잘못 알고 행동하도록 합니다.",
-    "night_drunk":        "주정뱅이는 마을주민팀 역할입니다. 밤 시간에 중앙 카드 1장과 자신의 카드를 교환하며 본인의 바뀐 역할은 확인하지 않습니다. 낮 시간에 자신이 어떤 역할인지 전혀 모른 채 추리에 참여해야 하는 역할입니다.",
-    "night_insomniac":    "불면증환자는 마을주민팀 역할입니다. 밤 시간이 끝날 무렵 가장 마지막으로 자신의 카드를 확인합니다. 카드가 바뀌어 있다면 누군가 본인의 역할을 교환했다는 것을 알 수 있습니다. 낮 시간에 이 정보를 바탕으로 마을주민들의 추리를 돕습니다.",
-}
-
-_SCRIPTS: dict[str, dict[str, str]] = {
-    "werewolf":          _WEREWOLF_SCRIPTS,
-    "werewolf_practice": _WEREWOLF_PRACTICE_SCRIPTS,
-}
 
 
 class ProgressAgent(BaseAgent):
@@ -89,13 +57,12 @@ class ProgressAgent(BaseAgent):
             return None
         self._last_state = ctx.fsm_state
 
-        scripts = _SCRIPTS.get(ctx.game_type, {})
-        template = scripts.get(ctx.fsm_state)
-        if not template:
+        text = lines.render(
+            f"{ctx.game_type}.{ctx.fsm_state}",
+            player=ctx.player_name(ctx.active_player) or "",
+        )
+        if not text:
             return None
-
-        player_name = ctx.player_name(ctx.active_player) or ""
-        text = template.replace("{player}", player_name)
 
         return Intervention(
             agent=self.name,
