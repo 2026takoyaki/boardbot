@@ -39,6 +39,25 @@ _LABEL: dict[str, str] = {
     "choice": "Choice",
 }
 
+# 낭독용 한글 이름. _LABEL과 용도가 다르다 —
+#   _LABEL       "4 of a Kind"  화면의 그 칸을 가리켜야 할 때(코치)
+#   KOREAN_LABEL "포카인드"      귀로만 듣는 훈수일 때(전략 조언), LLM 프롬프트 재료
+# 화면을 보라고 하는 말이 아니면 한글이 낫다. "엘 스트레이트"로 읽히지 않는다.
+KOREAN_LABEL: dict[str, str] = {
+    "ones":           "1점짜리",
+    "twos":           "2점짜리",
+    "threes":         "3점짜리",
+    "fours":          "4점짜리",
+    "fives":          "5점짜리",
+    "sixes":          "6점짜리",
+    "choice":         "찬스",
+    "four_of_a_kind": "포카인드",
+    "full_house":     "풀하우스",
+    "small_straight": "스몰스트레이트",
+    "large_straight": "라지스트레이트",
+    "yacht":          "요트",
+}
+
 _UPPER_KEY: tuple[str, ...] = ("ones", "twos", "threes", "fours", "fives", "sixes")
 
 # 희귀한 것부터. 한 굴림이 여러 조합을 만족할 수 있어(요트는 포카드이기도 하다)
@@ -204,6 +223,20 @@ def _hand(
 
 
 # ── 세 번을 다 굴린 경우 ───────────────────────────────────────────────────────
+
+
+def best_category(dice: list[int], available: list[str]) -> tuple[str, int] | None:
+    """지금 눈으로 가장 높은 점수가 나는 칸. 전략 조언(훈수)이 쓴다.
+
+    코치는 "어떻게 굴릴까"까지 말하지만 훈수는 "어디에 넣을까"만 말한다.
+    """
+    if len(dice) != 5 or any(v is None for v in dice) or not available:
+        return None
+    values = [int(v) for v in dice]
+    scored = [(c, _score(c, values)) for c in available if c in KOREAN_LABEL]
+    if not scored:
+        return None
+    return max(scored, key=lambda pair: pair[1])
 
 
 def _last_call(best_key: str, best_score: int) -> list[tuple[str, dict[str, object]]]:

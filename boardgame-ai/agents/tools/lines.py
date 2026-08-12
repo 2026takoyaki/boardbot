@@ -159,6 +159,25 @@ _COACH: dict[str, str] = {
 }
 
 
+# ── 전략 조언 (StrategyAgent) ─────────────────────────────────────────────────
+# 튜토리얼 코치(coach.*)와 다르다. 코치는 처음 하는 사람에게 조작과 선택지를
+# 설명하고, 이쪽은 이미 아는 사람에게 한 줄로 훈수를 둔다.
+# 판단은 tools/yacht_coach.py와 tools/werewolf_coach.py가 한다.
+_STRATEGY: dict[str, str] = {
+    # 요트: 지금 눈으로 가장 높은 칸
+    "yacht_best": "현재 주사위 조합에서는 {label}에 기록하면 {score}점을 얻을 수 있습니다.",
+    "yacht_none": "현재 주사위로 점수가 나오는 카테고리가 없습니다. 낮은 값을 가진 카테고리에 0을 기록하는 것을 추천합니다.",
+    # 늑대인간: 역할별 야간 행동 요령. 시스템은 누가 어떤 역할인지 모르므로
+    # 특정인을 지목하지 않고 그 역할의 일반적인 움직임만 말한다.
+    "ww_doppelganger": "도플갱어는 다른 플레이어의 카드를 몰래 확인해 그 역할을 복사합니다. 강력한 역할(예언자, 도둑)을 노리세요.",
+    "ww_seer": "예언자는 다른 플레이어 카드 한 장 또는 센터 카드 두 장을 볼 수 있습니다. 의심스러운 플레이어의 카드를 확인하는 것이 효과적입니다.",
+    "ww_robber": "도둑은 다른 플레이어와 카드를 교환할 수 있습니다. 강력한 역할을 가진 플레이어의 카드를 노리세요.",
+    "ww_troublemaker": "말썽꾼은 두 플레이어의 카드를 교환합니다. 늑대인간으로 의심되는 플레이어와 다른 플레이어의 카드를 바꿔 혼란을 주세요.",
+    "ww_drunk": "주정뱅이는 센터 카드 중 하나와 자신의 카드를 교환합니다. 자신의 새 역할을 알 수 없으니 낮 토론에서 신중하게 행동하세요.",
+    "ww_insomniac": "불면증 환자는 밤이 끝난 후 자신의 최종 카드를 확인합니다. 카드가 바뀌었다면 누군가 손을 댔다는 단서가 됩니다.",
+}
+
+
 # ── 규칙 위반 (RulesAgent, CRITICAL) ───────────────────────────────────────────
 _RULES: dict[str, str] = {
     "wrong_turn":         "지금은 {player}님의 차례입니다.",
@@ -181,6 +200,7 @@ LINES: dict[str, str] = {
     **{f"werewolf_practice.{k}": v for k, v in _WEREWOLF_PRACTICE.items()},
     **{f"yacht.{k}": v for k, v in _YACHT.items()},
     **{f"coach.{k}": v for k, v in _COACH.items()},
+    **{f"strategy.{k}": v for k, v in _STRATEGY.items()},
     **{f"rules.{k}": v for k, v in _RULES.items()},
     **{f"tempo.{k}": v for k, v in _TEMPO.items()},
 }

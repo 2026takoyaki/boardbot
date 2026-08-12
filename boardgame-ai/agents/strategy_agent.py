@@ -17,67 +17,15 @@ import os
 
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
-from agents.tools import lines, yacht_coach
+from agents.tools import lines, werewolf_coach, yacht_coach
 from core.audio import AudioPriority
 
 logger = logging.getLogger(__name__)
 
-# ── 요트다이스: 카테고리 한글명 ──────────────────────────────────────────────────
-_CATEGORY_KO: dict[str, str] = {
-    "ones":           "1점짜리",
-    "twos":           "2점짜리",
-    "threes":         "3점짜리",
-    "fours":          "4점짜리",
-    "fives":          "5점짜리",
-    "sixes":          "6점짜리",
-    "choice":         "찬스",
-    "four_of_a_kind": "포카인드",
-    "full_house":     "풀하우스",
-    "small_straight": "스몰스트레이트",
-    "large_straight": "라지스트레이트",
-    "yacht":          "요트",
-}
-
-# ── 늑대인간: 페이즈 한글명 ──────────────────────────────────────────────────────
-_WEREWOLF_PHASE_KO: dict[str, str] = {
-    "night_doppelganger": "도플갱어",
-    "night_seer":         "예언자",
-    "night_robber":       "도둑",
-    "night_troublemaker": "말썽꾼",
-    "night_drunk":        "주정뱅이",
-    "night_insomniac":    "불면증 환자",
-}
-
-# ── 늑대인간: 규칙 기반 폴백 팁 ─────────────────────────────────────────────────
-_WEREWOLF_PHASE_TIPS: dict[str, str] = {
-    "night_doppelganger": (
-        "도플갱어는 다른 플레이어의 카드를 몰래 확인해 그 역할을 복사합니다. "
-        "강력한 역할(예언자, 도둑)을 노리세요."
-    ),
-    "night_seer": (
-        "예언자는 다른 플레이어 카드 한 장 또는 센터 카드 두 장을 볼 수 있습니다. "
-        "의심스러운 플레이어의 카드를 확인하는 것이 효과적입니다."
-    ),
-    "night_robber": (
-        "도둑은 다른 플레이어와 카드를 교환할 수 있습니다. "
-        "강력한 역할을 가진 플레이어의 카드를 노리세요."
-    ),
-    "night_troublemaker": (
-        "말썽꾼은 두 플레이어의 카드를 교환합니다. "
-        "늑대인간으로 의심되는 플레이어와 다른 플레이어의 카드를 바꿔 혼란을 주세요."
-    ),
-    "night_drunk": (
-        "주정뱅이는 센터 카드 중 하나와 자신의 카드를 교환합니다. "
-        "자신의 새 역할을 알 수 없으니 낮 토론에서 신중하게 행동하세요."
-    ),
-    "night_insomniac": (
-        "불면증 환자는 밤이 끝난 후 자신의 최종 카드를 확인합니다. "
-        "카드가 바뀌었다면 누군가 손을 댔다는 단서가 됩니다."
-    ),
-}
-
+# 문장은 tools/lines.py, 판단은 tools/yacht_coach.py·werewolf_coach.py가 소유한다.
+# 여기는 "지금 훈수를 둘 때인가"만 정한다.
 _YACHT_STRATEGY_PHASES = frozenset({"AWAITING_KEEP", "AWAITING_SCORE"})
-_WEREWOLF_STRATEGY_PHASES = frozenset(_WEREWOLF_PHASE_TIPS.keys())
+_WEREWOLF_STRATEGY_PHASES = werewolf_coach.STRATEGY_PHASES
 
 _LLM_TIMEOUT = 5.0   # 초 — 초과 시 규칙 기반 폴백
 _LLM_MAX_TOKENS = 80
@@ -254,7 +202,7 @@ class StrategyAgent(BaseAgent):
             return None
 
         dice_str = ", ".join(str(d) for d in dice)
-        cats_str = ", ".join(_CATEGORY_KO.get(c, c) for c in available)
+        cats_str = ", ".join(yacht_coach.KOREAN_LABEL.get(c, c) for c in available)
 
         resp = await client.chat.completions.create(
             model="gpt-5.4-mini",
@@ -284,7 +232,7 @@ class StrategyAgent(BaseAgent):
         if ctx.fsm_state not in _WEREWOLF_STRATEGY_PHASES:
             return None
 
-        phase_ko = _WEREWOLF_PHASE_KO.get(ctx.fsm_state, ctx.fsm_state)
+        phase_ko = werewolf_coach.phase_name(ctx.fsm_state)
 
         resp = await client.chat.completions.create(
             model="gpt-5.4-mini",
@@ -312,51 +260,32 @@ class StrategyAgent(BaseAgent):
         if ctx.fsm_state not in _YACHT_STRATEGY_PHASES:
             return None
         gs = ctx.game_specific
-        dice: list[int | None] = gs.get("dice_values", [])
-        available: list[str] = gs.get("available_categories", [])
-        if not dice or not available:
+        best = yacht_coach.best_category(
+            list(gs.get("dice_values", [])), list(gs.get("available_categories", []))
+        )
+        if best is None:
             return None
-        text = self._best_category_tip(dice, available)
+        category, score = best
+        # 0점이면 "여기 넣으세요"가 아니라 "버릴 칸을 고르세요"가 된다.
+        if score == 0:
+            return self._tip("strategy.yacht_none")
+        return self._tip(
+            "strategy.yacht_best",
+            label=yacht_coach.KOREAN_LABEL.get(category, category),
+            score=score,
+        )
+
+    def _werewolf_strategy(self, ctx: AgentContext) -> Intervention | None:
+        line_id = werewolf_coach.advise(ctx.fsm_state)
+        return self._tip(line_id) if line_id else None
+
+    def _tip(self, line_id: str, **params: object) -> Intervention | None:
+        text = lines.render(line_id, **params)
         if not text:
             return None
         return Intervention(
             agent=self.name,
             tts_text=text,
-            priority=AudioPriority.LOW,
-            suppress_lower=False,
-        )
-
-    def _best_category_tip(self, dice: list[int | None], available: list[str]) -> str | None:
-        try:
-            from games.yacht.scoring import calculate_score
-        except ImportError:
-            return None
-        if any(v is None for v in dice):
-            return None
-        scores: list[tuple[int, str]] = []
-        for cat in available:
-            try:
-                scores.append((calculate_score(cat, dice), cat))
-            except Exception:
-                continue
-        if not scores:
-            return None
-        scores.sort(key=lambda x: x[0], reverse=True)
-        best_score, best_cat = scores[0]
-        cat_ko = _CATEGORY_KO.get(best_cat, best_cat)
-        if best_score == 0:
-            return "현재 주사위로 점수가 나오는 카테고리가 없습니다. 낮은 값을 가진 카테고리에 0을 기록하는 것을 추천합니다."
-        return f"현재 주사위 조합에서는 {cat_ko}에 기록하면 {best_score}점을 얻을 수 있습니다."
-
-    def _werewolf_strategy(self, ctx: AgentContext) -> Intervention | None:
-        if ctx.fsm_state not in _WEREWOLF_STRATEGY_PHASES:
-            return None
-        tip = _WEREWOLF_PHASE_TIPS.get(ctx.fsm_state)
-        if not tip:
-            return None
-        return Intervention(
-            agent=self.name,
-            tts_text=tip,
             priority=AudioPriority.LOW,
             suppress_lower=False,
         )
