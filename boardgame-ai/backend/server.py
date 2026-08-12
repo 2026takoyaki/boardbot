@@ -29,6 +29,7 @@ from audio.manager import AudioManager
 from audio.prewarm import prewarm_static
 from audio.tts_engine import TTSEngine
 from agents.orchestrator import AgentOrchestrator
+from agents.personas import get_persona
 from backend.dev import DEV_ENV_VAR, is_dev_mode, seat_registration_events
 from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
@@ -75,11 +76,15 @@ async def lifespan(app: FastAPI):
     if bench_dir is not None:
         logger.info("BENCH_TRACE active. Results: %s", bench_dir)
 
-    # 오디오: TTSEngine + AudioManager 부팅, static 사전 합성
+    # 오디오: TTSEngine + AudioManager 부팅, static 사전 합성.
+    # 목소리는 페르소나가 소유한다. 어떤 페르소나로 시작할지는 여기서 고른다 —
+    # audio 계층은 페르소나를 받아 쓸 뿐 고르지 않는다.
+    persona = get_persona(os.environ.get("PERSONA"))
     tts_engine = TTSEngine()
-    audio_manager = AudioManager(tts_engine)
+    audio_manager = AudioManager(tts_engine, persona)
+    logger.info("persona: %s (%s)", persona.id, persona.voice_name)
     if tts_engine.is_available():
-        stats = await prewarm_static(tts_engine)
+        stats = await prewarm_static(tts_engine, persona)
         logger.info("audio prewarm_static: %s", stats)
     else:
         logger.warning("TTS engine not available — STATIC/SESSION 캐시 hit만 동작")

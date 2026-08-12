@@ -32,8 +32,6 @@ from typing import Any
 from audio.catalog import (
     DEFAULT_VOICE,
     EXCITED_LINES,
-    EXCITED_VOICE,
-    VOICE_BY_AGENT,
     VoiceConfig,
     classify_text,
 )
@@ -42,8 +40,26 @@ from audio.tts_engine import CacheLayer, TTSEngine
 from core.audio import AudioPriority, SFXRequest, TTSRequest
 from core.constants import MsgType
 from core.envelope import WSMessage
+from core.persona import DELIVERY_EXCITED, Delivery, Persona
 
 logger = logging.getLogger(__name__)
+
+
+def _fallback_persona() -> Persona:
+    """페르소나가 주입되지 않았을 때(테스트 등) 쓰는 최소 인격.
+
+    없으면 목소리 조회가 죽어 발화가 통째로 사라진다. 조용히 기본값으로
+    돌아가는 편이 낫다 — 진행이 멈추는 것보다 목소리가 밋밋한 게 낫다.
+    """
+    return Persona(
+        id="fallback",
+        display_name="진행자",
+        voice_name=DEFAULT_VOICE.name,
+        language_code=DEFAULT_VOICE.language_code,
+        base=Delivery(
+            speaking_rate=DEFAULT_VOICE.speaking_rate, pitch=DEFAULT_VOICE.pitch
+        ),
+    )
 
 BroadcastFn = Callable[[WSMessage], Awaitable[None]]
 
@@ -77,10 +93,13 @@ class AudioManager:
             await mgr.handle_outbound(msg)
     """
 
-    def __init__(self, engine: TTSEngine) -> None:
+    def __init__(self, engine: TTSEngine, persona: Persona | None = None) -> None:
         self._engine = engine
         self._broadcast: BroadcastFn | None = None
         self._active_session_id: str | None = None
+        # 목소리의 소유자. 누가 말하든 이 한 사람의 목소리로 나가고, 에이전트는
+        # 그 안에서 말투만 갈린다. audio는 페르소나를 고르지 않고 받아만 쓴다.
+        self._persona: Persona = persona or _fallback_persona()
 
         # 큐: priority 오름차순(1=CRITICAL이 최우선), 동순위는 seq_arrival 오름차순.
         self._queue: list[_QueueItem] = []
@@ -90,6 +109,28 @@ class AudioManager:
         self._current: _QueueItem | None = None
         # 다음 항목 푸시를 직렬화하는 lock (race 방지).
         self._push_lock = asyncio.Lock()
+
+    # ── 페르소나 ──────────────────────────────────────────────────────────────
+
+    @property
+    def persona(self) -> Persona:
+        return self._persona
+
+    async def set_persona(self, persona: Persona, prewarm: bool = True) -> dict[str, int]:
+        """진행자를 바꾼다. 캐시 키가 목소리 파라미터로 만들어지므로, 바꾸면
+        기존 static 캐시가 전부 miss가 된다. 그대로 두면 게임 내내 첫 발화마다
+        합성 지연이 붙으므로 새 페르소나로 다시 데워둔다.
+
+        prewarm=False는 테스트용 — 합성 없이 목소리만 갈아끼운다.
+        """
+        self._persona = persona
+        if not prewarm:
+            return {}
+        from audio.prewarm import prewarm_static
+
+        stats = await prewarm_static(self._engine, persona)
+        logger.info("set_persona(%s): prewarm %s", persona.id, stats)
+        return stats
 
     # ── 세션 라이프사이클 ──────────────────────────────────────────────────────
 
@@ -138,7 +179,9 @@ class AudioManager:
 
         async def _run() -> None:
             try:
-                await prewarm_session(self._engine, session_id, player_names)
+                await prewarm_session(
+                    self._engine, session_id, player_names, self._persona
+                )
             except Exception:
                 logger.exception("prewarm_session_async failed (%s)", session_id)
 
@@ -536,9 +579,9 @@ class AudioManager:
     # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
 
     def _voice_for(self, request: TTSRequest) -> VoiceConfig:
-        if request.text in EXCITED_LINES:
-            return EXCITED_VOICE
-        return VOICE_BY_AGENT.get(request.agent, DEFAULT_VOICE)
+        """누가 말하든 페르소나의 목소리. 말투만 상황에 따라 갈린다."""
+        role = DELIVERY_EXCITED if request.text in EXCITED_LINES else request.agent
+        return self._persona.voice_for(role)
 
     def _layer_for(self, text: str) -> tuple[CacheLayer, str | None]:
         if text in EXCITED_LINES:

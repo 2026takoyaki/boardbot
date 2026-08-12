@@ -18,20 +18,20 @@ from pathlib import Path
 
 from audio.catalog import (
     EXCITED_LINES,
-    EXCITED_VOICE,
     SESSION_CACHE_DIR,
     STATIC_LINES,
-    VOICE_BY_AGENT,
     expand_session_lines,
 )
 from audio.tts_engine import TTSEngine
-from core.constants import AgentRole
+from core.persona import DELIVERY_EXCITED, Persona
 
 logger = logging.getLogger(__name__)
 
 
-async def prewarm_static(engine: TTSEngine) -> dict[str, int]:
-    """STATIC_LINES(narrator) + EXCITED_LINES(excited)를 모두 합성.
+async def prewarm_static(engine: TTSEngine, persona: Persona) -> dict[str, int]:
+    """STATIC_LINES + EXCITED_LINES를 페르소나의 목소리로 합성.
+
+    페르소나가 바뀌면 캐시 키가 전부 달라지므로 이 함수를 다시 불러야 한다.
 
     Returns: {"total": N, "cached": M, "synthesized": K, "failed": F}
     """
@@ -40,12 +40,13 @@ async def prewarm_static(engine: TTSEngine) -> dict[str, int]:
         total = len(STATIC_LINES) + len(EXCITED_LINES)
         return {"total": total, "cached": 0, "synthesized": 0, "failed": 0}
 
-    narrator_voice = VOICE_BY_AGENT[AgentRole.NARRATOR.value]
+    base_voice = persona.voice_for()
+    excited_voice = persona.voice_for(DELIVERY_EXCITED)
 
     # (voice, text) 쌍으로 통합 처리
     pairs: list[tuple[object, str]] = []
-    pairs.extend((narrator_voice, t) for t in STATIC_LINES)
-    pairs.extend((EXCITED_VOICE, t) for t in EXCITED_LINES)
+    pairs.extend((base_voice, t) for t in STATIC_LINES)
+    pairs.extend((excited_voice, t) for t in EXCITED_LINES)
 
     cached = 0
     to_synth: list[tuple[object, str]] = []
@@ -78,6 +79,7 @@ async def prewarm_session(
     engine: TTSEngine,
     session_id: str,
     player_names: list[str],
+    persona: Persona | None = None,
 ) -> dict[str, int]:
     """플레이어 이름 슬롯이 채워진 멘트를 사전 합성.
 
@@ -91,7 +93,8 @@ async def prewarm_session(
     if not player_names:
         return {"total": 0, "cached": 0, "synthesized": 0, "failed": 0}
 
-    voice = VOICE_BY_AGENT[AgentRole.NARRATOR.value]
+    # 페르소나가 없으면 엔진 기본 목소리로 떨어진다(테스트 경로).
+    voice = persona.voice_for() if persona is not None else None
     expanded = expand_session_lines(player_names)  # [(template, formatted), ...]
     formatted_lines = [text for _, text in expanded]
 

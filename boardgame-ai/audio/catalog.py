@@ -11,10 +11,13 @@ resolve_static(text)으로 백엔드 텍스트가 어느 캐시 계층에 있는
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
-from core.constants import AgentRole
+# VoiceConfig의 소유자는 core다. 기존 import 경로(audio.catalog)를 깨지 않도록
+# 여기서 다시 내보낸다.
+from core.persona import VoiceConfig
+
+__all__ = ["VoiceConfig"]
 
 
 # 프로젝트 루트(boardgame-ai/) 기준 경로
@@ -30,35 +33,18 @@ SESSION_CACHE_DIR = TTS_CACHE_DIR / "session"
 DYNAMIC_CACHE_DIR = TTS_CACHE_DIR / "dynamic"
 
 
-@dataclass(frozen=True)
-class VoiceConfig:
-    """Google Cloud TTS 보이스 설정."""
-
-    name: str  # ex: "ko-KR-Neural2-A"
-    language_code: str = "ko-KR"
-    speaking_rate: float = 1.0
-    pitch: float = 0.0
-
-
-# agent별 음성 매핑. 새 agent 추가 시 여기에만 등록.
-# NOTE: .env의 TTS_* 변수 오버라이드는 아직 미구현 — 보이스 변경은 이 dict를 직접 수정.
-# (구현 시 dotenv 로드가 이 모듈 import보다 먼저 일어나도록 주의)
-VOICE_BY_AGENT: dict[str, VoiceConfig] = {
-    # 메인 진행자: 활기찬 남성 게임 호스트 톤
-    AgentRole.NARRATOR.value: VoiceConfig(
-        name="ko-KR-Neural2-C", speaking_rate=1.10, pitch=2.0
-    ),
-    # 규칙 위반 알림: 진중한 남성 톤 (narrator와 음색 차별화)
-    AgentRole.REFEREE.value: VoiceConfig(
-        name="ko-KR-Neural2-B", speaking_rate=0.95, pitch=-1.0
-    ),
-    AgentRole.TEMPO.value: VoiceConfig(name="ko-KR-Neural2-B"),
-}
-
-DEFAULT_VOICE = VOICE_BY_AGENT[AgentRole.NARRATOR.value]
-
-# 족보/하이라이트 외침 전용. narrator와 같은 보이스+속도, pitch만 +4 올려 텐션 표현.
-EXCITED_VOICE = VoiceConfig(name="ko-KR-Neural2-C", speaking_rate=1.10, pitch=6.0)
+# 목소리는 여기가 아니라 페르소나가 소유한다(core/persona.py).
+#
+# 에이전트마다 목소리를 다르게 주면 네 사람이 번갈아 떠드는 것처럼 들린다.
+# 사용자에게는 한 명이 진행하는 것으로 들려야 하고, 에이전트는 그 한 명 안에서
+# 누가 언제 말할지(우선순위·인터럽트)만 정한다.
+#
+# 어떤 페르소나를 쓸지는 AudioManager가 주입받는다 — audio가 agents를 알면
+# 계층이 뒤집히므로, 고르는 것은 위(backend)의 일이다.
+#
+# 아래는 페르소나가 아직 주입되지 않았을 때의 최소 폴백이다. 실제 운영에서는
+# 항상 페르소나가 설정되므로 쓰이지 않는다.
+DEFAULT_VOICE = VoiceConfig(name="ko-KR-Neural2-A")
 
 
 # ── STATIC: 플레이어 이름 없는 완전 고정 멘트 ──────────────────────────────────
