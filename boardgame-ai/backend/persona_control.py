@@ -82,6 +82,11 @@ async def apply_persona(
 
     prewarm_stats: dict[str, int] = {}
     if audio_manager is not None:
+        # 미리 만들어 둘 문장 목록을 먼저 갱신한다. 이게 옛 문장으로 남아 있으면
+        # 새 페르소나로 데우는 것이 아니라 아무도 안 쓸 문장을 데우게 된다.
+        audio_manager.set_line_catalog(
+            lines.static_texts(), lines.session_templates()
+        )
         prewarm_stats = await audio_manager.set_persona(persona, prewarm=prewarm)
 
     if broadcast is not None:

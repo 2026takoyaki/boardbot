@@ -14,9 +14,9 @@ line_id 규칙: `<game_type>.<fsm_state>` 또는 `<agent>.<사건>`.
 game_type/fsm_state는 AgentContext의 값을 그대로 쓴다 — 변환 테이블을 두면
 그 테이블이 또 하나의 흩어진 소유자가 된다.
 
-주의: 늑대인간 페이즈 멘트는 `audio/catalog.py`의 STATIC_LINES와 글자 단위로
-같아야 부팅 시 prewarm한 TTS 캐시에 hit한다. 여기 문장을 고치면 그쪽도 같이
-고칠 것. (tests/test_agent_lines.py가 감시한다)
+캐시 계층은 슬롯 유무로 정해진다(static_texts / session_templates). 멘트에
+슬롯을 추가하면 그 줄은 미리 만들어 둘 수 없게 되어 첫 발화에 합성 지연이
+붙는다 — 이름 말고 다른 값을 넣을 때는 그 대가를 생각할 것.
 """
 
 # 멘트는 코드가 아니라 데이터다. 줄바꿈으로 접으면 문자열 연결 과정에서 공백이
@@ -218,6 +218,9 @@ LINES: dict[str, str] = {
 # 게임이 멈추는 것보다 낫다.
 PERSONA_LINES_DIR = Path(__file__).resolve().parent / "persona_lines"
 
+# {player} 같은 슬롯. 캐시 계층 판정과 치환이 같은 규칙을 봐야 어긋나지 않는다.
+_SLOT = re.compile(r"\{(\w+)\}")
+
 _persona_id: str | None = None
 _persona_lines: dict[str, str] = {}
 
@@ -274,6 +277,34 @@ def catalog() -> dict[str, str]:
     return {**LINES, **_persona_lines}
 
 
+def static_texts() -> list[str]:
+    """슬롯이 없어 그대로 발화되는 문장들. 부팅 시 미리 합성해두는 대상.
+
+    "어떤 문장이 고정인가"를 별도 목록으로 관리하면 멘트를 고칠 때마다 두 곳을
+    맞춰야 하고, 페르소나가 문장을 바꾸면 그 목록이 통째로 어긋난다.
+    슬롯 유무로 판정하면 저절로 따라온다.
+    """
+    return [t for t in catalog().values() if t.strip() and "{" not in t]
+
+
+def session_templates() -> list[str]:
+    """이름 슬롯이 있어 좌석이 정해져야 완성되는 문장들.
+
+    플레이어가 정해지면 이름을 채워 미리 합성한다. 슬롯이 여러 개인 것(점수
+    발표 등)은 값 조합이 매번 달라 미리 만들 수 없으므로 제외한다.
+    """
+    return [
+        t
+        for t in catalog().values()
+        if t.strip() and set(_SLOT.findall(t)) == {"player"}
+    ]
+
+
+def fill_for_players(template: str, player_names: list[str]) -> list[str]:
+    """{player} 자리에 각 이름을 넣은 문장들."""
+    return [fill(template, player=name) for name in player_names]
+
+
 def get(line_id: str) -> str | None:
     """line_id의 템플릿. 페르소나 말투가 있으면 그것, 없으면 중립 원문."""
     return _persona_lines.get(line_id) or LINES.get(line_id)
@@ -302,4 +333,4 @@ def fill(template: str, **params: object) -> str:
         value = params.get(match.group(1))
         return "" if value is None else str(value)
 
-    return re.sub(r"\{(\w+)\}", _sub, template)
+    return _SLOT.sub(_sub, template)

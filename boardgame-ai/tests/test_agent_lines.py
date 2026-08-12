@@ -4,7 +4,7 @@
 1. line_id 조립 규칙(`<game_type>.<fsm_state>`)이 실제 FSM 상태명과 맞물린다.
 2. 슬롯 치환이 발화를 죽이지 않는다 (KeyError로 TTS가 통째로 사라지는 사고 방지).
 3. 멘트를 옮기면서 문장이 바뀌지 않았다 — ProgressAgent가 내는 결과가 이전과 동일.
-4. STATIC_LINES와의 캐시 정합성 현황을 기록한다.
+4. 미리 만들어 둘 수 있는 멘트가 조용히 줄어들지 않는다.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import pytest
 from agents.context import AgentContext
 from agents.progress_agent import ProgressAgent
 from agents.tools import lines
-from audio.catalog import STATIC_LINES
 from core.audio import AudioPriority
 from core.events import GameEvent
 from games.werewolf.ontology import NIGHT_PHASES, WerewolfPhase
@@ -223,41 +222,17 @@ def test_narrate는_None_파라미터를_버린다() -> None:
 
 
 # ── 4. TTS 캐시 정합성 ─────────────────────────────────────────────────────────
-# STATIC_LINES에 없는 멘트는 부팅 prewarm을 못 받아 첫 발화에 합성 지연이 붙는다.
-# 갭 전체를 스냅샷으로 박으면 멘트를 추가할 때마다 깨져서 쓸모가 없다. 정작
-# 위험한 것은 "지금 캐시되던 멘트가 조용히 빠지는 것"이라, 그쪽만 감시한다.
-
-# 현재 prewarm이 되고 있는 line_id. 여기서 빠지면 그 멘트에 합성 지연이 생긴다.
-_PREWARMED = {
-    "werewolf.night_start",
-    "werewolf.night_doppelganger",
-    "werewolf.night_werewolf",
-    "werewolf.night_minion",
-    "werewolf.night_mason",
-    "werewolf.night_seer",
-    "werewolf.night_drunk",
-    "werewolf.night_insomniac",
-    "werewolf.morning",
-}
+# 계층 판정은 tests/test_cache_layers.py가 본다. 여기서는 "미리 만들어 둘 수
+# 있는 멘트가 조용히 줄어들지 않는가"만 확인한다 — 멘트에 슬롯을 하나 더
+# 넣으면 그 줄은 부팅 prewarm 대상에서 빠져 첫 발화에 지연이 붙는다.
 
 
-@pytest.mark.parametrize("line_id", sorted(_PREWARMED))
-def test_prewarm되던_멘트가_캐시를_잃지_않았다(line_id: str) -> None:
-    text = lines.get(line_id)
-    assert text in STATIC_LINES, (
-        f"{line_id}가 STATIC_LINES와 어긋났다. 캐시 키가 텍스트 기반이라 한 글자만 "
-        "달라도 miss가 나 첫 발화에 합성 지연이 붙는다. audio/catalog.py도 같이 고칠 것."
+def test_대부분의_멘트는_미리_만들_수_있다() -> None:
+    static_ratio = len(lines.static_texts()) / len(lines.LINES)
+    assert static_ratio > 0.6, (
+        f"미리 만들어 둘 수 있는 멘트가 {static_ratio:.0%}로 줄었다. "
+        "슬롯을 늘리면 그만큼 런타임 합성이 늘어난다."
     )
-
-
-def test_야간_페이즈_캐시_미적용_현황() -> None:
-    """아직 prewarm을 못 받는 야간 멘트. 메우면 이 테스트가 알려준다."""
-    미적용 = {
-        f"werewolf.{p.value}"
-        for p in (WerewolfPhase.NIGHT_START, *NIGHT_PHASES)
-        if lines.get(f"werewolf.{p.value}") not in STATIC_LINES
-    }
-    assert 미적용 == {"werewolf.night_robber", "werewolf.night_troublemaker"}
 
 
 # ── 5. 프론트 이관 계약 (NARRATION_REQUEST + 카탈로그) ────────────────────────
