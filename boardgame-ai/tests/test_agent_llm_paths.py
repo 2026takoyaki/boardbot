@@ -13,8 +13,11 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
+from agents import rules_agent
 from agents.base import Intervention
 from agents.context import AgentContext
 from agents.progress_agent import ProgressAgent
@@ -208,6 +211,77 @@ async def test_llm이_실패해도_제지는_이미_나갔다():
     violation = agent.on_game_event(_foul(), _violation_ctx())
     assert violation is not None and violation.tts_text  # 제지는 멀쩡하다
     assert await agent.explain(violation) is None  # 설명만 빠진다
+
+
+def test_같은_위반이_연달아_오면_한_번만_제지한다():
+    """카메라는 한 번의 행동을 여러 프레임에서 잡는다. 그대로 두면 진행자가
+    같은 말을 다섯 번 외치고(CRITICAL이라 서로를 끊는다) LLM도 그만큼 불린다."""
+    stub = _StubClient("설명")
+    llm.set_client(stub)
+    agent = RulesAgent()
+    ctx = _violation_ctx()
+
+    results = [agent.on_game_event(_foul(), ctx) for _ in range(5)]
+
+    assert results[0] is not None
+    assert all(r is None for r in results[1:])
+
+
+def test_다른_위반은_따로_제지한다():
+    llm.set_client(_StubClient("설명"))
+    agent = RulesAgent()
+    ctx = _violation_ctx()
+
+    first = agent.on_game_event(_foul(), ctx)
+    # 같은 사람이 이번엔 허용되지 않은 행동을 했다 — 다른 위반이다.
+    other = agent.on_game_event(
+        GameEvent(event_type="dice_rolled", actor_id="p3", confidence=1.0, frame_id=1),
+        ctx,
+    )
+
+    assert first is not None
+    assert other is not None
+
+
+def test_쿨다운이_지나면_다시_제지한다(monkeypatch):
+    llm.set_client(_StubClient("설명"))
+    agent = RulesAgent()
+    ctx = _violation_ctx()
+
+    assert agent.on_game_event(_foul(), ctx) is not None
+    assert agent.on_game_event(_foul(), ctx) is None
+
+    clock = [time.monotonic() + 99]
+    monkeypatch.setattr(rules_agent.time, "monotonic", lambda: clock[0])
+    assert agent.on_game_event(_foul(), ctx) is not None
+
+
+def test_설명을_못_받은_위반이_무한히_쌓이지_않는다(monkeypatch):
+    """세션이 끝나 설명 태스크가 취소되면 항목이 남고 지워줄 사람이 없다."""
+    llm.set_client(_StubClient("설명"))
+    agent = RulesAgent()
+    ctx = _violation_ctx()
+
+    # 쿨다운을 피해 위반을 계속 만든다. explain은 한 번도 부르지 않는다.
+    clock = [time.monotonic()]
+    monkeypatch.setattr(rules_agent.time, "monotonic", lambda: clock[0])
+    for _ in range(50):
+        clock[0] += 10
+        agent.on_game_event(_foul(), ctx)
+
+    assert len(agent._pending_situation) <= rules_agent._MAX_PENDING
+
+
+def test_새_판을_시작하면_앞_판의_위반을_잊는다():
+    llm.set_client(_StubClient("설명"))
+    agent = RulesAgent()
+    ctx = _violation_ctx()
+
+    assert agent.on_game_event(_foul(), ctx) is not None
+    agent.reset()
+    # 새 판이니 같은 위반이라도 다시 제지해야 한다.
+    assert agent.on_game_event(_foul(), ctx) is not None
+    assert agent._pending_situation
 
 
 @pytest.mark.anyio

@@ -80,6 +80,7 @@ class AgentOrchestrator:
         """새 판 시작 시 호출 — 에이전트가 앞 판에 대해 기억하는 것을 비운다."""
         self._strategy.reset_coach()
         self._progress.reset()
+        self._rules.reset()
 
     def set_strategy_enabled(self, enabled: bool) -> None:
         self._strategy.set_enabled(enabled)
