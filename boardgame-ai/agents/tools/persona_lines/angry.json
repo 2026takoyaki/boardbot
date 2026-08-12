@@ -29,6 +29,7 @@
   "strategy.yacht_best": "현재 주사위 조합에서는 {label}에 기록하면 {score}점을 얻을 수 있다고.",
   "strategy.yacht_none": "현재 주사위로 점수가 나오는 카테고리가 없네. 낮은 값을 가진 카테고리에 0을 기록하는 걸 추천한다고.",
   "tempo.almost": "시간이 거의 다 됐어!",
+  "tempo.close_eyes_again": "눈 다시 감으라고. 아 진짜.",
   "tempo.half": "절반의 시간 지났잖아.",
   "tempo.hurry": "시간 얼마 안 남았다고. 빨리 좀 해.",
   "werewolf.discussion_start": "야, 지금부터 토론 시작이잖아. 늑대인간 찾아내라고.",

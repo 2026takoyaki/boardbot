@@ -6,7 +6,15 @@
 
     python tools/generate_persona_lines.py granny
     python tools/generate_persona_lines.py granny --dry-run   # 프롬프트만 확인
-    python tools/generate_persona_lines.py --all
+    python tools/generate_persona_lines.py --all              # 빠진 줄만 채움
+    python tools/generate_persona_lines.py --all --force      # 전부 새로 뽑음
+
+기본은 **증분**이다. 이미 변환된 줄은 건드리지 않고 lines.py에 새로 생긴
+줄만 채운다. 전부 다시 뽑으면 귀로 확인하고 통과시킨 문장까지 같이 바뀌어,
+멘트 하나를 추가할 때마다 페르소나 전체를 다시 들어봐야 한다.
+
+실제로 tempo.close_eyes_again을 추가하고 재생성을 잊어 그 한 줄만 표준어로
+나갔다. 증분이면 "빠진 줄 N개"가 눈에 보이므로 잊기 어렵다.
 
 출력은 `agents/tools/persona_lines/<id>.json`.
 검사(agents/tools/line_validator.py)에 걸린 줄은 저장하지 않는다 — 그 줄은
@@ -31,7 +39,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from agents.personas import PERSONAS, get_persona  # noqa: E402
-from agents.tools import lines  # noqa: E402
+from agents.tools import lines, llm  # noqa: E402
 from agents.tools.line_validator import format_report, validate_all  # noqa: E402
 from core.persona import Persona  # noqa: E402
 
@@ -119,14 +127,36 @@ async def _convert_batch(client, model: str, persona: Persona, batch: dict[str, 
     return parsed if isinstance(parsed, dict) else {}
 
 
-async def generate(persona_id: str, model: str, dry_run: bool) -> int:
+def _existing(persona_id: str) -> dict[str, str]:
+    """이미 변환해 둔 줄. 없으면 빈 dict."""
+    path = lines.PERSONA_LINES_DIR / f"{persona_id}.json"
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  기존 파일을 읽지 못했습니다({exc}). 전부 새로 뽑습니다.")
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+async def generate(persona_id: str, model: str, dry_run: bool, force: bool = False) -> int:
     persona = get_persona(persona_id)
     if persona.id != persona_id:
         print(f"'{persona_id}'는 없는 페르소나입니다. 가능: {', '.join(PERSONAS)}")
         return 1
 
     originals = dict(lines.LINES)
-    items = list(originals.items())
+    kept = {} if force else _existing(persona_id)
+    todo = {k: v for k, v in originals.items() if k not in kept}
+
+    if not todo:
+        print(f"  변환할 줄이 없습니다 (이미 {len(kept)}줄). 다시 뽑으려면 --force.")
+        return 0
+    if kept:
+        print(f"  기존 {len(kept)}줄 유지, 빠진 {len(todo)}줄만 변환합니다.")
+
+    items = list(todo.items())
     batches = [dict(items[i : i + _BATCH]) for i in range(0, len(items), _BATCH)]
 
     if dry_run:
@@ -152,21 +182,24 @@ async def generate(persona_id: str, model: str, dry_run: bool) -> int:
         except Exception as exc:  # noqa: BLE001 — 배치 하나가 죽어도 나머지는 살린다
             print(f"    실패: {type(exc).__name__}: {exc}")
 
-    accepted, rejected = validate_all(originals, converted)
+    # 검사는 이번에 뽑은 줄만 대상으로 한다. 전체를 넘기면 손대지도 않은
+    # 기존 줄이 "변환 누락"으로 잡혀 리포트가 쓸모없어진다.
+    accepted, rejected = validate_all(todo, converted)
     print()
-    print(format_report(originals, accepted, rejected))
+    print(format_report(todo, accepted, rejected))
 
     if not accepted:
         print("\n저장할 것이 없습니다.")
         return 1
 
+    merged = {**kept, **accepted}
     lines.PERSONA_LINES_DIR.mkdir(parents=True, exist_ok=True)
     out = lines.PERSONA_LINES_DIR / f"{persona.id}.json"
     out.write_text(
-        json.dumps(accepted, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        json.dumps(merged, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"\n저장: {out} ({len(accepted)}줄)")
+    print(f"\n저장: {out} (새로 {len(accepted)}줄, 합계 {len(merged)}/{len(originals)}줄)")
     return 0
 
 
@@ -178,8 +211,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("persona", nargs="?", help="페르소나 id")
     parser.add_argument("--all", action="store_true", help="모든 페르소나 변환")
-    parser.add_argument("--model", default=os.environ.get("LLM_MODEL", "gpt-4o-mini"))
+    parser.add_argument("--model", default=os.environ.get("LLM_MODEL", llm.DEFAULT_MODEL))
     parser.add_argument("--dry-run", action="store_true", help="프롬프트만 출력")
+    parser.add_argument(
+        "--force", action="store_true", help="이미 변환된 줄까지 전부 다시 뽑는다"
+    )
     args = parser.parse_args()
 
     from dotenv import load_dotenv
@@ -193,7 +229,7 @@ def main() -> int:
     code = 0
     for persona_id in targets:
         print(f"\n=== {persona_id} ===")
-        code |= asyncio.run(generate(persona_id, args.model, args.dry_run))
+        code |= asyncio.run(generate(persona_id, args.model, args.dry_run, args.force))
     return code
 
 
