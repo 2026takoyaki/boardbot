@@ -74,8 +74,11 @@ export function useWebSocket(path, options = {}) {
         try {
           const msg = JSON.parse(e.data)
           setMessages(prev => [msg, ...prev].slice(0, 20))
-          if (msg.msg_type === 'hello' && msg.payload?.lines) {
-            // 멘트의 소유자는 백엔드다. 화면에 그릴 문장을 여기서 받아둔다.
+          // 멘트의 소유자는 백엔드다. 화면에 그릴 문장을 여기서 받아둔다.
+          // 접속 시엔 hello에 실려 오고, 페르소나가 바뀌면 lines_catalog로
+          // 따로 온다 — hello로 다시 보내면 새 접속으로 착각해 게임이 재시작된다.
+          if (msg.payload?.lines &&
+              (msg.msg_type === 'hello' || msg.msg_type === 'lines_catalog')) {
             setLineCatalog(msg.payload.lines)
           }
           if (msg.msg_type === 'state_update') {

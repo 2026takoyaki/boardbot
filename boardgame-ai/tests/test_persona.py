@@ -8,11 +8,15 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agents.personas import DEFAULT_PERSONA_ID, PERSONAS, get_persona
+from agents.tools import lines
 from audio.manager import AudioManager
 from audio.tts_engine import TTSEngine, _make_cache_key
+from backend.persona_control import apply_persona, catalog_message
 from core.audio import TTSRequest
 from core.constants import AgentRole
 from core.persona import DELIVERY_EXCITED, Delivery, Persona
@@ -85,14 +89,15 @@ def test_페르소나를_주입하지_않아도_죽지_않는다() -> None:
 
 @pytest.mark.anyio
 async def test_페르소나를_바꾸면_목소리가_바뀐다() -> None:
-    mgr = AudioManager(TTSEngine(), get_persona("mia"))
+    first, second = sorted(PERSONAS)[0], sorted(PERSONAS)[1]
+    mgr = AudioManager(TTSEngine(), get_persona(first))
     before = mgr._voice_for(_request("안녕", AgentRole.NARRATOR.value))
     # prewarm=False: 합성 없이 목소리만 교체 (TTS 자격증명 없이도 검증 가능)
-    await mgr.set_persona(get_persona("dante"), prewarm=False)
+    await mgr.set_persona(get_persona(second), prewarm=False)
     after = mgr._voice_for(_request("안녕", AgentRole.NARRATOR.value))
 
     assert before.name != after.name
-    assert mgr.persona.id == "dante"
+    assert mgr.persona.id == second
 
 
 # ── 3. 캐시 정합성 ────────────────────────────────────────────────────────────
@@ -152,3 +157,71 @@ def test_말투_지시가_TTS_안전_규칙을_담는다(persona_id: str) -> Non
     prompt = PERSONAS[persona_id].style_prompt
     assert "이모지" in prompt
     assert "숫자" in prompt  # 원문의 숫자를 바꾸지 말라는 규칙
+
+
+# ── 5. 전환은 목소리·말투·화면을 함께 바꾼다 ─────────────────────────────────
+# 셋이 따로 놀면 목소리만 바뀌고 말투는 그대로이거나, 음성과 자막이 다른 말을
+# 하게 된다. 전환은 반드시 apply_persona를 거친다.
+
+
+@pytest.fixture(autouse=True)
+def _reset_lines():
+    yield
+    lines.use_persona(None)
+
+
+@pytest.mark.anyio
+async def test_전환하면_목소리와_말투가_함께_바뀐다(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(lines, "PERSONA_LINES_DIR", tmp_path)
+    target = sorted(PERSONAS)[0]
+    (tmp_path / f"{target}.json").write_text(
+        json.dumps({"werewolf.night_start": "밤이다. 눈 감아라."}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    mgr = AudioManager(TTSEngine())
+
+    report = await apply_persona(target, mgr, prewarm=False)
+
+    assert mgr.persona.id == target                      # 목소리
+    assert lines.get("werewolf.night_start") == "밤이다. 눈 감아라."   # 말투
+    assert report.applied == 1
+
+
+@pytest.mark.anyio
+async def test_전환하면_화면_문구도_밀어준다() -> None:
+    """자막이 옛 문장으로 남으면 음성과 다른 말을 한다."""
+    sent: list[object] = []
+
+    async def broadcast(msg: object) -> None:
+        sent.append(msg)
+
+    await apply_persona(sorted(PERSONAS)[0], None, broadcast, prewarm=False)
+
+    assert len(sent) == 1
+    msg = sent[0]
+    assert msg.msg_type == "lines_catalog"  # type: ignore[attr-defined]
+    assert msg.payload["lines"]  # type: ignore[attr-defined]
+
+
+@pytest.mark.anyio
+async def test_카탈로그를_hello로_보내지_않는다() -> None:
+    """프론트는 hello를 새 접속 신호로 쓴다 — 다시 보내면 게임이 재시작된다."""
+    assert catalog_message().msg_type != "hello"
+
+
+@pytest.mark.anyio
+async def test_화면_갱신에_실패해도_음성은_바뀐다() -> None:
+    async def broken(msg: object) -> None:
+        raise RuntimeError("소켓 끊김")
+
+    mgr = AudioManager(TTSEngine())
+    report = await apply_persona(sorted(PERSONAS)[0], mgr, broken, prewarm=False)
+
+    assert mgr.persona.id == sorted(PERSONAS)[0]
+    assert report.persona.id == sorted(PERSONAS)[0]
+
+
+@pytest.mark.anyio
+async def test_없는_페르소나로_전환하면_기본값() -> None:
+    report = await apply_persona("없는거", None, prewarm=False)
+    assert report.persona.id == DEFAULT_PERSONA_ID

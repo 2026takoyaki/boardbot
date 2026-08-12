@@ -26,11 +26,10 @@ from fastapi.staticfiles import StaticFiles
 
 from audio.catalog import BGM_DIR, SFX_DIR, TTS_CACHE_DIR
 from audio.manager import AudioManager
-from audio.prewarm import prewarm_static
 from audio.tts_engine import TTSEngine
 from agents.orchestrator import AgentOrchestrator
-from agents.personas import get_persona
 from backend.dev import DEV_ENV_VAR, is_dev_mode, seat_registration_events
+from backend.persona_control import apply_persona
 from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
 from backend.routes.players import router as players_router
@@ -79,15 +78,18 @@ async def lifespan(app: FastAPI):
     # 오디오: TTSEngine + AudioManager 부팅, static 사전 합성.
     # 목소리는 페르소나가 소유한다. 어떤 페르소나로 시작할지는 여기서 고른다 —
     # audio 계층은 페르소나를 받아 쓸 뿐 고르지 않는다.
-    persona = get_persona(os.environ.get("PERSONA"))
     tts_engine = TTSEngine()
-    audio_manager = AudioManager(tts_engine, persona)
-    logger.info("persona: %s (%s)", persona.id, persona.voice_name)
-    if tts_engine.is_available():
-        stats = await prewarm_static(tts_engine, persona)
-        logger.info("audio prewarm_static: %s", stats)
-    else:
+    audio_manager = AudioManager(tts_engine)
+    # 목소리·말투·화면 문구를 한 번에 맞춘다. 셋이 따로 놀면 목소리만 바뀌고
+    # 말투는 그대로이거나, 음성과 자막이 다른 말을 하게 된다.
+    # 변환 파일이 없거나 검사에 걸린 줄은 중립 원문으로 나간다.
+    if not tts_engine.is_available():
         logger.warning("TTS engine not available — STATIC/SESSION 캐시 hit만 동작")
+    await apply_persona(
+        os.environ.get("PERSONA"),
+        audio_manager,
+        prewarm=tts_engine.is_available(),
+    )
 
     # 조명: 전구가 없어도 서버는 그대로 뜬다.
     # 실제 전구는 LIGHT_DRIVER=yeelight + LIGHT_BULB_IP 로 opt-in.

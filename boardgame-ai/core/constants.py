@@ -28,6 +28,9 @@ class MsgType(StrEnum):
     BGM_DUCK = "bgm_duck"
     GAME_RESULT = "game_result"
     HELLO = "hello"
+    # 페르소나가 바뀌어 화면 문구가 통째로 달라졌음을 알린다. hello로 다시
+    # 보내면 프론트가 새 접속으로 착각해 게임을 다시 시작한다.
+    LINES_CATALOG = "lines_catalog"
     ERROR = "error"
 
 

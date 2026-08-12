@@ -26,7 +26,11 @@ game_type/fsm_state는 AgentContext의 값을 그대로 쓴다 — 변환 테이
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
+
+from agents.tools.line_validator import validate_all
 
 # ── 늑대인간: 일반 모드 ─────────────────────────────────────────────────────────
 # 눈을 감고 진행하므로 "깨어나세요" 호명 방식.
@@ -182,6 +186,61 @@ LINES: dict[str, str] = {
 }
 
 
+# ── 페르소나 말투 ──────────────────────────────────────────────────────────────
+# LINES는 중립 원문이다. 페르소나를 고르면 같은 line_id를 그 말투로 바꾼 문장이
+# 덮어쓴다. 변환은 런타임이 아니라 미리 해두고 JSON으로 갖고 있는다 —
+# 발화할 때마다 LLM을 부르면 매 페이즈에 생성+합성 지연이 겹쳐 진행이 끊긴다.
+#
+# 덮어쓰지 못한 line_id는 원문 그대로 나간다. 말투가 안 바뀐 문장 하나가
+# 게임이 멈추는 것보다 낫다.
+PERSONA_LINES_DIR = Path(__file__).resolve().parent / "persona_lines"
+
+_persona_id: str | None = None
+_persona_lines: dict[str, str] = {}
+
+
+def active_persona_id() -> str | None:
+    return _persona_id
+
+
+def set_persona_lines(persona_id: str | None, overrides: dict[str, str]) -> None:
+    """변환된 문장을 적용한다. 검사를 통과한 것만 넘길 것."""
+    global _persona_id, _persona_lines
+    _persona_id = persona_id
+    _persona_lines = dict(overrides)
+
+
+def load_persona_lines(persona_id: str) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """<persona_id>.json을 읽어 검사한다. (통과분, 문제) 반환.
+
+    파일이 없으면 빈 결과 — 아직 변환하지 않은 페르소나는 원문으로 진행한다.
+    손으로 쓴 파일도 여기서 검사되므로, 슬롯을 빠뜨리면 로드 시점에 걸린다.
+    """
+    path = PERSONA_LINES_DIR / f"{persona_id}.json"
+    if not path.exists():
+        return {}, {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, {"__file__": [f"읽을 수 없음: {exc}"]}
+    if not isinstance(raw, dict):
+        return {}, {"__file__": ["최상위가 객체가 아님"]}
+    return validate_all(LINES, {str(k): str(v) for k, v in raw.items()})
+
+
+def use_persona(persona_id: str | None) -> tuple[int, dict[str, list[str]]]:
+    """페르소나 말투를 적용한다. (적용된 줄 수, 검사에 걸린 항목) 반환.
+
+    None이면 중립 원문으로 되돌린다.
+    """
+    if persona_id is None:
+        set_persona_lines(None, {})
+        return 0, {}
+    accepted, rejected = load_persona_lines(persona_id)
+    set_persona_lines(persona_id, accepted)
+    return len(accepted), rejected
+
+
 def catalog() -> dict[str, str]:
     """프론트에 내려보낼 전체 멘트 목록.
 
@@ -189,11 +248,16 @@ def catalog() -> dict[str, str]:
     발화할 때마다 왕복하면 애니메이션 타이밍이 흔들리므로 접속 시 통째로 준다.
     페르소나가 바뀌면 이 결과가 통째로 달라지고, 화면과 음성이 함께 바뀐다.
     """
-    return dict(LINES)
+    return {**LINES, **_persona_lines}
 
 
 def get(line_id: str) -> str | None:
-    """line_id의 원문 템플릿. 없으면 None."""
+    """line_id의 템플릿. 페르소나 말투가 있으면 그것, 없으면 중립 원문."""
+    return _persona_lines.get(line_id) or LINES.get(line_id)
+
+
+def original(line_id: str) -> str | None:
+    """페르소나와 무관한 중립 원문. 변환 대상 목록을 만들 때 쓴다."""
     return LINES.get(line_id)
 
 
@@ -203,7 +267,7 @@ def render(line_id: str, **params: object) -> str | None:
     str.format을 쓰지 않는다 — 멘트에 중괄호가 섞여 있거나 params가 비면
     KeyError로 발화 자체가 죽는다. 채울 수 있는 슬롯만 채우고 나머지는 둔다.
     """
-    template = LINES.get(line_id)
+    template = get(line_id)
     if template is None:
         return None
     return fill(template, **params)
