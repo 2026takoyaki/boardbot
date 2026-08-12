@@ -201,6 +201,33 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/debug/agents")
+def debug_agents() -> dict[str, Any]:
+    """지금 에이전트가 어떤 상태인지 한눈에.
+
+    LLM 실패는 규칙 기반으로 조용히 폴백하므로 로그를 뒤지지 않으면 "LLM이
+    그냥 안 붙은 것"과 구분되지 않는다. 여기서 사유가 보이게 한다.
+    """
+    from agents.tools import lines, llm, tempo_pool
+
+    persona = get_persona(lines.active_persona_id())
+    return {
+        "persona": {
+            "id": persona.id,
+            "display_name": persona.display_name,
+            "voice": persona.voice_name,
+            "provider": persona.provider,
+            "말투_적용": f"{lines.applied_count()}/{len(lines.LINES)}",
+        },
+        "llm": llm.get_client().stats(),
+        "tempo_pool": tempo_pool.stats(),
+        "tts": {
+            "engine": persona.provider,
+            "available": app.state.tts_engine.is_available(persona.voice_for()),
+        },
+    }
+
+
 # ── 개발 모드 ─────────────────────────────────────────────────────────────────
 # 게임 상태를 바꾸는 것은 전부 BOARDBOT_DEV=1 뒤에 있고, 꺼져 있으면 404다.
 # /dev/config만 예외로 항상 200을 준다 — 프론트가 "개발 모드인가"를 물어보는

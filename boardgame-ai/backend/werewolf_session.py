@@ -281,10 +281,10 @@ class WerewolfSession:
             and not self._practice_mode
         ):
             timeout = float(PASSIVE_PHASE_DURATION)
-            phase_end_warning = "눈을 다시 감아주세요."
+            phase_end_warning = "tempo.close_eyes_again"
         elif fusion_ctx.fsm_state in ACTIVE_NIGHT_PHASES and not self._practice_mode:
             timeout = float(ACTIVE_PHASE_TIMEOUT)
-            phase_end_warning = "눈을 다시 감아주세요."
+            phase_end_warning = "tempo.close_eyes_again"
         agent_ctx = AgentContext(
             game_type="werewolf_practice" if self._practice_mode else "werewolf",
             fsm_state=fusion_ctx.fsm_state,
@@ -294,7 +294,7 @@ class WerewolfSession:
             expected_events=list(fusion_ctx.expected_events),
             turn_start_time=_time.time(),
             turn_timeout=timeout,
-            phase_end_warning=phase_end_warning,
+            phase_end_warning_line=phase_end_warning,
         )
         await self._agent.on_state_change(agent_ctx, state_version=self._state_version)
 

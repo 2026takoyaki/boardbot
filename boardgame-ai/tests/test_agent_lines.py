@@ -81,6 +81,7 @@ _원문_샘플 = {
     "tempo.half": "절반의 시간이 지났습니다.",
     "tempo.hurry": "시간이 얼마 남지 않았습니다.",
     "tempo.almost": "시간이 거의 다 됐습니다!",
+    "tempo.close_eyes_again": "눈을 다시 감아주세요.",
 }
 
 

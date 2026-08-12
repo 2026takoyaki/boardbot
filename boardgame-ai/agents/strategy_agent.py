@@ -11,13 +11,11 @@ game_specific에서 필요한 정보를 읽는다.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
-from agents.tools import lines, werewolf_coach, yacht_coach
+from agents.tools import lines, llm, werewolf_coach, yacht_coach
 from core.audio import AudioPriority
 from core.persona import DELIVERY_EXCITED
 
@@ -28,20 +26,7 @@ logger = logging.getLogger(__name__)
 _YACHT_STRATEGY_PHASES = frozenset({"AWAITING_KEEP", "AWAITING_SCORE"})
 _WEREWOLF_STRATEGY_PHASES = werewolf_coach.STRATEGY_PHASES
 
-_LLM_TIMEOUT = 5.0   # 초 — 초과 시 규칙 기반 폴백
-_LLM_MAX_TOKENS = 80
-
-
-def _get_openai_client():
-    """OPENAI_API_KEY가 있으면 AsyncOpenAI 클라이언트 반환, 없으면 None."""
-    try:
-        from openai import AsyncOpenAI
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return None
-        return AsyncOpenAI(api_key=api_key)
-    except ImportError:
-        return None
+_LLM_MAX_TOKENS = 120
 
 
 class StrategyAgent(BaseAgent):
@@ -82,24 +67,17 @@ class StrategyAgent(BaseAgent):
         if not self._enabled:
             return None
 
-        client = _get_openai_client()
-        if client is not None:
-            try:
-                text = await asyncio.wait_for(
-                    self._llm_advice(ctx, client), timeout=_LLM_TIMEOUT
-                )
-                if text:
-                    return Intervention(
-                        agent=self.name,
-                        tts_text=text,
-                        priority=AudioPriority.LOW,
-                        suppress_lower=False,
-                    )
-            except asyncio.TimeoutError:
-                logger.warning("[StrategyAgent] LLM 타임아웃 — 규칙 기반 폴백")
-            except Exception:
-                logger.exception("[StrategyAgent] LLM 호출 실패 — 규칙 기반 폴백")
-
+        # LLM이 되면 그 말을 쓰고, 안 되면 규칙 기반으로 떨어진다.
+        # 실패 사유는 llm.get_client().stats()에 남는다 — 조용히 폴백하면
+        # 왜 LLM이 안 붙는지 알 방법이 없다.
+        text = await self._llm_advice(ctx)
+        if text:
+            return Intervention(
+                agent=self.name,
+                tts_text=text,
+                priority=AudioPriority.LOW,
+                suppress_lower=False,
+            )
         return self.on_state_change(ctx)
 
     # ── 튜토리얼 코치 ─────────────────────────────────────────────────────────
@@ -187,77 +165,65 @@ class StrategyAgent(BaseAgent):
         return None
 
     # ── LLM 호출 ──────────────────────────────────────────────────────────────
+    # 전략 조언은 지연이 허용되는 유일한 자리다. 플레이어가 점수판을 보며
+    # 고민하는 동안 나오므로 2~3초 늦어도 아무도 기다리지 않는다. 그래서
+    # 네 에이전트 중 유일하게 그 자리에서 직접 부른다.
 
-    async def _llm_advice(self, ctx: AgentContext, client) -> str | None:
+    async def _llm_advice(self, ctx: AgentContext) -> str | None:
         if ctx.game_type == "yacht":
-            return await self._llm_yacht(ctx, client)
+            return await self._llm_yacht(ctx)
         if ctx.game_type == "werewolf":
-            return await self._llm_werewolf(ctx, client)
+            return await self._llm_werewolf(ctx)
         return None
 
-    async def _llm_yacht(self, ctx: AgentContext, client) -> str | None:
+    async def _llm_yacht(self, ctx: AgentContext) -> str | None:
         gs = ctx.game_specific
-        dice: list = gs.get("dice_values", [])
-        available: list = gs.get("available_categories", [])
-        roll_count: int = gs.get("roll_count", 0)
+        dice = list(gs.get("dice_values", []))
+        available = list(gs.get("available_categories", []))
 
         if ctx.fsm_state not in _YACHT_STRATEGY_PHASES or not dice or not available:
             return None
         if any(v is None for v in dice):
             return None
 
-        dice_str = ", ".join(str(d) for d in dice)
-        cats_str = ", ".join(yacht_coach.KOREAN_LABEL.get(c, c) for c in available)
+        # 점수 계산은 LLM에게 시키지 않는다. 틀린 점수를 말하면 조언이 아니라
+        # 거짓말이 된다. 계산은 도구가 하고 LLM은 그걸 말로 옮기기만 한다.
+        best = yacht_coach.best_category(dice, available)
+        hint = ""
+        if best is not None:
+            label = yacht_coach.KOREAN_LABEL.get(best[0], best[0])
+            hint = f"\n지금 눈으로 가장 높은 칸: {label} {best[1]}점"
 
-        resp = await client.chat.completions.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "당신은 요트다이스 게임 전략가입니다. "
-                        "현재 상황에서 최선의 카테고리와 이유를 1~2문장으로 한국어로 간결하게 설명하세요. "
-                        "불필요한 설명 없이 핵심만 말하세요."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"주사위: {dice_str} ({roll_count}/3번 굴림)\n"
-                        f"선택 가능한 카테고리: {cats_str}"
-                    ),
-                },
-            ],
+        result = await llm.get_client().complete(
+            llm.persona_style()
+            + "당신은 요트다이스 진행자입니다. "
+            "지금 눈으로 어디에 넣으면 좋을지 한두 문장으로 짧게 말하세요. "
+            "숫자는 주어진 값을 그대로 쓰고 새로 계산하지 마세요.",
+            "주사위: {dice} ({rolls}/3번 굴림)\n남은 칸: {cats}{hint}".format(
+                dice=", ".join(str(d) for d in dice),
+                rolls=gs.get("roll_count", 0),
+                cats=", ".join(yacht_coach.KOREAN_LABEL.get(c, c) for c in available),
+                hint=hint,
+            ),
             max_tokens=_LLM_MAX_TOKENS,
-            temperature=0.5,
+            tag="strategy.yacht",
         )
-        return resp.choices[0].message.content.strip()
+        return result.text
 
-    async def _llm_werewolf(self, ctx: AgentContext, client) -> str | None:
+    async def _llm_werewolf(self, ctx: AgentContext) -> str | None:
         if ctx.fsm_state not in _WEREWOLF_STRATEGY_PHASES:
             return None
 
-        phase_ko = werewolf_coach.phase_name(ctx.fsm_state)
-
-        resp = await client.chat.completions.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "당신은 한밤의 늑대인간 보드게임 전략가입니다. "
-                        "역할별 야간 행동 전략을 1~2문장으로 한국어로 간결하게 설명하세요."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"현재 깨어난 역할: {phase_ko}",
-                },
-            ],
+        result = await llm.get_client().complete(
+            llm.persona_style()
+            + "당신은 한밤의 늑대인간 진행자입니다. "
+            "지금 깨어난 역할이 밤에 무엇을 하면 좋을지 한두 문장으로 짧게 말하세요. "
+            "특정 플레이어를 지목하지 마세요 — 시스템은 누가 어떤 역할인지 모릅니다.",
+            f"지금 깨어난 역할: {werewolf_coach.phase_name(ctx.fsm_state)}",
             max_tokens=_LLM_MAX_TOKENS,
-            temperature=0.5,
+            tag="strategy.werewolf",
         )
-        return resp.choices[0].message.content.strip()
+        return result.text
 
     # ── 규칙 기반 내부 메서드 ──────────────────────────────────────────────────
 

@@ -193,6 +193,9 @@ _TEMPO: dict[str, str] = {
     "half":   "절반의 시간이 지났습니다.",
     "hurry":  "시간이 얼마 남지 않았습니다.",
     "almost": "시간이 거의 다 됐습니다!",
+    # 야간 페이즈 종료 4초 전. 원래 werewolf_session이 문자열로 들고 있었는데,
+    # 세션이 문장을 소유하면 페르소나가 닿지 않아 그 한 줄만 표준어로 나갔다.
+    "close_eyes_again": "눈을 다시 감아주세요.",
 }
 
 
@@ -227,6 +230,11 @@ _persona_lines: dict[str, str] = {}
 
 def active_persona_id() -> str | None:
     return _persona_id
+
+
+def applied_count() -> int:
+    """페르소나 말투가 적용된 줄 수. 나머지는 중립 원문으로 발화된다."""
+    return len(_persona_lines)
 
 
 def set_persona_lines(persona_id: str | None, overrides: dict[str, str]) -> None:

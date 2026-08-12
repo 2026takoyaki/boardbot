@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agents.personas import get_persona
-from agents.tools import lines
+from agents.tools import lines, tempo_pool
 from audio.manager import AudioManager
 from core.constants import MsgType
 from core.envelope import WSMessage
@@ -80,12 +80,21 @@ async def apply_persona(
     # 뒤이어 나가는 카탈로그가 새 문장을 담는다.
     applied, rejected = lines.use_persona(persona.id)
 
+    # 재촉 멘트 변형은 지금 만들어야 한다. TempoAgent는 발화 시점에 LLM을 부를
+    # 수 없고(재촉이 늦으면 재촉이 아니다), 여기서 만든 문장이 아래 prewarm에
+    # 함께 실려야 캐시에 올라간다.
+    tempo_texts: list[str] = []
+    if prewarm:
+        tempo_texts = await tempo_pool.regenerate(persona)
+    else:
+        tempo_pool.clear()
+
     prewarm_stats: dict[str, int] = {}
     if audio_manager is not None:
         # 미리 만들어 둘 문장 목록을 먼저 갱신한다. 이게 옛 문장으로 남아 있으면
         # 새 페르소나로 데우는 것이 아니라 아무도 안 쓸 문장을 데우게 된다.
         audio_manager.set_line_catalog(
-            lines.static_texts(), lines.session_templates()
+            [*lines.static_texts(), *tempo_texts], lines.session_templates()
         )
         prewarm_stats = await audio_manager.set_persona(persona, prewarm=prewarm)
 
