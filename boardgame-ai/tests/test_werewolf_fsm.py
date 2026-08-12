@@ -1,4 +1,9 @@
-"""한밤의 늑대인간 FSM 타이머 테스트."""
+"""한밤의 늑대인간 FSM 테스트.
+
+시스템은 플레이어의 역할을 모른다. 야간 페이즈 진행 여부는 이번 판의 역할
+덱(deck_roles)으로만 결정되고, 각 페이즈는 OK 사인(GESTURE_CONFIRMED)으로
+넘어간다(타이머는 폴백). 승패는 판정하지 않고 최다 득표자까지만 확정한다.
+"""
 
 from __future__ import annotations
 
@@ -7,16 +12,25 @@ from unittest.mock import patch
 
 import pytest
 
+from core.constants import CommonEventType
 from core.events import GameEvent
 from games.werewolf.fsm import VOTE_COUNTDOWN_SECONDS, WerewolfFSM
-from games.werewolf.ontology import WerewolfEventType, WerewolfInputType, WerewolfPhase
+from games.werewolf.ontology import (
+    PHASE_TO_ROLE,
+    WerewolfEventType,
+    WerewolfInputType,
+    WerewolfPhase,
+)
 from games.werewolf.state import WerewolfPlayerState
+
+# 야간 페이즈가 있는 모든 역할 + 마을주민. 특정 역할의 유무를 검증하지 않는 테스트에서 쓴다.
+FULL_DECK = [r.value for r in PHASE_TO_ROLE.values()] + ["villager"]
 
 
 def _make_fsm(
-    roles: list[str],
+    deck_roles: list[str] | None = None,
     broadcast=None,
-    center_cards: list[str] | None = None,
+    player_count: int = 3,
     practice_mode: bool = False,
 ) -> WerewolfFSM:
     if broadcast is None:
@@ -25,15 +39,22 @@ def _make_fsm(
             pass
 
         broadcast = _noop
-    players = [
-        WerewolfPlayerState(player_id=f"p_{i}", original_role=r, current_role=r)
-        for i, r in enumerate(roles)
-    ]
+    players = [WerewolfPlayerState(player_id=f"p_{i}") for i in range(player_count)]
     return WerewolfFSM(
         players=players,
-        center_cards=center_cards or ["villager", "villager", "villager"],
+        deck_roles=deck_roles if deck_roles is not None else list(FULL_DECK),
         broadcast=broadcast,
         practice_mode=practice_mode,
+    )
+
+
+def _gesture(actor_id: str = "p_0") -> GameEvent:
+    return GameEvent(
+        event_type=CommonEventType.GESTURE_CONFIRMED,
+        actor_id=actor_id,
+        confidence=0.9,
+        frame_id=1,
+        data={"gesture": "ok_sign"},
     )
 
 
@@ -43,10 +64,10 @@ def _make_fsm(
 @pytest.mark.anyio
 async def test_passive_werewolf_phase_auto_advances() -> None:
     """night_werewolf 진입 후 타이머 경과 시 자동 전환."""
-    fsm = _make_fsm(["werewolf"])
+    fsm = _make_fsm()
 
     with patch("games.werewolf.fsm.PASSIVE_PHASE_DURATION", 0):
-        fsm.start()
+        fsm._enter_phase(WerewolfPhase.NIGHT_WEREWOLF)
         await asyncio.sleep(0.05)
 
     assert fsm.state.phase != WerewolfPhase.NIGHT_WEREWOLF.value
@@ -60,7 +81,7 @@ async def test_passive_timer_skips_if_phase_already_changed() -> None:
     async def record(msg):
         broadcast_msgs.append(msg)
 
-    fsm = _make_fsm(["werewolf"], broadcast=record)
+    fsm = _make_fsm(broadcast=record)
     fsm.state.phase = WerewolfPhase.DAY_DISCUSSION.value
 
     initial_version = fsm.state.state_version
@@ -76,11 +97,11 @@ async def test_passive_timer_skips_if_phase_already_changed() -> None:
 
 @pytest.mark.anyio
 async def test_active_timeout_advances_phase_when_no_event() -> None:
-    """액티브 역할 타임아웃 경과 시 강제 전환."""
-    fsm = _make_fsm(["seer"])
+    """OK 사인이 유실돼도 타임아웃 폴백으로 강제 전환된다."""
+    fsm = _make_fsm()
 
     with patch("games.werewolf.fsm.ACTIVE_PHASE_TIMEOUT", 0):
-        fsm.start()
+        fsm._enter_phase(WerewolfPhase.NIGHT_SEER)
         await asyncio.sleep(0.05)
 
     assert fsm.state.phase != WerewolfPhase.NIGHT_SEER.value
@@ -89,7 +110,7 @@ async def test_active_timeout_advances_phase_when_no_event() -> None:
 @pytest.mark.anyio
 async def test_active_timer_skips_if_phase_already_changed() -> None:
     """phase가 이미 변경된 경우 액티브 타이머 콜백이 전환 skip."""
-    fsm = _make_fsm(["seer"])
+    fsm = _make_fsm()
     fsm.state.phase = WerewolfPhase.DAY_DISCUSSION.value
 
     initial_version = fsm.state.state_version
@@ -103,7 +124,7 @@ async def test_active_timer_skips_if_phase_already_changed() -> None:
 @pytest.mark.anyio
 async def test_active_timer_cancelled_on_new_phase_entry() -> None:
     """새 phase 진입 시 이전 액티브 타이머가 취소되고 _active_timer_task가 None으로 초기화됨."""
-    fsm = _make_fsm(["seer"])
+    fsm = _make_fsm()
 
     with patch("games.werewolf.fsm.ACTIVE_PHASE_TIMEOUT", 60):
         fsm._enter_phase(WerewolfPhase.NIGHT_SEER)
@@ -118,6 +139,129 @@ async def test_active_timer_cancelled_on_new_phase_entry() -> None:
     # cancel()이 전송되었음을 확인: task가 done 상태이고 fsm의 참조가 None으로 초기화됨.
     assert task.done()
     assert fsm._active_timer_task is None
+
+
+# ── OK 사인으로 야간 진행 ──────────────────────────────────────────────────────
+
+
+def _cancel_timers(fsm: WerewolfFSM) -> None:
+    for attr in ("_timer_task", "_passive_timer_task", "_active_timer_task"):
+        task = getattr(fsm, attr)
+        if task and not task.done():
+            task.cancel()
+
+
+@pytest.mark.anyio
+async def test_gesture_advances_active_night_phase() -> None:
+    """액티브 역할 페이즈도 OK 사인으로 넘어간다(카드 감지 대체 경로)."""
+    fsm = _make_fsm()
+    fsm.state.phase = WerewolfPhase.NIGHT_SEER.value
+
+    msgs = fsm.handle_event(_gesture())
+
+    assert fsm.state.phase != WerewolfPhase.NIGHT_SEER.value
+    assert msgs
+    _cancel_timers(fsm)
+
+
+@pytest.mark.anyio
+async def test_gesture_advances_passive_night_phase() -> None:
+    """패시브 역할 페이즈에서도 기존대로 OK 사인이 동작한다."""
+    fsm = _make_fsm()
+    fsm.state.phase = WerewolfPhase.NIGHT_WEREWOLF.value
+
+    fsm.handle_event(_gesture())
+
+    assert fsm.state.phase != WerewolfPhase.NIGHT_WEREWOLF.value
+    _cancel_timers(fsm)
+
+
+@pytest.mark.anyio
+async def test_gesture_ignored_during_night_start() -> None:
+    """night_start 안내 화면은 OK 사인으로 넘어가지 않는다.
+
+    직전 card_setup_confirm에서 든 OK 손이 그대로 남아 있으면 페이즈 전환 직후
+    같은 손이 재발화해 안내 화면이 1~2초 만에 사라졌다.
+    """
+    fsm = _make_fsm()
+    assert fsm.state.phase == WerewolfPhase.NIGHT_START.value
+
+    assert fsm.handle_event(_gesture()) == []
+
+    assert fsm.state.phase == WerewolfPhase.NIGHT_START.value
+    _cancel_timers(fsm)
+
+
+@pytest.mark.anyio
+async def test_night_start_auto_advances_after_duration() -> None:
+    """일반 모드는 NIGHT_START_DURATION 초 뒤 첫 밤 역할 페이즈로 자동 전이한다."""
+    fsm = _make_fsm()
+
+    with patch("games.werewolf.fsm.NIGHT_START_DURATION", 0):
+        fsm.start()
+        await asyncio.sleep(0.05)
+
+    assert fsm.state.phase != WerewolfPhase.NIGHT_START.value
+    _cancel_timers(fsm)
+
+
+@pytest.mark.anyio
+async def test_night_start_has_no_backend_timer_in_practice_mode() -> None:
+    """튜토리얼 모드는 안내 TTS 종료 후 프론트가 start_now로 전이를 주도한다."""
+    fsm = _make_fsm(practice_mode=True)
+
+    with patch("games.werewolf.fsm.NIGHT_START_DURATION", 0):
+        fsm.start()
+        await asyncio.sleep(0.05)
+
+    assert fsm.state.phase == WerewolfPhase.NIGHT_START.value
+    assert fsm._passive_timer_task is None
+
+    fsm.handle_input(WerewolfInputType.START_NOW, {})
+    assert fsm.state.phase != WerewolfPhase.NIGHT_START.value
+    _cancel_timers(fsm)
+
+
+def test_gesture_ignored_outside_night() -> None:
+    """토론·투표 중 OK 사인은 페이즈를 넘기지 않는다."""
+    for phase in (WerewolfPhase.DAY_DISCUSSION, WerewolfPhase.VOTE_COUNTDOWN):
+        fsm = _make_fsm()
+        fsm.state.phase = phase.value
+        assert fsm.handle_event(_gesture()) == []
+        assert fsm.state.phase == phase.value
+
+
+@pytest.mark.anyio
+async def test_gesture_cancels_active_timer() -> None:
+    """OK 사인으로 전이하면 남아 있던 액티브 폴백 타이머가 취소된다."""
+    fsm = _make_fsm()
+
+    with patch("games.werewolf.fsm.ACTIVE_PHASE_TIMEOUT", 60):
+        fsm._enter_phase(WerewolfPhase.NIGHT_SEER)
+        await asyncio.sleep(0)
+        task = fsm._active_timer_task
+        assert task is not None and not task.done()
+
+        fsm.handle_event(_gesture())
+        await asyncio.sleep(0)
+
+    assert task.done()
+
+
+def test_card_events_no_longer_handled() -> None:
+    """제거된 카드 이벤트가 흘러들어와도 FSM은 무시한다."""
+    fsm = _make_fsm()
+    fsm.state.phase = WerewolfPhase.NIGHT_SEER.value
+
+    stale = GameEvent(
+        event_type="werewolf_card_peek",
+        actor_id="p_0",
+        confidence=0.9,
+        frame_id=1,
+        data={"card_owner_id": "p_1", "card_index": 0},
+    )
+    assert fsm.handle_event(stale) == []
+    assert fsm.state.phase == WerewolfPhase.NIGHT_SEER.value
 
 
 # ── 투표 카운트다운 & lock ────────────────────────────────────────────────────
@@ -136,7 +280,7 @@ def _set_vote_countdown_state(fsm: WerewolfFSM) -> None:
 @pytest.mark.anyio
 async def test_vote_countdown_enter_initializes_flags() -> None:
     """VOTE_COUNTDOWN 진입(_enter_phase) 시 votes_locked=False, 카운트다운은 아직 미시작(None)."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     fsm.state.phase = WerewolfPhase.DAY_DISCUSSION.value
     fsm._advance_to_next_phase()
     await asyncio.sleep(0)  # task 스케줄 양보
@@ -150,7 +294,7 @@ async def test_vote_countdown_enter_initializes_flags() -> None:
 @pytest.mark.anyio
 async def test_vote_countdown_start_input_begins_countdown() -> None:
     """VOTE_COUNTDOWN_START 입력 시 카운트다운이 시작되고, 중복 입력은 무시된다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     fsm.state.phase = WerewolfPhase.DAY_DISCUSSION.value
     fsm._advance_to_next_phase()
     await asyncio.sleep(0)
@@ -171,7 +315,7 @@ async def test_vote_countdown_start_input_begins_countdown() -> None:
 @pytest.mark.anyio
 async def test_vote_countdown_enter_clears_votes() -> None:
     """VOTE_COUNTDOWN 진입 시 모든 플레이어의 voted_for가 None으로 초기화된다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     for p in fsm.state.players:
         p.voted_for = "p_0"
     fsm.state.phase = WerewolfPhase.DAY_DISCUSSION.value
@@ -183,7 +327,7 @@ async def test_vote_countdown_enter_clears_votes() -> None:
 
 def test_vision_vote_updates_voted_for_before_lock() -> None:
     """lock 전 비전 지목은 voted_for를 갱신하고 자동 전이하지 않는다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     _set_vote_countdown_state(fsm)
 
     event = GameEvent(
@@ -202,7 +346,7 @@ def test_vision_vote_updates_voted_for_before_lock() -> None:
 
 def test_vision_vote_allows_retarget() -> None:
     """lock 전 같은 투표자가 A→B로 재지목하면 voted_for가 갱신된다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     _set_vote_countdown_state(fsm)
 
     def _vote(actor, target):
@@ -225,7 +369,7 @@ def test_vision_vote_allows_retarget() -> None:
 
 def test_vision_vote_rejected_after_lock() -> None:
     """lock 후 비전 지목은 무시된다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     _set_vote_countdown_state(fsm)
     fsm.state.votes_locked = True
 
@@ -244,7 +388,7 @@ def test_vision_vote_rejected_after_lock() -> None:
 
 def test_manual_vote_allowed_after_lock() -> None:
     """lock 후에도 werewolf_vote_player(수동 보정)는 voted_for를 갱신한다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     _set_vote_countdown_state(fsm)
     fsm.state.votes_locked = True
 
@@ -256,7 +400,7 @@ def test_manual_vote_allowed_after_lock() -> None:
 
 def test_vote_result_confirm_only_when_locked() -> None:
     """VOTE_RESULT_CONFIRM은 votes_locked=True 상태에서만 페이즈 전이를 일으킨다."""
-    fsm = _make_fsm(["werewolf", "villager", "villager"])
+    fsm = _make_fsm()
     _set_vote_countdown_state(fsm)
 
     # lock 전 → 무시
@@ -271,64 +415,103 @@ def test_vote_result_confirm_only_when_locked() -> None:
     assert fsm.state.phase != WerewolfPhase.VOTE_COUNTDOWN.value
 
 
-# ── 튜토리얼 야간 페이즈 필터링 ───────────────────────────────────────────────
+# ── 종료: 승패 판정 없이 최다 득표자만 확정 ────────────────────────────────────
 
 
-def test_normal_mode_visits_center_only_role_phase() -> None:
-    """일반 모드: 센터 카드에만 있는 역할의 야간 페이즈도 진행한다(역할 노출 방지)."""
-    fsm = _make_fsm(["werewolf", "villager"], center_cards=["seer", "villager", "villager"])
-    # seer를 보유한 플레이어는 없지만 센터에 있으므로 일반 모드는 진행
+def test_result_records_executed_without_winner() -> None:
+    """투표 종료 시 RESULT로 직행하고 최다 득표자를 확정한다. 승리팀은 계산하지 않는다."""
+    fsm = _make_fsm()
+    _set_vote_countdown_state(fsm)
+    fsm.state.get_player("p_0").voted_for = "p_1"
+    fsm.state.get_player("p_1").voted_for = "p_2"
+    fsm.state.get_player("p_2").voted_for = "p_1"
+    fsm.state.votes_locked = True
+
+    fsm.handle_input(WerewolfInputType.VOTE_RESULT_CONFIRM, {}, None)
+
+    assert fsm.state.phase == WerewolfPhase.RESULT.value
+    assert fsm.state.executed == ["p_1"]
+    assert "winner" not in fsm.get_state_dict()
+
+
+def test_result_no_execution_when_votes_fully_split() -> None:
+    """3인 이상에서 전원 1표씩 분산되면 처형자가 없다."""
+    fsm = _make_fsm()
+    _set_vote_countdown_state(fsm)
+    fsm.state.get_player("p_0").voted_for = "p_1"
+    fsm.state.get_player("p_1").voted_for = "p_2"
+    fsm.state.get_player("p_2").voted_for = "p_0"
+    fsm.state.votes_locked = True
+
+    fsm.handle_input(WerewolfInputType.VOTE_RESULT_CONFIRM, {}, None)
+
+    assert fsm.state.phase == WerewolfPhase.RESULT.value
+    assert fsm.state.executed == []
+
+
+# ── 야간 페이즈 필터링 (덱 기준) ──────────────────────────────────────────────
+
+
+def test_night_phase_included_when_role_in_deck() -> None:
+    """덱에 카드가 있으면 해당 야간 페이즈를 진행한다."""
+    fsm = _make_fsm(["werewolf", "seer", "villager"])
     assert fsm._night_phase_included(WerewolfPhase.NIGHT_SEER) is True
 
 
-def test_tutorial_mode_skips_center_only_active_role() -> None:
-    """튜토리얼 모드: 플레이어가 보유하지 않고 센터에만 있는 액티브 역할은 건너뛴다."""
-    fsm = _make_fsm(
-        ["werewolf", "villager"],
-        center_cards=["seer", "villager", "villager"],
-        practice_mode=True,
-    )
+def test_night_phase_skipped_when_role_absent_from_deck() -> None:
+    """덱에 없는 역할의 야간 페이즈는 건너뛴다."""
+    fsm = _make_fsm(["werewolf", "villager", "robber"])
     assert fsm._night_phase_included(WerewolfPhase.NIGHT_SEER) is False
 
 
-def test_tutorial_mode_includes_registered_active_role() -> None:
-    """튜토리얼 모드: 플레이어가 보유한 액티브 역할은 진행한다."""
-    fsm = _make_fsm(["seer", "villager"], practice_mode=True)
+def test_night_phase_included_even_if_card_may_sit_in_center() -> None:
+    """덱에 있으면 그 카드가 센터에 깔렸을 수 있어도 호명한다.
+
+    시스템은 배분 결과를 모른다. 호명을 건너뛰면 그 역할이 아무에게도 없다는
+    사실이 드러나므로, 덱 기준으로 항상 진행하는 것이 정보 은닉 측면에서도 맞다.
+    """
+    fsm = _make_fsm(["werewolf", "seer", "villager", "villager", "villager", "villager"])
     assert fsm._night_phase_included(WerewolfPhase.NIGHT_SEER) is True
 
 
-def test_tutorial_mode_always_includes_werewolf_team_passive() -> None:
-    """튜토리얼 모드: 등록 여부와 무관하게 늑대팀 패시브 안내는 항상 진행한다."""
-    # 늑대/하수인/프리메이슨 누구도 보유하지 않고 센터에도 없는 구성
-    fsm = _make_fsm(
-        ["seer", "villager"],
-        center_cards=["villager", "villager", "robber"],
-        practice_mode=True,
-    )
-    assert fsm._night_phase_included(WerewolfPhase.NIGHT_WEREWOLF) is True
-    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MINION) is True
-    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MASON) is True
+def test_tutorial_mode_skips_roles_not_selected_for_this_game() -> None:
+    """튜토리얼 모드도 일반 모드와 동일하게 이번 판 덱 구성만 따른다."""
+    fsm = _make_fsm(["seer", "villager", "robber"], practice_mode=True)
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_WEREWOLF) is False
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MINION) is False
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_MASON) is False
+    assert fsm._night_phase_included(WerewolfPhase.NIGHT_SEER) is True
 
 
 @pytest.mark.anyio
-async def test_tutorial_advance_skips_center_only_seer() -> None:
-    """튜토리얼 모드 전체 전이: 센터 전용 seer를 건너뛰고 day_discussion까지 진행."""
-    fsm = _make_fsm(
-        ["robber", "villager"],
-        center_cards=["seer", "villager", "villager"],
-        practice_mode=True,
-    )
-    # NIGHT_MASON 다음은 센터 전용 seer를 건너뛰고 등록된 robber로 진행해야 함
+async def test_advance_skips_roles_absent_from_deck() -> None:
+    """전체 전이: 덱에 없는 seer를 건너뛰고 robber로 진행한다."""
+    fsm = _make_fsm(["werewolf", "robber", "villager"])
     fsm.state.phase = WerewolfPhase.NIGHT_MASON.value
     with patch("games.werewolf.fsm.ACTIVE_PHASE_TIMEOUT", 60):
         fsm._advance_to_next_phase()
     assert fsm.state.phase == WerewolfPhase.NIGHT_ROBBER.value
+    if fsm._active_timer_task:
+        fsm._active_timer_task.cancel()
+
+
+@pytest.mark.anyio
+async def test_advance_reaches_day_when_no_night_roles_left() -> None:
+    """남은 야간 역할이 없으면 토론 단계로 넘어간다."""
+    fsm = _make_fsm(["villager", "tanner", "hunter"])
+    fsm.state.phase = WerewolfPhase.NIGHT_START.value
+    fsm._advance_to_next_phase()
+    await asyncio.sleep(0)
+
+    assert fsm.state.phase == WerewolfPhase.DAY_DISCUSSION.value
+    if fsm._timer_task:
+        fsm._timer_task.cancel()
 
 
 @pytest.mark.anyio
 async def test_countdown_timer_decrements_and_locks() -> None:
     """_run_vote_countdown 실행 시 countdown_remaining이 감소하고 최종적으로 lock된다."""
-    fsm = _make_fsm(["werewolf", "villager"])
+    fsm = _make_fsm()
 
     with (
         patch("games.werewolf.fsm.VOTE_COUNTDOWN_SECONDS", 2),

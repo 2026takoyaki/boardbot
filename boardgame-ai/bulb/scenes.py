@@ -157,10 +157,8 @@ def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
         WerewolfPhase.DAY_DISCUSSION.value: Scene("ww_dawn", DAWN_WARM, 100, 2500),
         WerewolfPhase.VOTE_COUNTDOWN.value: Scene("ww_countdown", TENSION_RED, 60, 2000),
         WerewolfPhase.VOTE.value: Scene("ww_vote", VILLAIN_RED, 55, 1000),
-        # 역할 카드를 눈으로 확인하는 구간이라 명확히 보여야 한다.
-        WerewolfPhase.FINAL_ROLE_REVEAL.value: Scene("ww_reveal", NEUTRAL_WHITE, 100, 800),
-        # 승리팀을 모르는 상태가 정상 경로다 (§3.3 결정). 최종 역할 판정이
-        # 구현되면 팀 색 분기를 여기에 추가한다.
+        # 시스템은 역할을 모르므로 승리팀 색 분기가 없다. 투표 결과를 발표하고
+        # 플레이어들이 직접 카드를 공개하는 구간이라 밝게 유지한다.
         WerewolfPhase.RESULT.value: Scene("ww_result", CELEBRATION_GOLD, 100, 1500),
     }
 

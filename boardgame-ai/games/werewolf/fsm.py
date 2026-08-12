@@ -1,4 +1,10 @@
-"""한밤의 늑대인간 게임 FSM."""
+"""한밤의 늑대인간 게임 FSM.
+
+시스템은 플레이어의 역할을 알지 못한다. 이번 판의 역할 덱(deck_roles)만 알고
+있으므로 야간 페이즈는 덱에 포함된 모든 역할을 순서대로 호명하고, 각 페이즈는
+플레이어의 OK 사인(GESTURE_CONFIRMED)으로 넘어간다. 제스처가 유실될 경우를 대비해
+고정 타이머를 폴백으로 둔다. 승패는 판정하지 않고 투표 집계까지만 발표한다.
+"""
 
 from __future__ import annotations
 
@@ -9,24 +15,14 @@ from core.constants import CommonEventType, MsgType
 from core.envelope import WSMessage
 from core.events import FusionContext, GameEvent
 from games.base_fsm import BaseFSM
-from games.werewolf.judge import judge_winner
-from games.werewolf.night_roles import (
-    resolve_doppelganger_peek,
-    resolve_drunk_swap,
-    resolve_insomniac_peek,
-    resolve_robber_swap,
-    resolve_seer_peek,
-    resolve_troublemaker_swap,
-)
+from games.werewolf.judge import find_executed
 from games.werewolf.ontology import (
     NIGHT_PHASES,
     PASSIVE_NIGHT_PHASES,
     PHASE_TO_ROLE,
-    TUTORIAL_ALWAYS_PHASES,
     WerewolfEventType,
     WerewolfInputType,
     WerewolfPhase,
-    WerewolfRole,
 )
 from games.werewolf.state import WerewolfGameState, WerewolfPlayerState
 
@@ -35,14 +31,8 @@ VOTE_LOCK_GRACE = 0.5        # 카운트다운 0 도달 후 지목 유예 시간
 
 
 PASSIVE_PHASE_DURATION = 10  # 패시브 역할 안내 화면 표시 시간(초)
-ACTIVE_PHASE_TIMEOUT = 12    # 액티브 역할 카드 감지 대기 타임아웃(초)
-
-SWAP_ROLES: frozenset[WerewolfRole] = frozenset({
-    WerewolfRole.ROBBER,
-    WerewolfRole.TROUBLEMAKER,
-    WerewolfRole.DRUNK,
-    WerewolfRole.DOPPELGANGER,
-})
+ACTIVE_PHASE_TIMEOUT = 12    # 액티브 역할 OK 사인 대기 타임아웃(초). 제스처 유실 시 폴백.
+NIGHT_START_DURATION = 5     # "밤이 되었습니다" 안내 화면 표시 시간(초)
 
 ACTIVE_NIGHT_PHASES = frozenset({
     WerewolfPhase.NIGHT_DOPPELGANGER,
@@ -58,25 +48,35 @@ class WerewolfFSM(BaseFSM):
     def __init__(
         self,
         players: list[WerewolfPlayerState],
-        center_cards: list[str],
+        deck_roles: list[str],
         broadcast: Callable[[WSMessage], Awaitable[None]],
         seat_positions: dict[str, tuple[float, float]] | None = None,
         practice_mode: bool = False,
     ) -> None:
-        self.state = WerewolfGameState.new(players, center_cards)
+        self.state = WerewolfGameState.new(players, deck_roles)
         self._broadcast = broadcast
         self._practice_mode = practice_mode
         self._seat_positions: dict[str, tuple[float, float]] = seat_positions or {}
         self._timer_task: asyncio.Task[None] | None = None
         self._passive_timer_task: asyncio.Task[None] | None = None
         self._active_timer_task: asyncio.Task[None] | None = None
-        self._seer_peeks: list[str] = []
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
     def start(self) -> list[WSMessage]:
-        """게임을 시작한다. NIGHT_START 페이즈에서 대기 (start_now 입력 대기)."""
+        """게임을 시작한다. NIGHT_START 안내 화면에서 대기.
+
+        일반 모드는 NIGHT_START_DURATION 초 후 자동으로 첫 야간 역할로 전이한다.
+        튜토리얼 모드는 안내 TTS가 길어 프론트가 TTS 종료 후 start_now로 전이를
+        주도하므로(다른 페이즈와 동일) 백엔드 타이머를 걸지 않는다.
+        """
         self.state.state_version += 1
+        if not self._practice_mode:
+            self._passive_timer_task = asyncio.create_task(
+                self._run_passive_timer(
+                    WerewolfPhase.NIGHT_START, NIGHT_START_DURATION
+                )
+            )
         ctx_msg = WSMessage.make_fusion_context(
             self.get_fusion_context(),
             state_version=self.state.state_version,
@@ -85,10 +85,6 @@ class WerewolfFSM(BaseFSM):
 
     def handle_event(self, event: GameEvent) -> list[WSMessage]:
         etype = event.event_type
-        if etype == WerewolfEventType.CARD_PEEK:
-            return self._handle_card_peek(event)
-        if etype == WerewolfEventType.CARD_SWAP:
-            return self._handle_card_swap(event)
         if etype == WerewolfEventType.VOTE_POINT:
             return self._handle_vote_point(event)
         if etype == CommonEventType.GESTURE_CONFIRMED:
@@ -114,122 +110,12 @@ class WerewolfFSM(BaseFSM):
         return []
 
     def get_fusion_context(self) -> FusionContext:
+        """비전에 내려보낼 기대 이벤트를 결정한다.
+
+        역할을 모르므로 actor를 특정할 수 없다. 야간 페이즈는 액티브/패시브 구분 없이
+        전원에게 OK 사인을 열어두고, 투표만 좌석 좌표 기반 포인팅을 받는다.
+        """
         phase = WerewolfPhase(self.state.phase)
-        anchors = {
-            f"{a.owner_id}_{a.card_index}": a.to_dict()
-            for a in self.state.anchors
-        }
-
-        if phase == WerewolfPhase.NIGHT_DOPPELGANGER:
-            dg_ids = self._players_with_role(WerewolfRole.DOPPELGANGER)
-            dg_id = dg_ids[0] if dg_ids else None
-            other_players = [
-                p.player_id for p in self.state.players if p.player_id != dg_id
-            ]
-            return FusionContext(
-                fsm_state=phase.value,
-                game_type="werewolf",
-                active_player=dg_id,
-                allowed_actors=dg_ids,
-                expected_events=[WerewolfEventType.CARD_PEEK],
-                reject_events=[WerewolfEventType.CARD_SWAP, WerewolfEventType.VOTE_POINT],
-                valid_targets={"player_ids": other_players},
-                zones={},
-                anchors=anchors,
-                params={},
-            )
-
-        if phase == WerewolfPhase.NIGHT_SEER:
-            seer_ids = self._players_with_role(WerewolfRole.SEER)
-            seer_id = seer_ids[0] if seer_ids else None
-            other_players = [
-                p.player_id for p in self.state.players if p.player_id != seer_id
-            ]
-            return FusionContext(
-                fsm_state=phase.value,
-                game_type="werewolf",
-                active_player=seer_id,
-                allowed_actors=seer_ids,
-                expected_events=[WerewolfEventType.CARD_PEEK],
-                reject_events=[WerewolfEventType.CARD_SWAP, WerewolfEventType.VOTE_POINT],
-                valid_targets={
-                    "player_ids": other_players,
-                    "center_ids": ["center_0", "center_1", "center_2"],
-                },
-                zones={},
-                anchors=anchors,
-                params={},
-            )
-
-        if phase == WerewolfPhase.NIGHT_ROBBER:
-            robber_ids = self._players_with_role(WerewolfRole.ROBBER)
-            robber_id = robber_ids[0] if robber_ids else None
-            other_players = [
-                p.player_id for p in self.state.players if p.player_id != robber_id
-            ]
-            return FusionContext(
-                fsm_state=phase.value,
-                game_type="werewolf",
-                active_player=robber_id,
-                allowed_actors=robber_ids,
-                expected_events=[WerewolfEventType.CARD_SWAP],
-                reject_events=[WerewolfEventType.CARD_PEEK, WerewolfEventType.VOTE_POINT],
-                valid_targets={"player_ids": other_players},
-                zones={},
-                anchors=anchors,
-                params={},
-            )
-
-        if phase == WerewolfPhase.NIGHT_TROUBLEMAKER:
-            tm_ids = self._players_with_role(WerewolfRole.TROUBLEMAKER)
-            tm_id = tm_ids[0] if tm_ids else None
-            other_players = [
-                p.player_id for p in self.state.players if p.player_id != tm_id
-            ]
-            return FusionContext(
-                fsm_state=phase.value,
-                game_type="werewolf",
-                active_player=tm_id,
-                allowed_actors=tm_ids,
-                expected_events=[WerewolfEventType.CARD_SWAP],
-                reject_events=[WerewolfEventType.CARD_PEEK, WerewolfEventType.VOTE_POINT],
-                valid_targets={"player_ids": other_players},
-                zones={},
-                anchors=anchors,
-                params={},
-            )
-
-        if phase == WerewolfPhase.NIGHT_DRUNK:
-            drunk_ids = self._players_with_role(WerewolfRole.DRUNK)
-            drunk_id = drunk_ids[0] if drunk_ids else None
-            return FusionContext(
-                fsm_state=phase.value,
-                game_type="werewolf",
-                active_player=drunk_id,
-                allowed_actors=drunk_ids,
-                expected_events=[WerewolfEventType.CARD_SWAP],
-                reject_events=[WerewolfEventType.CARD_PEEK, WerewolfEventType.VOTE_POINT],
-                valid_targets={"center_ids": ["center_0", "center_1", "center_2"]},
-                zones={},
-                anchors=anchors,
-                params={},
-            )
-
-        if phase == WerewolfPhase.NIGHT_INSOMNIAC:
-            insomniac_ids = self._players_with_role(WerewolfRole.INSOMNIAC)
-            insomniac_id = insomniac_ids[0] if insomniac_ids else None
-            return FusionContext(
-                fsm_state=phase.value,
-                game_type="werewolf",
-                active_player=insomniac_id,
-                allowed_actors=insomniac_ids,
-                expected_events=[WerewolfEventType.CARD_PEEK],
-                reject_events=[WerewolfEventType.CARD_SWAP, WerewolfEventType.VOTE_POINT],
-                valid_targets={"self_only": True},
-                zones={},
-                anchors=anchors,
-                params={},
-            )
 
         if phase in (WerewolfPhase.VOTE_COUNTDOWN, WerewolfPhase.VOTE):
             seat_anchors = {
@@ -242,30 +128,46 @@ class WerewolfFSM(BaseFSM):
                 active_player=None,
                 allowed_actors=list(self.state.player_order),
                 expected_events=[WerewolfEventType.VOTE_POINT],
-                reject_events=[WerewolfEventType.CARD_PEEK, WerewolfEventType.CARD_SWAP],
+                reject_events=[CommonEventType.GESTURE_CONFIRMED],
                 valid_targets={"player_ids": list(self.state.player_order)},
                 zones={},
-                anchors={**anchors, **seat_anchors},
+                anchors=seat_anchors,
                 params={"pointing_stabilization_frames": 1},
             )
 
-        # passive 야간 페이즈 (NIGHT_START, NIGHT_WEREWOLF, NIGHT_MINION, NIGHT_MASON):
-        # OK 사인으로 즉시 다음 페이즈로 이동 가능
-        if phase in PASSIVE_NIGHT_PHASES:
+        # NIGHT_START("밤이 되었습니다")는 확인할 행동이 없는 안내 화면이라 OK 사인을
+        # 받지 않는다. 직전 card_setup_confirm 단계에서 든 OK 손이 그대로 남아 있는데,
+        # 페이즈가 바뀌면 FusionEngine의 1회 발화 가드(_gesture_confirmed_emitted)가
+        # 초기화되므로 같은 손이 곧바로 재발화해 안내 화면이 1~2초 만에 넘어갔다.
+        if phase == WerewolfPhase.NIGHT_START:
             return FusionContext(
                 fsm_state=phase.value,
                 game_type="werewolf",
                 active_player=None,
                 allowed_actors=[],
-                expected_events=[CommonEventType.GESTURE_CONFIRMED],
+                expected_events=[],
                 reject_events=[
-                    WerewolfEventType.CARD_PEEK,
-                    WerewolfEventType.CARD_SWAP,
+                    CommonEventType.GESTURE_CONFIRMED,
                     WerewolfEventType.VOTE_POINT,
                 ],
                 valid_targets=None,
                 zones={},
-                anchors=anchors,
+                anchors={},
+                params={},
+            )
+
+        # 야간 역할 페이즈: 행동을 마친 플레이어가 OK 사인을 보이면 다음으로 넘어간다.
+        if phase in NIGHT_PHASES:
+            return FusionContext(
+                fsm_state=phase.value,
+                game_type="werewolf",
+                active_player=None,
+                allowed_actors=list(self.state.player_order),
+                expected_events=[CommonEventType.GESTURE_CONFIRMED],
+                reject_events=[WerewolfEventType.VOTE_POINT],
+                valid_targets=None,
+                zones={},
+                anchors={},
                 params={},
             )
 
@@ -277,13 +179,12 @@ class WerewolfFSM(BaseFSM):
             allowed_actors=[],
             expected_events=[],
             reject_events=[
-                WerewolfEventType.CARD_PEEK,
-                WerewolfEventType.CARD_SWAP,
+                CommonEventType.GESTURE_CONFIRMED,
                 WerewolfEventType.VOTE_POINT,
             ],
             valid_targets=None,
             zones={},
-            anchors=anchors,
+            anchors={},
             params={},
         )
 
@@ -292,28 +193,17 @@ class WerewolfFSM(BaseFSM):
 
     # ── Internal helpers ────────────────────────────────────────────────────────
 
-    def _players_with_role(self, role: WerewolfRole) -> list[str]:
-        """original_role 기준으로 해당 역할의 player_id 목록을 반환한다."""
-        return [p.player_id for p in self.state.players if p.original_role == role.value]
-
-    def _role_in_game(self, role: WerewolfRole) -> bool:
-        """플레이어 또는 센터 카드에 해당 역할이 존재하는지 확인한다."""
-        return bool(self._players_with_role(role)) or role.value in self.state.center_cards
-
     def _night_phase_included(self, phase: WerewolfPhase) -> bool:
         """야간 페이즈 진행 여부 판정.
 
-        일반 모드: 센터 카드 포함 게임에 존재하는 모든 역할을 진행해 어떤 역할이
-        실제로 등록됐는지 들키지 않도록 한다.
-        튜토리얼 모드: 역할이 들켜도 무방하므로, 실제로 등록된(플레이어 보유) 역할만
-        진행하되 늑대팀 패시브 안내(늑대인간·하수인·프리메이슨)는 학습을 위해 항상 표시한다.
+        누가 어떤 역할을 가졌는지 모르므로 이번 판의 역할 덱에 카드가 들어 있으면
+        진행한다. 덱에 있어도 실제로는 센터에 깔려 아무도 행동하지 않을 수 있는데,
+        그 경우에도 호명해야 어떤 역할이 플레이어에게 갔는지 들키지 않는다
+        (원나잇 정석 진행과 동일). 튜토리얼 모드도 동일하게 덱 구성을 따르므로,
+        이번 판에 선택하지 않은 역할은 소개되지 않는다.
         """
         role = PHASE_TO_ROLE[phase]
-        if self._practice_mode:
-            if phase in TUTORIAL_ALWAYS_PHASES:
-                return True
-            return bool(self._players_with_role(role))
-        return self._role_in_game(role)
+        return role.value in self.state.deck_roles
 
     def _make_state_update(self) -> WSMessage:
         return WSMessage(
@@ -341,13 +231,9 @@ class WerewolfFSM(BaseFSM):
             return self._enter_phase(WerewolfPhase.VOTE_COUNTDOWN)
 
         if current in (WerewolfPhase.VOTE_COUNTDOWN, WerewolfPhase.VOTE):
-            has_swap_roles = any(
-                WerewolfRole(p.original_role) in SWAP_ROLES
-                for p in self.state.players
-            )
-            if has_swap_roles:
-                return self._enter_phase(WerewolfPhase.FINAL_ROLE_REVEAL)
-            self.state.winner = judge_winner(self.state)
+            # 역할을 모르므로 승패는 판정하지 않는다. 최다 득표자만 확정해 발표하고,
+            # 카드 공개와 승패 판단은 플레이어들이 직접 한다.
+            self.state.executed = find_executed(self.state)
             # Benchmark hook: 정상 게임 종료.
             try:
                 import time as _t
@@ -390,10 +276,7 @@ class WerewolfFSM(BaseFSM):
             )
             return msgs
 
-        if phase == WerewolfPhase.NIGHT_SEER:
-            self._seer_peeks = []
-
-        elif phase == WerewolfPhase.DAY_DISCUSSION:
+        if phase == WerewolfPhase.DAY_DISCUSSION:
             self._timer_task = asyncio.create_task(self._run_timer())
 
         elif phase == WerewolfPhase.VOTE_COUNTDOWN:
@@ -406,15 +289,12 @@ class WerewolfFSM(BaseFSM):
             for p in self.state.players:
                 p.voted_for = None
 
-        elif phase == WerewolfPhase.FINAL_ROLE_REVEAL:
-            return msgs  # session이 FusionContext 관리
-
         elif phase == WerewolfPhase.RESULT:
             return msgs  # 종료 상태; FusionContext 불필요
 
-        # 액티브 야간 역할: 카드 감지 우선, ACTIVE_PHASE_TIMEOUT 초 경과 시 자동 전이.
-        # 튜토리얼 모드는 카드 감지 외 폴백 타이머를 끄고, 프론트가 안내 TTS 종료 후
-        # start_now로 전이를 주도하게 해 TTS가 끊기지 않도록 한다.
+        # 액티브 야간 역할: OK 사인 우선, ACTIVE_PHASE_TIMEOUT 초 경과 시 자동 전이.
+        # 튜토리얼 모드는 폴백 타이머를 끄고, 프론트가 안내 TTS 종료 후 start_now로
+        # 전이를 주도하게 해 TTS가 끊기지 않도록 한다.
         if phase in ACTIVE_NIGHT_PHASES and not self._practice_mode:
             self._active_timer_task = asyncio.create_task(
                 self._run_active_timer(phase)
@@ -429,86 +309,6 @@ class WerewolfFSM(BaseFSM):
         return msgs
 
     # ── Event handlers ──────────────────────────────────────────────────────────
-
-    def _handle_card_peek(self, event: GameEvent) -> list[WSMessage]:
-        phase = WerewolfPhase(self.state.phase)
-        actor_id = event.actor_id
-        data = event.data
-        card_owner_id: str | None = data.get("card_owner_id")
-        card_index = int(data.get("card_index", 0))
-
-        if phase == WerewolfPhase.NIGHT_DOPPELGANGER:
-            if actor_id not in self._players_with_role(WerewolfRole.DOPPELGANGER):
-                return []
-            # 도플갱어는 다른 플레이어 카드만 확인 가능 (센터 카드 불가)
-            if not card_owner_id or card_owner_id.startswith("center_"):
-                return []
-            resolve_doppelganger_peek(self.state, actor_id, card_owner_id)
-            self.state.state_version += 1
-            return [self._make_state_update()] + self._advance_to_next_phase()
-
-        if phase == WerewolfPhase.NIGHT_SEER:
-            if actor_id not in self._players_with_role(WerewolfRole.SEER):
-                return []
-            target_id = f"center_{card_index}" if card_owner_id is None else card_owner_id
-            resolve_seer_peek(self.state, actor_id, target_id, card_index)
-            self._seer_peeks.append(target_id)
-
-            # 플레이어 카드 1장 또는 센터 카드 2장 → 완료
-            done = not target_id.startswith("center_") or len(self._seer_peeks) >= 2
-            self.state.state_version += 1
-            msgs = [self._make_state_update()]
-            if done:
-                return msgs + self._advance_to_next_phase()
-            msgs.append(
-                WSMessage.make_fusion_context(
-                    self.get_fusion_context(),
-                    state_version=self.state.state_version,
-                )
-            )
-            return msgs
-
-        if phase == WerewolfPhase.NIGHT_INSOMNIAC:
-            if actor_id not in self._players_with_role(WerewolfRole.INSOMNIAC):
-                return []
-            if card_owner_id != actor_id:
-                return []
-            resolve_insomniac_peek(self.state, actor_id)
-            self.state.state_version += 1
-            return [self._make_state_update()] + self._advance_to_next_phase()
-
-        return []
-
-    def _handle_card_swap(self, event: GameEvent) -> list[WSMessage]:
-        phase = WerewolfPhase(self.state.phase)
-        actor_id = event.actor_id
-        from_id: str = event.data.get("from_id", "")
-        to_id: str = event.data.get("to_id", "")
-
-        if phase == WerewolfPhase.NIGHT_ROBBER:
-            if actor_id not in self._players_with_role(WerewolfRole.ROBBER):
-                return []
-            target_id = to_id if from_id == actor_id else from_id
-            resolve_robber_swap(self.state, actor_id, target_id)
-            self.state.state_version += 1
-            return [self._make_state_update()] + self._advance_to_next_phase()
-
-        if phase == WerewolfPhase.NIGHT_TROUBLEMAKER:
-            if actor_id not in self._players_with_role(WerewolfRole.TROUBLEMAKER):
-                return []
-            resolve_troublemaker_swap(self.state, actor_id, from_id, to_id)
-            self.state.state_version += 1
-            return [self._make_state_update()] + self._advance_to_next_phase()
-
-        if phase == WerewolfPhase.NIGHT_DRUNK:
-            if actor_id not in self._players_with_role(WerewolfRole.DRUNK):
-                return []
-            center_id = to_id if from_id == actor_id else from_id
-            resolve_drunk_swap(self.state, actor_id, center_id)
-            self.state.state_version += 1
-            return [self._make_state_update()] + self._advance_to_next_phase()
-
-        return []
 
     def _handle_vote_point(self, event: GameEvent) -> list[WSMessage]:
         if WerewolfPhase(self.state.phase) not in (
@@ -531,12 +331,24 @@ class WerewolfFSM(BaseFSM):
         return messages
 
     def _handle_gesture_confirmed(self) -> list[WSMessage]:
+        """OK 사인으로 야간 역할 페이즈를 진행한다.
+
+        패시브·액티브 구분 없이 모든 야간 "역할" 페이즈에서 유효하다. 역할을 모르므로
+        누가 보낸 신호인지는 검증하지 않는다 — 눈을 뜨고 있는 사람만 신호를 보낼 수
+        있다는 게임 규칙 자체가 게이트 역할을 한다.
+
+        NIGHT_START는 제외한다. get_fusion_context()에서 이미 OK 사인을 받지 않지만,
+        컨텍스트 갱신(백엔드 스레드)과 프레임 처리(비전 스레드)가 별개라 전환 직전
+        프레임에서 만들어진 이벤트가 뒤늦게 도착할 수 있어 여기서도 막는다.
+        """
         current = WerewolfPhase(self.state.phase)
-        if current not in PASSIVE_NIGHT_PHASES:
+        if current not in NIGHT_PHASES:
             return []
-        if self._passive_timer_task and not self._passive_timer_task.done():
-            self._passive_timer_task.cancel()
-            self._passive_timer_task = None
+        for task_attr in ("_passive_timer_task", "_active_timer_task"):
+            task = getattr(self, task_attr)
+            if task and not task.done():
+                task.cancel()
+                setattr(self, task_attr, None)
         return self._advance_to_next_phase()
 
     def _record_vote(self, voter_id: str, target_id: str) -> list[WSMessage]:
@@ -579,9 +391,6 @@ class WerewolfFSM(BaseFSM):
                 self._timer_task.cancel()
                 self._timer_task = None
             return self._advance_to_next_phase()
-        if current == WerewolfPhase.FINAL_ROLE_REVEAL:
-            self.state.winner = judge_winner(self.state)
-            return self._enter_phase(WerewolfPhase.RESULT)
         return []
 
     def _handle_vote_player(self, player_id: str | None, data: dict) -> list[WSMessage]:
@@ -675,10 +484,19 @@ class WerewolfFSM(BaseFSM):
         except asyncio.CancelledError:
             pass
 
-    async def _run_passive_timer(self, phase: WerewolfPhase) -> None:
-        """패시브 역할 안내 화면을 PASSIVE_PHASE_DURATION 초 표시 후 다음 페이즈로 전이."""
+    async def _run_passive_timer(
+        self,
+        phase: WerewolfPhase,
+        duration: float | None = None,
+    ) -> None:
+        """패시브 안내 화면을 duration 초 표시 후 다음 페이즈로 전이.
+
+        duration 생략 시 PASSIVE_PHASE_DURATION(역할 안내 기본값)을 쓴다.
+        """
         try:
-            await asyncio.sleep(PASSIVE_PHASE_DURATION)
+            await asyncio.sleep(
+                PASSIVE_PHASE_DURATION if duration is None else duration
+            )
             if WerewolfPhase(self.state.phase) == phase:
                 self.state.state_version += 1
                 for msg in self._advance_to_next_phase():
