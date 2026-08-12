@@ -17,6 +17,8 @@ day_discussion은 NightEnd 컴포넌트가 "아침이 밝았습니다 → 토론
 
 from __future__ import annotations
 
+from typing import Any
+
 from agents import lines
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
@@ -40,8 +42,8 @@ class ProgressAgent(BaseAgent):
         if ctx.game_specific.get("tutorial_mode") and ctx.fsm_state != "AWAITING_ROLL":
             return None
         # 요트는 같은 fsm_state(awaiting_keep 등)가 매 굴림마다 반복되므로
-        # 상태명 중복 체크 대신 last_message 내용으로 TTS 발화를 결정한다.
-        text = ctx.game_specific.get("last_message", "")
+        # 상태명 중복 체크를 하지 않는다 — 굴릴 때마다 새로 안내해야 한다.
+        text = self._render(ctx.game_specific)
         if not text:
             return None
         return Intervention(
@@ -50,6 +52,22 @@ class ProgressAgent(BaseAgent):
             priority=AudioPriority.NORMAL,
             suppress_lower=False,
         )
+
+    @staticmethod
+    def _render(game_specific: dict[str, Any]) -> str:
+        """발화 지시(narration)를 문장으로. 지시가 없으면 last_message로 폴백.
+
+        폴백은 아직 narration으로 옮기지 않은 경로를 위한 것이다. 전부 옮기고
+        나면 지울 것 — 문장이 두 경로로 들어오면 페르소나가 한쪽을 놓친다.
+        """
+        narration = game_specific.get("narration")
+        if narration:
+            rendered = lines.render(
+                str(narration.get("line_id", "")), **narration.get("params", {})
+            )
+            if rendered:
+                return rendered
+        return game_specific.get("last_message") or ""
 
     def _werewolf_progress(self, ctx: AgentContext) -> Intervention | None:
         # 같은 상태로 중복 호출 방지 (늑대인간 페이즈는 게임 내 반복되지 않음)

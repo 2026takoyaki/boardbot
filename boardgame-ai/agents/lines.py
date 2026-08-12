@@ -59,6 +59,27 @@ _WEREWOLF_PRACTICE: dict[str, str] = {
     "night_insomniac":    "불면증환자는 마을주민팀 역할입니다. 밤 시간이 끝날 무렵 가장 마지막으로 자신의 카드를 확인합니다. 카드가 바뀌어 있다면 누군가 본인의 역할을 교환했다는 것을 알 수 있습니다. 낮 시간에 이 정보를 바탕으로 마을주민들의 추리를 돕습니다.",
 }
 
+# ── 요트다이스 ────────────────────────────────────────────────────────────────
+# FSM은 이 line_id와 파라미터만 내보낸다(state.narration). 문장 조립은 여기서 한다.
+# 화면 상태줄(last_message)도 같은 문장을 렌더해 쓰므로 화면과 음성이 어긋나지 않는다.
+_YACHT: dict[str, str] = {
+    "turn_start":       "{player}님, 주사위를 굴려주세요.",
+    "reroll_prompt":    "{player}님, 다시 굴려주세요.",
+    "roll_final":       "주사위 결과는 {values}입니다. 점수 칸을 선택해주세요.",
+    "roll_partial":     "기회 {remaining} 남았습니다. 다시 굴리거나 점수 칸을 선택해주세요.",
+    "dice_escaped":     "주사위가 트레이 밖으로 나갔습니다. 다시 굴려주세요.",
+    "wrong_turn":       "지금은 {player}님 차례입니다.",
+    "dice_unreadable":  "읽히지 않은 주사위 값이 있습니다. 화면에서 값을 입력해주세요.",
+    "undo_roll":        "{player}님의 주사위 굴림을 되돌렸습니다.",
+    "score_recorded":   "{scorer}님 {label} {score}점입니다. {next}님 차례입니다.",
+    "game_finish":      "{scorer}님 {label} {score}점입니다. 게임이 종료되었습니다.",
+    # 튜토리얼: 매 턴 반복되므로 짧게. 굴리는 법은 화면 인트로가 한 번만 설명한다.
+    "tutorial_turn_start": "{player}님 차례입니다. 주사위를 굴려주세요.",
+    "tutorial_complete":   "튜토리얼이 끝났습니다. 게임 선택 화면으로 돌아가거나 정식 게임을 시작해보세요.",
+    # 개발 모드 전용. 페르소나 변환 대상이 아니다.
+    "dev_late_game":    "[개발] 후반 상황을 만들었습니다. {player}님이 크게 넣으면 역전 연출이 뜹니다.",
+}
+
 # ── 규칙 위반 (RulesAgent, CRITICAL) ───────────────────────────────────────────
 _RULES: dict[str, str] = {
     "wrong_turn":         "지금은 {player}님의 차례입니다.",
@@ -77,6 +98,7 @@ _TEMPO: dict[str, str] = {
 LINES: dict[str, str] = {
     **{f"werewolf.{k}": v for k, v in _WEREWOLF.items()},
     **{f"werewolf_practice.{k}": v for k, v in _WEREWOLF_PRACTICE.items()},
+    **{f"yacht.{k}": v for k, v in _YACHT.items()},
     **{f"rules.{k}": v for k, v in _RULES.items()},
     **{f"tempo.{k}": v for k, v in _TEMPO.items()},
 }

@@ -218,3 +218,35 @@ async def test_yacht_tutorial_mode_finishes_after_each_player_scores_once():
     assert completed["tutorial_complete"] is True
     assert completed["players"][0]["scores"] == {"ones": 2}
     assert completed["players"][1]["scores"] == {"twos": 4}
+
+
+@pytest.mark.anyio
+async def test_화면_상태줄이_narration에서_렌더된다():
+    """FSM은 line_id만 내보내므로, 백엔드가 문장으로 만들어주지 않으면
+    화면 상태줄이 통째로 빈칸이 된다. 음성과 같은 카탈로그를 쓰는지도 함께 본다."""
+    ws = FakeWebSocket()
+    session = YachtSession(ws)
+
+    await session.start_game(
+        {
+            "players": [
+                {"player_id": "p1", "playername": "성민"},
+                {"player_id": "p2", "playername": "형승"},
+            ]
+        }
+    )
+
+    started = _latest_state(ws)
+    assert started["narration"] == {
+        "line_id": "yacht.turn_start",
+        "params": {"player": "성민"},
+    }
+    assert started["last_message"] == "성민님, 주사위를 굴려주세요."
+
+    await session.handle_client_message(
+        {"input_type": "ROLL_DICE", "data": {"dice_values": [1, 1, 3, 4, 6]}}
+    )
+
+    rolled = _latest_state(ws)
+    assert rolled["narration"]["line_id"] == "yacht.roll_partial"
+    assert rolled["last_message"] == "기회 두 번 남았습니다. 다시 굴리거나 점수 칸을 선택해주세요."

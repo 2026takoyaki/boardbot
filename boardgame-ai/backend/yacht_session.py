@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from agents import lines
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
 from audio.manager import AudioManager
@@ -239,7 +240,7 @@ class YachtSession:
                     self.fsm.state.dice_values = sorted_values
                     self.fsm.state.keep_mask = sorted_keep_mask
                     self.fsm.state.unreadable_roll = None
-                    self.fsm.state.last_message = self.fsm._roll_message()
+                    self.fsm.narrate_roll()
                     self.fsm.state.state_version += 1
                     messages = self.fsm._state_context_messages()
                     self.undo_stack.append(previous_state)
@@ -317,8 +318,7 @@ class YachtSession:
             player_name = restored_state.current_player.playername
             with self._fsm_lock:
                 messages = self.fsm.restore_state(
-                    restored_state,
-                    f"{player_name}님의 주사위 굴림을 되돌렸습니다.",
+                    restored_state, "yacht.undo_roll", player=player_name
                 )
             await self.send_many(messages)
             return
@@ -354,14 +354,13 @@ class YachtSession:
             # 짧아야 한다. 이 문장은 ProgressAgent가 매 턴 그대로 읽는데,
             # 세 명이 열두 라운드를 돌면 서른여섯 번 들린다. 굴리는 법은
             # 화면 인트로에서 한 번 설명했으므로 여기서는 차례만 알린다.
-            self.fsm.state.last_message = (
-                f"{self.fsm.state.current_player.playername}님 차례입니다. 주사위를 굴려주세요."
+            self.fsm.state.narrate(
+                "yacht.tutorial_turn_start",
+                player=self.fsm.state.current_player.playername,
             )
         elif self.fsm.state.phase == YachtPhase.AWAITING_KEEP.value:
             remaining = {2: "두 번", 1: "한 번"}.get(max(0, 3 - self.fsm.state.roll_count), "0번")
-            self.fsm.state.last_message = (
-                f"기회 {remaining} 남았습니다. 다시 굴리거나 점수 칸을 선택해주세요."
-            )
+            self.fsm.state.narrate("yacht.roll_partial", remaining=remaining)
         else:
             return
 
@@ -393,9 +392,8 @@ class YachtSession:
         if others:
             others[0].scores["choice"] = 6
         self.fsm.state.state_version += 1
-        self.fsm.state.last_message = (
-            f"[개발] 후반 상황을 만들었습니다. {self.fsm.state.current_player.playername}님이 "
-            "크게 넣으면 역전 연출이 뜹니다."
+        self.fsm.state.narrate(
+            "yacht.dev_late_game", player=self.fsm.state.current_player.playername
         )
 
     def _roll_was_recorded(self, previous_state: YachtGameState) -> bool:
@@ -422,9 +420,7 @@ class YachtSession:
         if not all(len(player.scores) >= 1 for player in self.fsm.state.players):
             return
         self.tutorial_complete = True
-        self.fsm.state.last_message = (
-            "튜토리얼이 끝났습니다. 게임 선택 화면으로 돌아가거나 정식 게임을 시작해보세요."
-        )
+        self.fsm.state.narrate("yacht.tutorial_complete")
         self.fsm.state.state_version += 1
         messages.append(
             WSMessage(
@@ -485,6 +481,8 @@ class YachtSession:
             "dice_values": list(state.dice_values),
             "available_categories": list(state.available_categories),
             "roll_count": state.roll_count,
+            # 문장이 아니라 발화 지시를 넘긴다. 문장 조립은 ProgressAgent가 한다.
+            "narration": state.narration,
             "last_message": state.last_message,
             "tutorial_mode": self.tutorial_mode,
         }
@@ -517,6 +515,16 @@ class YachtSession:
             message.payload["can_undo"] = bool(self.undo_stack)
             message.payload["tutorial_mode"] = self.tutorial_mode
             message.payload["tutorial_complete"] = self.tutorial_complete
+            # 화면 상태줄 문구. FSM은 line_id만 내보내므로 여기서 문장으로 만든다.
+            # ProgressAgent가 발화할 때와 같은 카탈로그를 쓰니 화면과 음성이
+            # 어긋나지 않는다 — 페르소나가 걸리면 둘 다 같이 바뀐다.
+            narration = message.payload.get("narration")
+            if narration:
+                rendered = lines.render(
+                    str(narration.get("line_id", "")), **narration.get("params", {})
+                )
+                if rendered:
+                    message.payload["last_message"] = rendered
         # 조명은 프론트엔드와 같은 스트림을 본다. 화면이 state_update로 다시
         # 그리듯 조명도 같은 메시지로 Scene을 잡으므로 트리거 누락이 없다.
         if self._light is not None:

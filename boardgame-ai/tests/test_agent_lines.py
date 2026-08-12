@@ -16,7 +16,9 @@ from agents.context import AgentContext
 from agents.progress_agent import ProgressAgent
 from audio.catalog import STATIC_LINES
 from core.audio import AudioPriority
+from core.events import GameEvent
 from games.werewolf.ontology import NIGHT_PHASES, WerewolfPhase
+from games.yacht import YachtEventType, YachtFSM, YachtInputType
 
 
 def _ctx(game_type: str, fsm_state: str, active: str | None = None) -> AgentContext:
@@ -100,14 +102,122 @@ def test_같은_페이즈는_한_번만_발화한다() -> None:
     assert agent.on_state_change(_ctx("werewolf", "night_seer")) is None
 
 
-def test_요트는_last_message를_그대로_쓴다() -> None:
-    """요트 멘트는 아직 FSM 소유 — 2단계에서 cue 채널로 옮긴다."""
+def test_요트는_narration을_렌더해서_발화한다() -> None:
     agent = ProgressAgent()
     ctx = _ctx("yacht", "AWAITING_ROLL")
-    ctx.game_specific = {"last_message": "성민님, 주사위를 굴려주세요."}
+    ctx.game_specific = {
+        "narration": {"line_id": "yacht.turn_start", "params": {"player": "성민"}},
+    }
     result = agent.on_state_change(ctx)
     assert result is not None
     assert result.tts_text == "성민님, 주사위를 굴려주세요."
+
+
+def test_narration이_last_message보다_우선한다() -> None:
+    """둘 다 오면 구조화된 쪽을 쓴다 — 페르소나가 걸리는 건 narration 경로뿐."""
+    agent = ProgressAgent()
+    ctx = _ctx("yacht", "AWAITING_ROLL")
+    ctx.game_specific = {
+        "narration": {"line_id": "yacht.turn_start", "params": {"player": "성민"}},
+        "last_message": "옛 경로 문장",
+    }
+    result = agent.on_state_change(ctx)
+    assert result is not None
+    assert result.tts_text == "성민님, 주사위를 굴려주세요."
+
+
+def test_narration이_없으면_last_message로_폴백한다() -> None:
+    """아직 안 옮긴 경로가 침묵하지 않도록. 전부 옮기면 이 폴백은 제거한다."""
+    agent = ProgressAgent()
+    ctx = _ctx("yacht", "AWAITING_ROLL")
+    ctx.game_specific = {"last_message": "아직 안 옮긴 문장입니다."}
+    result = agent.on_state_change(ctx)
+    assert result is not None
+    assert result.tts_text == "아직 안 옮긴 문장입니다."
+
+
+# ── 3-2. 요트: FSM이 내보낸 line_id가 실제로 렌더되는가 ───────────────────────
+# line_id는 문자열이라 오타가 나도 FSM은 조용히 통과한다. 그 페이즈만 침묵하고
+# 원인은 로그에도 안 남는다. 실제 진행 경로를 돌려 전부 렌더되는지 확인한다.
+
+
+def _yacht_roll(fsm: YachtFSM, dice: list[int], actor: str = "p1") -> None:
+    fsm.handle_event(
+        GameEvent(
+            event_type=YachtEventType.ROLL_CONFIRMED.value,
+            actor_id=actor,
+            confidence=1.0,
+            frame_id=0,
+            data={"dice_values": dice, "keep_mask": [False] * 5},
+        )
+    )
+
+
+def test_요트_진행_경로의_narration이_전부_렌더된다() -> None:
+    fsm = YachtFSM(["p1", "p2"])
+    seen: list[dict] = []
+
+    def record() -> None:
+        if fsm.state.narration:
+            seen.append(dict(fsm.state.narration))
+
+    fsm.start()
+    record()
+    _yacht_roll(fsm, [1, 1, 3, 4, 6])
+    record()
+    fsm.handle_input(
+        YachtInputType.DICE_REROLL_REQUESTED.value,
+        {"keep_mask": [True, True, False, False, False]},
+    )
+    record()
+    _yacht_roll(fsm, [1, 1, 2, 5, 5])
+    _yacht_roll(fsm, [1, 1, 2, 5, 6])  # 3굴림 완료
+    record()
+    fsm.handle_event(
+        GameEvent(
+            event_type=YachtEventType.DICE_ESCAPED.value,
+            actor_id="p1", confidence=1.0, frame_id=0, data={},
+        )
+    )
+    record()
+    fsm.handle_input(
+        YachtInputType.SCORE_CATEGORY_SELECTED.value, {"category": "ones"}, player_id="p1"
+    )
+    record()
+
+    # 개수만 세면 안 된다 — 입력이 먹히지 않으면 FSM이 조용히 아무것도 하지 않고
+    # 직전 narration이 그대로 남아 개수는 채워진다. 어떤 line_id가 나왔는지를
+    # 봐야 경로를 실제로 통과했는지 알 수 있다.
+    assert [n["line_id"] for n in seen] == [
+        "yacht.turn_start",
+        "yacht.roll_partial",
+        "yacht.reroll_prompt",
+        "yacht.roll_final",
+        "yacht.dice_escaped",
+        "yacht.score_recorded",
+    ]
+    for narration in seen:
+        line_id = narration["line_id"]
+        assert lines.get(line_id), f"{line_id}: LINES에 없는 line_id"
+        rendered = lines.render(line_id, **narration["params"])
+        assert rendered and "{" not in rendered, f"{line_id}: 렌더 실패 → {rendered!r}"
+
+
+def test_요트_차례_위반은_wrong_turn을_낸다() -> None:
+    fsm = YachtFSM(["p1", "p2"])
+    fsm.start()
+    _yacht_roll(fsm, [1, 2, 3, 4, 5], actor="p2")  # p1 차례인데 p2가 굴림
+    assert fsm.state.narration == {
+        "line_id": "yacht.wrong_turn",
+        "params": {"player": "p1"},
+    }
+
+
+def test_narrate는_None_파라미터를_버린다() -> None:
+    """슬롯이 빈 채로 렌더되는 편이 'None님 차례입니다'보다 낫다."""
+    fsm = YachtFSM(["p1"])
+    fsm.state.narrate("yacht.turn_start", player=None)
+    assert fsm.state.narration == {"line_id": "yacht.turn_start", "params": {}}
 
 
 # ── 4. TTS 캐시 정합성 현황 ────────────────────────────────────────────────────
