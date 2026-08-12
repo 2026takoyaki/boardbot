@@ -122,12 +122,17 @@ class ProgressAgent(BaseAgent):
         self._last_reaction = key
 
         finished = line_id == "yacht.game_finish"
+        # 결과는 바로 앞에서 이미 발표했다. 그걸 알려주지 않으면 이름·족보·
+        # 점수를 그대로 되풀이해서, 같은 말을 두 번 듣게 된다.
         result = await llm.get_client().complete(
             llm.persona_style()
-            + "당신은 요트다이스 진행자입니다. 방금 나온 결과에 한 문장으로 짧게 "
-            "반응하세요. 다음 차례 안내는 이미 했으니 하지 마세요. "
-            "점수와 이름은 주어진 값만 쓰고 새로 만들지 마세요.",
-            "{who}님이 {label}에 {score}점을 넣었습니다.{tail}".format(
+            + "당신은 요트다이스 진행자입니다.\n"
+            "결과 발표와 다음 차례 안내는 방금 당신이 이미 했습니다. "
+            "이제 그 결과에 대한 감상만 한 문장으로 짧게 덧붙이세요.\n"
+            "- 이름, 족보 이름, 점수를 다시 말하지 마세요. 방금 말했습니다.\n"
+            "- 결과를 다시 알리지 말고, 그것에 대해 느낀 것만 말하세요.\n"
+            "- 없는 숫자나 이름을 지어내지 마세요.",
+            "방금 발표한 내용: {who}님이 {label}에 {score}점.{tail}".format(
                 who=params.get("scorer", ""),
                 label=params.get("label", ""),
                 score=params.get("score", 0),

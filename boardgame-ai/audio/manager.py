@@ -25,7 +25,7 @@ import asyncio
 import itertools
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -111,6 +111,11 @@ class AudioManager:
         # 이름까지 채워진 실제 발화 문장. 계층 판정은 이쪽을 본다 —
         # 발화되는 것은 템플릿이 아니라 완성된 문장이다.
         self._session_texts: frozenset[str] = frozenset()
+        # 기본이 아닌 말투로 나가는 문장들. {말투: [문장]}
+        # 캐시 키에 말투가 들어가므로, 기본 말투로만 데워두면 심판 말투 발화는
+        # 매번 캐시 미스가 된다. 가장 급해야 할 제지가 가장 느려지는 경로다.
+        self._delivery_static: dict[str, list[str]] = {}
+        self._delivery_templates: dict[str, list[str]] = {}
 
         # 큐: priority 오름차순(1=CRITICAL이 최우선), 동순위는 seq_arrival 오름차순.
         self._queue: list[_QueueItem] = []
@@ -124,7 +129,11 @@ class AudioManager:
     # ── 캐시 계층 ─────────────────────────────────────────────────────────────
 
     def set_line_catalog(
-        self, static_texts: Iterable[str], session_templates: Iterable[str] = ()
+        self,
+        static_texts: Iterable[str],
+        session_templates: Iterable[str] = (),
+        delivery_static: Mapping[str, Iterable[str]] | None = None,
+        delivery_templates: Mapping[str, Iterable[str]] | None = None,
     ) -> None:
         """미리 만들어 둘 수 있는 문장 목록을 갱신한다.
 
@@ -134,6 +143,14 @@ class AudioManager:
         """
         self._static_texts = frozenset(static_texts)
         self._session_templates = tuple(session_templates)
+        # 말투별 목록은 위 두 목록의 부분집합이다. 계층 판정은 위 목록이
+        # 그대로 하고, 이건 "어느 말투로 한 번 더 데울지"만 정한다.
+        self._delivery_static = {
+            role: list(texts) for role, texts in (delivery_static or {}).items()
+        }
+        self._delivery_templates = {
+            role: list(texts) for role, texts in (delivery_templates or {}).items()
+        }
         # 페르소나가 바뀌면 이름을 채워둔 문장도 옛 말투다. 좌석이 다시
         # 등록될 때 새로 만든다.
         self._session_texts = frozenset()
@@ -181,6 +198,12 @@ class AudioManager:
         from audio.prewarm import prewarm_static
 
         stats = await prewarm_static(self._engine, persona, self._static_texts)
+        # 기본 말투로 데운 파일은 심판 말투 발화에 쓰이지 못한다 — 캐시 키에
+        # 말투가 들어가 같은 문장이라도 키가 다르다. 그 말투로 한 번 더 데운다.
+        for role, texts in self._delivery_static.items():
+            extra = await prewarm_static(self._engine, persona, texts, role=role)
+            for key, value in extra.items():
+                stats[key] = stats.get(key, 0) + value
         logger.info("set_persona(%s): prewarm %s", persona.id, stats)
         return stats
 
@@ -241,11 +264,26 @@ class AudioManager:
         # 계층 판정이 볼 목록. 미리 합성한 것과 같은 문자열이어야 hit된다.
         self._session_texts = frozenset(texts)
 
+        # 심판 말투로 나가는 것들("지금은 성민님 차례입니다")은 그 말투로도
+        # 데워야 한다. 이름을 채우는 방식은 기본 말투와 같다.
+        by_role = {
+            role: [
+                _fill_player(template, name)
+                for template in templates
+                for name in player_names
+            ]
+            for role, templates in self._delivery_templates.items()
+        }
+
         async def _run() -> None:
             try:
                 await prewarm_session(
                     self._engine, session_id, texts, self._persona
                 )
+                for role, role_texts in by_role.items():
+                    await prewarm_session(
+                        self._engine, session_id, role_texts, self._persona, role=role
+                    )
             except Exception:
                 logger.exception("prewarm_session_async failed (%s)", session_id)
 

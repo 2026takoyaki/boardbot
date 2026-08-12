@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from agents.tools.line_validator import validate_all
+from core.constants import AgentRole
 
 # ── 늑대인간: 일반 모드 ─────────────────────────────────────────────────────────
 # 눈을 감고 진행하므로 "깨어나세요" 호명 방식.
@@ -306,6 +308,43 @@ def session_templates() -> list[str]:
         for t in catalog().values()
         if t.strip() and set(_SLOT.findall(t)) == {"player"}
     ]
+
+
+# ── 말투별 분류 ───────────────────────────────────────────────────────────────
+# 캐시 키에는 말투(speaking_rate·emotion)가 들어간다. 기본 말투로만 미리
+# 합성해두면 심판 말투로 나가는 발화는 매번 캐시 미스가 되어, 가장 급해야 할
+# 제지가 가장 느려진다. 그래서 prewarm이 말투별로도 데울 수 있게 알려준다.
+#
+# 오케스트레이터는 "에이전트 → 말투"를 알고 여기는 "멘트 → 말투"를 안다.
+# 같은 사실의 두 얼굴이다 — 규칙 에이전트가 rules.* 멘트를 심판 말투로 말한다.
+DELIVERY_BY_PREFIX: dict[str, str] = {"rules.": AgentRole.REFEREE.value}
+
+
+def _delivery_of(line_id: str) -> str | None:
+    """이 멘트가 기본이 아닌 말투로 나가면 그 말투, 아니면 None."""
+    return next(
+        (role for prefix, role in DELIVERY_BY_PREFIX.items() if line_id.startswith(prefix)),
+        None,
+    )
+
+
+def _by_delivery(keep: Callable[[str], bool]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for line_id, text in catalog().items():
+        role = _delivery_of(line_id)
+        if role and text.strip() and keep(text):
+            out.setdefault(role, []).append(text)
+    return out
+
+
+def delivery_static() -> dict[str, list[str]]:
+    """{말투: 그 말투로 나가는 고정 문장들}. static_texts()의 부분집합이다."""
+    return _by_delivery(lambda t: "{" not in t)
+
+
+def delivery_templates() -> dict[str, list[str]]:
+    """{말투: 그 말투로 나가는 이름 슬롯 문장들}. session_templates()의 부분집합."""
+    return _by_delivery(lambda t: set(_SLOT.findall(t)) == {"player"})
 
 
 def fill_for_players(template: str, player_names: list[str]) -> list[str]:

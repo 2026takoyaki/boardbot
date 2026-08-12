@@ -35,15 +35,20 @@ async def prewarm_static(
     engine: TTSEngine,
     persona: Persona,
     texts: Iterable[str],
+    role: str | None = None,
 ) -> dict[str, int]:
     """슬롯 없는 문장들을 페르소나 목소리로 합성.
 
     페르소나가 바뀌면 캐시 키가 전부 달라지므로 이 함수를 다시 불러야 한다.
 
+    role은 말투다. 캐시 키에 speaking_rate·emotion이 들어가므로 기본 말투로
+    데워둔 파일은 심판 말투 발화에 쓰이지 못한다 — 같은 문장이라도 키가 다르다.
+    그래서 다른 말투로 나가는 문장은 그 말투로 한 번 더 데워야 한다.
+
     Returns: {"total": N, "cached": M, "synthesized": K, "failed": F}
     """
     items = [t for t in texts if t.strip()]
-    voice = persona.voice_for()
+    voice = persona.voice_for(role)
 
     if not engine.is_available(voice):
         logger.warning(
@@ -68,8 +73,8 @@ async def prewarm_static(
     failed = len(results) - synthesized
 
     logger.info(
-        "prewarm_static(%s): total=%d cached=%d synthesized=%d failed=%d",
-        persona.id, len(items), cached, synthesized, failed,
+        "prewarm_static(%s/%s): total=%d cached=%d synthesized=%d failed=%d",
+        persona.id, role or "기본", len(items), cached, synthesized, failed,
     )
     return {
         "total": len(items),
@@ -84,14 +89,18 @@ async def prewarm_session(
     session_id: str,
     texts: Iterable[str],
     persona: Persona | None = None,
+    role: str | None = None,
 ) -> dict[str, int]:
     """이름이 채워진 문장들을 사전 합성.
 
     좌석 등록 완료 직후 호출. session_id는 플레이어 구성과 1:1 매핑되어야 한다
     (예: 플레이어 이름 정렬 hash).
+
+    role은 말투다. prewarm_static과 같은 이유로 필요하다 — "지금은 성민님
+    차례입니다"는 심판 말투로 나가므로 기본 말투로 데워두면 소용이 없다.
     """
     items = [t for t in texts if t.strip()]
-    voice = persona.voice_for() if persona is not None else None
+    voice = persona.voice_for(role) if persona is not None else None
 
     if not items:
         return {"total": 0, "cached": 0, "synthesized": 0, "failed": 0}

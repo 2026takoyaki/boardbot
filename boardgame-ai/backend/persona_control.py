@@ -120,7 +120,10 @@ async def apply_persona(
         # 미리 만들어 둘 문장 목록을 먼저 갱신한다. 이게 옛 문장으로 남아 있으면
         # 새 페르소나로 데우는 것이 아니라 아무도 안 쓸 문장을 데우게 된다.
         audio_manager.set_line_catalog(
-            lines.static_texts(), lines.session_templates()
+            lines.static_texts(),
+            lines.session_templates(),
+            lines.delivery_static(),
+            lines.delivery_templates(),
         )
         prewarm_stats = await audio_manager.set_persona(persona, prewarm=prewarm)
         # 재촉 변형은 여기서 기다리지 않는다. LLM 생성만 10초가 걸려 부팅이

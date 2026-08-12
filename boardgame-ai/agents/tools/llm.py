@@ -232,12 +232,14 @@ class LLMClient:
         tokens = getattr(getattr(response, "usage", None), "completion_tokens", 0) or 0
 
         elapsed_ms = (time.time() - started) * 1000
-        self._stats.total_ms += elapsed_ms
         self._stats.total_tokens += tokens
 
+        # total_ms는 여기서 더하지 않는다. 빈 응답이면 _fail이 다시 더해
+        # 같은 호출이 두 번 계산되고 avg_ms가 부풀려진다.
         if not text:
             return self._fail(started, "빈 응답", elapsed_ms=elapsed_ms)
 
+        self._stats.total_ms += elapsed_ms
         self._stats.ok += 1
         logger.info("[LLM] %s ok %.0fms %dtok", tag or "-", elapsed_ms, tokens)
         return LLMResult(text=text, ok=True, latency_ms=elapsed_ms, tokens=tokens)

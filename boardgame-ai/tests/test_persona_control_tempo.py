@@ -42,8 +42,15 @@ class _FakeAudio:
         self.static: set[str] = set()
         self.added: list[list[str]] = []
 
-    def set_line_catalog(self, static_texts, session_templates=()) -> None:
+    def set_line_catalog(
+        self,
+        static_texts,
+        session_templates=(),
+        delivery_static=None,
+        delivery_templates=None,
+    ) -> None:
         self.static = set(static_texts)
+        self.delivery_static = dict(delivery_static or {})
 
     async def set_persona(self, persona, prewarm: bool = True) -> dict[str, int]:
         return {"total": len(self.static)}
