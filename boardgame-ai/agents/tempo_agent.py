@@ -11,8 +11,8 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
-from agents import lines
 from agents.context import AgentContext
+from agents.tools import lines
 from core.audio import AudioPriority
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 TtsCb = Callable[[str, AudioPriority], Awaitable[None]]
 
 # (경과 비율, line_id) — 타임아웃의 해당 비율 시점에 발화.
-# 멘트 원문은 agents/lines.py가 소유한다 (페르소나 일괄 변환 대상).
+# 멘트 원문은 agents/tools/lines.py가 소유한다 (페르소나 일괄 변환 대상).
 _MILESTONES: list[tuple[float, str]] = [
     (0.5,  "tempo.half"),
     (0.8,  "tempo.hurry"),

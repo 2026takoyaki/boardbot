@@ -34,7 +34,7 @@ def test_start_sends_roll_context_for_first_player():
     assert YachtEventType.ROLL_CONFIRMED.value in ctx["expected_events"]
     assert YachtEventType.ROLL_UNREADABLE.value in ctx["expected_events"]
     # FSM은 문장을 만들지 않는다 — line_id와 데이터만 내보내고 문장 조립은
-    # ProgressAgent(agents/lines.py)가 한다. TTS도 FSM이 아닌 에이전트가 발화.
+    # ProgressAgent(agents/tools/lines.py)가 한다. TTS도 FSM이 아닌 에이전트가 발화.
     assert _messages_of(msgs, MsgType.TTS_PLAY.value) == []
     assert fsm.state.narration == {
         "line_id": "yacht.turn_start",

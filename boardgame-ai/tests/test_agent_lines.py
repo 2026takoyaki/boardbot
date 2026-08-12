@@ -1,4 +1,4 @@
-"""agents/lines.py — 멘트 단일 소유자 계약.
+"""agents/tools/lines.py — 멘트 단일 소유자 계약.
 
 이 파일이 지키는 것:
 1. line_id 조립 규칙(`<game_type>.<fsm_state>`)이 실제 FSM 상태명과 맞물린다.
@@ -13,9 +13,9 @@ import asyncio
 
 import pytest
 
-from agents import lines
 from agents.context import AgentContext
 from agents.progress_agent import ProgressAgent
+from agents.tools import lines
 from audio.catalog import STATIC_LINES
 from core.audio import AudioPriority
 from core.events import GameEvent

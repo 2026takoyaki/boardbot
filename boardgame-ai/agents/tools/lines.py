@@ -125,6 +125,36 @@ _YACHT: dict[str, str] = {
     "intro_score": "굴림이 끝나면 점수판에서 칸을 하나 골라주세요. 예상 점수가 미리 표시됩니다. 한 번 채운 칸은 다시 쓸 수 없으니 신중하게 고르세요.",
 }
 
+# ── 요트 튜토리얼 코치 (StrategyAgent) ────────────────────────────────────────
+# 판단은 agents/tools/yacht_coach.py가, 문장은 여기가 소유한다.
+# 조각으로 나뉘어 있는 것은 조건에 따라 뒷말이 붙었다 말았다 하기 때문이다.
+# 칸 이름(4 of a Kind 등)은 화면 점수판 라벨 그대로다 — 한국어로 바꾸면 낭독은
+# 자연스러워지지만 정작 어느 칸인지 못 찾는다.
+_COACH: dict[str, str] = {
+    "first_roll":      "주사위 5개를 트레이 안에 굴려주세요. 카메라가 눈을 읽습니다.",
+    "reroll_mechanic": "남길 주사위는 트레이 한쪽의 킵 존으로 옮겨두고, 나머지만 다시 굴리면 됩니다.",
+    # 조합이 완성됐을 때
+    "hand_yacht":                  "요트입니다. 주사위 다섯 개가 모두 {face}입니다. 이 게임에서 가장 어려운 조합이니 더 굴리지 말고 Yacht 칸에 50점을 넣으세요.",
+    "hand_large_straight":         "{run} 다섯 개가 이어졌습니다. 라지 스트레이트 30점이에요. 더 굴리면 깨지니 지금 L. Straight 칸에 넣으세요.",
+    "hand_four_of_a_kind":         "{face} 네 개 모였습니다. 4 of a Kind 칸에 {score}점을 넣을 수 있어요.",
+    "hand_four_of_a_kind_chase":   "아니면 남은 한 개만 다시 굴려서 {face} 다섯 개, 요트를 노려볼 수도 있어요.",
+    "hand_full_house":             "{triple} 세 개, {pair} 두 개라서 풀 하우스입니다. Full House 칸에 {score}점을 넣을 수 있어요.",
+    "hand_small_straight":         "{run} 이어져서 스몰 스트레이트 15점을 확보했습니다.",
+    "hand_small_straight_chase":   "남은 한 개를 다시 굴려서 다섯 개를 잇는 라지 스트레이트 30점을 노려볼 수도 있어요.",
+    # 세 번을 다 굴렸을 때
+    "last_call":      "세 번을 다 굴렸으니 이제 칸을 골라야 합니다. 지금 눈으로는 {label} 칸이 {score}점으로 가장 큽니다.",
+    "last_call_zero": "세 번을 다 굴렸는데 점수가 되는 칸이 없네요. 이럴 때는 나중에 채우기 어려운 칸 하나를 0점으로 비워두는 편이 손해가 적습니다.",
+    # 아직 굴릴 기회가 남았을 때
+    "keep_triple":       "{face} 세 개 있습니다. 이 셋을 남기고 나머지 두 개만 다시 굴리면 4 of a Kind나 요트까지 노려볼 수 있어요.",
+    "keep_triple_bonus": "그대로 {label} 칸에 넣어 상단 보너스를 쌓아도 좋고요.",
+    "keep_run":          "{run} 이어져 있습니다. 이 셋을 남기고 나머지를 다시 굴리면 스트레이트를 노려볼 수 있어요.",
+    "keep_pair":         "{face} 두 개 있습니다. 이 둘을 남기고 다시 굴려 개수를 늘려볼 수 있어요.",
+    "keep_none":         "아직 뚜렷한 조합이 없습니다. 큰 눈 한두 개만 남기고 나머지를 다시 굴려보세요.",
+    "fallback_best":     "지금 멈춘다면 {label} 칸이 {score}점으로 가장 큽니다.",
+    "fallback_none":     "지금은 점수가 되는 칸이 없으니 한 번 더 굴려보는 게 좋겠어요.",
+}
+
+
 # ── 규칙 위반 (RulesAgent, CRITICAL) ───────────────────────────────────────────
 _RULES: dict[str, str] = {
     "wrong_turn":         "지금은 {player}님의 차례입니다.",
@@ -146,6 +176,7 @@ LINES: dict[str, str] = {
     **{f"werewolf.{k}": v for k, v in _WEREWOLF.items()},
     **{f"werewolf_practice.{k}": v for k, v in _WEREWOLF_PRACTICE.items()},
     **{f"yacht.{k}": v for k, v in _YACHT.items()},
+    **{f"coach.{k}": v for k, v in _COACH.items()},
     **{f"rules.{k}": v for k, v in _RULES.items()},
     **{f"tempo.{k}": v for k, v in _TEMPO.items()},
 }

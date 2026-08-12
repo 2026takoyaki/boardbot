@@ -4,7 +4,7 @@
 - 요트: FSM의 last_message를 읽어 매 굴림/상태마다 동적으로 발화.
 - 늑대인간: 페이즈별 고정 스크립트를 사용하며, 중복 발화를 방지.
 
-멘트 원문은 `agents/lines.py`가 소유한다 — 페르소나가 말투를 바꾸려면 문장이
+멘트 원문은 `agents/tools/lines.py`가 소유한다 — 페르소나가 말투를 바꾸려면 문장이
 한 곳에 모여 있어야 한다. 여기는 "언제 어떤 line_id를 발화할지"만 결정한다.
 
 line_id는 `<game_type>.<fsm_state>`로 그대로 조립한다. 매핑 테이블을 따로 두면
@@ -19,9 +19,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents import lines
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
+from agents.tools import lines
 from core.audio import AudioPriority
 
 

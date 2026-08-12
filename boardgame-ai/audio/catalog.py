@@ -90,7 +90,7 @@ STATIC_LINES: list[str] = [
     "불면증환자 차례입니다. 불면증환자 플레이어는 마지막으로 자신의 카드를 확인합니다.",
     "모두 눈을 뜨세요! 토론을 시작합니다.",
     # 아침 안내는 화면이 제목/부제로 나눠 보여줘서 두 줄로 쪼개져 있다
-    # (agents/lines.py의 werewolf.morning / morning_open_eyes).
+    # (agents/tools/lines.py의 werewolf.morning / morning_open_eyes).
     "아침이 밝았습니다.",
     "모두 눈을 뜨세요.",
     "자, 지금부터 토론을 시작합니다.",

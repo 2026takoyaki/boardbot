@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from agents import lines
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
+from agents.tools import lines
 from core.audio import AudioPriority
 from core.events import GameEvent
 

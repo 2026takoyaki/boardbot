@@ -67,7 +67,7 @@ class YachtGameState:
     # FSM은 문장을 만들지 않는다.
     last_message: str | None = None
     # 발화 지시: {"line_id": ..., "params": {...}}. "무슨 말을 할지"가 아니라
-    # "무슨 일이 일어났는지"만 담는다. 문장은 agents/lines.py가 소유하고,
+    # "무슨 일이 일어났는지"만 담는다. 문장은 agents/tools/lines.py가 소유하고,
     # 페르소나가 걸리면 같은 line_id가 다른 말투로 렌더된다.
     narration: dict[str, Any] | None = None
 

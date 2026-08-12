@@ -17,6 +17,7 @@ import os
 
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
+from agents.tools import lines, yacht_coach
 from core.audio import AudioPriority
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,8 @@ class StrategyAgent(BaseAgent):
 
     def __init__(self) -> None:
         self._enabled: bool = False
+        self._last_coach_key: str | None = None
+        self._seen_coach_hints: set[str] = set()
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled
@@ -112,10 +115,21 @@ class StrategyAgent(BaseAgent):
     def enabled(self) -> bool:
         return self._enabled
 
+    def reset_coach(self) -> None:
+        """새 판 시작 시 호출. 앞 판에서 이미 설명한 것을 다시 설명하지 않도록
+        기억을 비운다."""
+        self._last_coach_key = None
+        self._seen_coach_hints.clear()
+
     # ── 오케스트레이터가 호출하는 async 진입점 ────────────────────────────────────
 
     async def on_state_change_async(self, ctx: AgentContext) -> Intervention | None:
-        """LLM 우선 시도 → 실패 시 규칙 기반 폴백."""
+        """튜토리얼이면 코치, 아니면 전략 코칭(토글 시)."""
+        # 튜토리얼 코치는 토글과 무관하게 항상 켜진다 — 처음 하는 사람에게
+        # "조언 켜기"를 먼저 찾게 하는 것은 순서가 뒤집힌 요구다.
+        if ctx.game_type == "yacht" and ctx.game_specific.get("tutorial_mode"):
+            return self._tutorial_coach(ctx)
+
         if not self._enabled:
             return None
 
@@ -138,6 +152,75 @@ class StrategyAgent(BaseAgent):
                 logger.exception("[StrategyAgent] LLM 호출 실패 — 규칙 기반 폴백")
 
         return self.on_state_change(ctx)
+
+    # ── 튜토리얼 코치 ─────────────────────────────────────────────────────────
+    # 조언 판단은 agents/tools/yacht_coach.py, 문장은 agents/tools/lines.py가 소유한다.
+    # 여기는 "지금 말할 때인가"만 정한다.
+
+    def _tutorial_coach(self, ctx: AgentContext) -> Intervention | None:
+        gs = ctx.game_specific
+        dice = [v for v in gs.get("dice_values", []) if v is not None]
+        key = yacht_coach.advice_key(
+            ctx.fsm_state, ctx.active_player, int(gs.get("roll_count", 0)), dice
+        )
+        if key == self._last_coach_key:
+            return None
+        self._last_coach_key = key
+
+        # 굴리기 전 안내는 조작법이라 처음 한 번이면 된다. 두 번째 사람부터는
+        # 침묵해야 앞사람 굴림에 대한 조언이 화면에 남아 있지 않는다.
+        if key is None or key == "roll":
+            if key != "roll" or "roll" in self._seen_coach_hints:
+                return self._clear_coach()
+            self._seen_coach_hints.add("roll")
+            return self._coach_intervention(
+                [("coach.first_roll", {})], transient=True
+            )
+
+        advice = yacht_coach.advise(
+            dice,
+            list(gs.get("available_categories", [])),
+            int(gs.get("roll_count", 0)),
+        )
+        if advice is None:
+            return self._clear_coach()
+
+        # 처음 굴린 사람에게만 "어떻게 다시 굴리는가"를 앞에 붙인다. 조언 자체는
+        # 매번 다르므로 반복으로 느껴지지 않지만, 조작법은 한 번이면 족하다.
+        fragments = list(advice.fragments)
+        if "reroll" not in self._seen_coach_hints:
+            self._seen_coach_hints.add("reroll")
+            fragments.insert(0, ("coach.reroll_mechanic", {}))
+
+        return self._coach_intervention(fragments, transient=advice.transient)
+
+    def _coach_intervention(
+        self,
+        fragments: list[tuple[str, dict[str, object]]],
+        transient: bool,
+    ) -> Intervention | None:
+        parts = [lines.render(line_id, **params) for line_id, params in fragments]
+        text = " ".join(p for p in parts if p)
+        if not text:
+            return None
+        return Intervention(
+            agent=self.name,
+            tts_text=text,
+            priority=AudioPriority.LOW,
+            suppress_lower=False,
+            display=True,
+            transient=transient,
+        )
+
+    def _clear_coach(self) -> Intervention:
+        """화면의 코치 문구를 지운다. 발화는 하지 않는다."""
+        return Intervention(
+            agent=self.name,
+            tts_text=None,
+            priority=AudioPriority.LOW,
+            suppress_lower=False,
+            display=True,
+        )
 
     # ── 규칙 기반 (동기, LLM 폴백 및 직접 호출용) ────────────────────────────────
 

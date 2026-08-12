@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from core.audio import AudioPriority
-from core.constants import AgentRole
+from core.constants import AgentRole, MsgType
+from core.envelope import WSMessage
 from core.events import GameEvent
 
 from agents.base import Intervention
@@ -37,6 +39,8 @@ if TYPE_CHECKING:
     from audio.manager import AudioManager
 
 logger = logging.getLogger(__name__)
+
+MessageCb = Callable[[WSMessage], Awaitable[None]]
 
 _AGENT_ROLE_MAP: dict[str, str] = {
     "rules":    AgentRole.REFEREE.value,
@@ -55,12 +59,26 @@ class AgentOrchestrator:
         self._strategy = StrategyAgent()
         self._current_ctx: AgentContext | None = None
         self._state_version: int = 0
+        self._broadcast: MessageCb | None = None
+        self._tasks: set[asyncio.Task[None]] = set()
 
         self._tempo.set_tts_callback(
             lambda text, prio: self._send_tts(text, prio, AgentRole.TEMPO.value)
         )
 
     # ── 공개 인터페이스 ────────────────────────────────────────────────────────
+
+    def set_broadcast(self, cb: MessageCb) -> None:
+        """화면에도 띄워야 하는 개입(코치 등)을 내보낼 통로.
+
+        오디오는 AudioManager가 알아서 가지만, 눈으로 보며 따라야 하는 조언은
+        화면까지 가야 한다. 설정하지 않으면 발화만 하고 화면은 건드리지 않는다.
+        """
+        self._broadcast = cb
+
+    def reset_for_new_game(self) -> None:
+        """새 판 시작 시 호출 — 에이전트가 앞 판에 대해 기억하는 것을 비운다."""
+        self._strategy.reset_coach()
 
     def set_strategy_enabled(self, enabled: bool) -> None:
         self._strategy.set_enabled(enabled)
@@ -84,8 +102,11 @@ class AgentOrchestrator:
             if result.suppress_lower:
                 return
 
-        # 3) 전략 에이전트 — 백그라운드로 실행 (지연이 있어도 게임 흐름 차단 없음)
-        asyncio.create_task(self._run_strategy(ctx))
+        # 3) 전략 에이전트 — 백그라운드로 실행 (지연이 있어도 게임 흐름 차단 없음).
+        # 태스크 참조를 붙잡아 둔다 — 놓으면 GC가 실행 도중 회수할 수 있다.
+        task = asyncio.create_task(self._run_strategy(ctx))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def on_game_event(self, event: GameEvent) -> None:
         """게임 이벤트 수신 시 세션에서 호출 (FSM 처리 이전에 호출 권장)."""
@@ -96,8 +117,16 @@ class AgentOrchestrator:
             await self._dispatch(result)
 
     def stop(self) -> None:
-        """세션 종료 시 호출 — 백그라운드 타이머 정리."""
+        """세션 종료 시 호출 — 백그라운드 타이머·태스크 정리.
+
+        정리하지 않으면 죽은 세션의 전략 태스크가 살아남아 이미 닫힌 소켓으로
+        발화를 밀어 넣는다.
+        """
         self._tempo.stop()
+        for task in list(self._tasks):
+            if not task.done():
+                task.cancel()
+        self._tasks.clear()
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
 
@@ -107,12 +136,34 @@ class AgentOrchestrator:
             await self._dispatch(result)
 
     async def _dispatch(self, intervention: Intervention) -> None:
+        # 화면 먼저. 조언은 듣기 전에 눈에 들어와 있어야 따라갈 수 있고,
+        # 합성 지연을 기다렸다 띄우면 말이 끝난 뒤에 글이 뜬다.
+        if intervention.display:
+            await self._send_agent_message(intervention)
         if intervention.tts_text:
             await self._send_tts(
                 intervention.tts_text,
                 intervention.priority,
                 agent=_AGENT_ROLE_MAP.get(intervention.agent, AgentRole.NARRATOR.value),
             )
+
+    async def _send_agent_message(self, intervention: Intervention) -> None:
+        """화면에 띄울 에이전트 발언. text가 비면 화면에서 지우라는 뜻이다."""
+        if self._broadcast is None:
+            return
+        msg = WSMessage(
+            msg_type=MsgType.AGENT_MESSAGE.value,
+            payload={
+                "agent": intervention.agent,
+                "text": intervention.tts_text or "",
+                "transient": intervention.transient,
+            },
+            state_version=self._state_version,
+        )
+        try:
+            await self._broadcast(msg)
+        except Exception:
+            logger.exception("[AgentOrchestrator] agent_message 전송 실패")
 
     async def _send_tts(
         self,

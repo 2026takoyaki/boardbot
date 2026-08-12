@@ -11,9 +11,9 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from agents import lines
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
+from agents.tools import lines
 from audio.manager import AudioManager
 from backend.dev import is_dev_mode
 from bridge.local_bridge import LocalBridge
@@ -364,6 +364,12 @@ class YachtSession:
         players = _normalize_players(payload.get("players"))
         self.tutorial_mode = _is_tutorial_mode(payload)
         self.tutorial_complete = False
+        if self._agent is not None:
+            # 코치가 화면에도 떠야 한다. 조언은 듣고 흘리는 안내가 아니라
+            # 눈으로 확인하며 따라가는 것이라 통로를 열어준다.
+            self._agent.set_broadcast(self.send)
+            # 앞 판에서 이미 설명한 조작법을 새 판에서 또 설명하지 않도록.
+            self._agent.reset_for_new_game()
         with self._fsm_lock:
             self.undo_stack = []
             self.fsm = YachtFSM(players)

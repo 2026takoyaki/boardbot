@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { setLineCatalog } from '../lines'
 
 const RECONNECT_DELAY_MS = 2000
 
@@ -22,7 +23,7 @@ const AUDIO_MSG_TYPES = new Set([
  * 되살아나면 안 되고, 놓친 큐를 나중에 재생해서도 안 된다.
  */
 export function useWebSocket(path, options = {}) {
-  const { onAudioMessage, onCue, onLightState } = options
+  const { onAudioMessage, onCue, onLightState, onAgentMessage } = options
   const [state, setState] = useState(null)
   const [connected, setConnected] = useState(false)
   const [messages, setMessages] = useState([])
@@ -30,10 +31,12 @@ export function useWebSocket(path, options = {}) {
   const onAudioRef = useRef(onAudioMessage)
   const onCueRef = useRef(onCue)
   const onLightStateRef = useRef(onLightState)
+  const onAgentMessageRef = useRef(onAgentMessage)
   const benchSeq = useRef(0)
   useEffect(() => { onAudioRef.current = onAudioMessage }, [onAudioMessage])
   useEffect(() => { onCueRef.current = onCue }, [onCue])
   useEffect(() => { onLightStateRef.current = onLightState }, [onLightState])
+  useEffect(() => { onAgentMessageRef.current = onAgentMessage }, [onAgentMessage])
 
   useEffect(() => {
     let destroyed = false
@@ -71,6 +74,10 @@ export function useWebSocket(path, options = {}) {
         try {
           const msg = JSON.parse(e.data)
           setMessages(prev => [msg, ...prev].slice(0, 20))
+          if (msg.msg_type === 'hello' && msg.payload?.lines) {
+            // 멘트의 소유자는 백엔드다. 화면에 그릴 문장을 여기서 받아둔다.
+            setLineCatalog(msg.payload.lines)
+          }
           if (msg.msg_type === 'state_update') {
             const receivedAt = performance.now()
             const state_version = (msg.state ?? msg.payload)?.state_version ?? -1
@@ -99,6 +106,9 @@ export function useWebSocket(path, options = {}) {
           }
           if (msg.msg_type === 'cue' && onCueRef.current) {
             try { onCueRef.current(msg.payload) } catch (_) {}
+          }
+          if (msg.msg_type === 'agent_message' && onAgentMessageRef.current) {
+            try { onAgentMessageRef.current(msg.payload) } catch (_) {}
           }
           if (msg.msg_type === 'light_state' && onLightStateRef.current) {
             try { onLightStateRef.current(msg.payload) } catch (_) {}

@@ -92,7 +92,7 @@ const ROLE_INFO = {
   },
 }
 
-// 문장이 아니라 line_id를 들고 있다. 문장은 백엔드(agents/lines.py)가 소유하고
+// 문장이 아니라 line_id를 들고 있다. 문장은 백엔드(agents/tools/lines.py)가 소유하고
 // 접속 시 카탈로그로 내려온다 — 화면 타이핑과 음성이 같은 문장을 쓰므로
 // 페르소나를 바꾸면 둘 다 함께 바뀐다.
 const STEPS_NORMAL = [

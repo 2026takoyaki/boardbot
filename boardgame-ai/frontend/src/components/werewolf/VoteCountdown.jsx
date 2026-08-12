@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react'
 import { audio } from '../../hooks/useAudioPlayer'
-
-// 카운트다운 숫자별 한국어 TTS (0은 "지목" 호령)
-const COUNTDOWN_TTS = { 5: '오', 4: '사', 3: '삼', 2: '이', 1: '일', 0: '지목' }
+import { narrate } from '../../lines'
 
 export default function VoteCountdown({ players = [], votes = {}, send, onExit, countdownRemaining }) {
   // votes: { player_id: target_player_id } — 현재 지목 상태 (카운트다운 중 가변)
@@ -15,7 +13,7 @@ export default function VoteCountdown({ players = [], votes = {}, send, onExit, 
     // 안내 TTS를 먼저 재생하고, 그 발화가 끝난 뒤에야 카운트다운(5→0)을 시작하도록
     // 백엔드에 신호(werewolf_vote_countdown_start)를 보낸다. 페이지 전환 직후 곧바로
     // 숫자가 줄어 지목 타이밍을 놓치는 문제를 막는다. 준비 구간에도 미리 지목은 가능.
-    send?.('TTS_REQUEST', { text: '투표를 시작하겠습니다. 카운트다운이 시작되면 플레이어를 지목해주세요.' })
+    narrate(send, 'werewolf.vote_intro')
 
     let started = false
     let unsubscribeEnd = null
@@ -41,11 +39,12 @@ export default function VoteCountdown({ players = [], votes = {}, send, onExit, 
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 카운트다운 숫자가 바뀔 때마다 한국어로 읽어준다: 5→오, 4→사, 3→삼, 2→이, 1→일, 0→지목.
+  // 카운트다운 숫자가 바뀔 때마다 읽어준다: 5→오, 4→사, ... 0→지목.
+  // 숫자를 그대로 넘기면 TTS가 어색하게 읽어서 호령 문구를 카탈로그가 갖는다.
   useEffect(() => {
     if (countdownRemaining == null) return
-    const text = COUNTDOWN_TTS[countdownRemaining]
-    if (text) send?.('TTS_REQUEST', { text })
+    if (countdownRemaining < 0 || countdownRemaining > 5) return
+    narrate(send, `werewolf.vote_count_${countdownRemaining}`)
   }, [countdownRemaining]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCardClick = (playerId) => {

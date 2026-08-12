@@ -15,7 +15,6 @@ import RoundBanner from '../components/common/RoundBanner'
 import ScoreMoment from '../components/common/ScoreMoment'
 import YachtRules from '../components/common/YachtRules'
 import YachtTutorial from '../components/common/YachtTutorial'
-import { adviseRoll } from '../components/common/yachtCoach'
 import { previewScore, upperSubtotal } from '../components/common/yachtScoring'
 import {
   BONUS_SCORE,
@@ -32,30 +31,11 @@ const SHOW_MANUAL_ROLL = import.meta.env.VITE_SHOW_MANUAL_ROLL === 'true'
 const SHOW_DICE_MANUAL_INPUT = import.meta.env.VITE_SHOW_DICE_MANUAL_INPUT !== 'false'
 
 /**
- * 튜토리얼 코치가 하는 말.
- *
- * "어떻게 조작하는가"는 한 판에 한 번이면 족하다 — 예전에는 플레이어가 바뀔
- * 때마다 같은 안내를 다시 읽혀서, 세 명이면 같은 말을 세 번 들었다.
- *
- * 대신 **굴릴 때마다 그 눈에 대해** 이야기한다(yachtCoach). 규칙을 안다고 첫
- * 판을 굴릴 수 있는 건 아니고, 처음 하는 사람이 막히는 곳은 눈 다섯 개를 앞에
- * 두고 이걸로 뭘 할 수 있는지 모르겠는 쪽이기 때문이다.
+ * 튜토리얼 코치 문구는 백엔드 StrategyAgent가 정해 agent_message로 보낸다.
+ * 무엇을 조언할지는 판단이고, 판단은 에이전트의 일이다 — 여기서는 받아서
+ * 띄우기만 한다. 발화도 백엔드가 하므로 화면과 음성이 갈라지지 않는다.
+ * 판단 로직: agents/tools/yacht_coach.py, 문장: agents/tools/lines.py
  */
-const FIRST_ROLL_HINT = '주사위 5개를 트레이 안에 굴려주세요. 카메라가 눈을 읽습니다.'
-const REROLL_MECHANIC = '남길 주사위는 트레이 한쪽의 킵 존으로 옮겨두고, 나머지만 다시 굴리면 됩니다.'
-
-/**
- * 지금 화면에 띄워야 할 코치 문구의 식별자.
- *
- * 굴릴 때마다 달라져야 하므로 눈까지 넣는다. 같은 사람이 같은 횟수에 같은 눈을
- * 다시 볼 일은 없으니, 이 값이 바뀌었다는 것은 곧 새로 할 말이 생겼다는 뜻이다.
- */
-function coachKeyOf(state) {
-  if (!state) return null
-  if (state.phase === 'AWAITING_ROLL') return 'roll'
-  if (!state.dice_values?.length) return null
-  return `advice:${state.current_player_id}:${state.roll_count}:${state.dice_values.join('')}`
-}
 
 /** 읽을 시간을 글자 수로 잡는다. 짧은 문구가 화면에 오래 남으면 그것도 잡음이다. */
 function readingMs(text) {
@@ -621,8 +601,6 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const previousRollRef = useRef(null)
   const momentSeqRef = useRef(0)
   // 한 판 동안 이미 보여준 조작 안내. 플레이어가 바뀌어도 다시 뜨지 않는다.
-  const seenCoachRef = useRef(new Set())
-  const lastCoachKeyRef = useRef(null)
 
   // 득점 순간을 diff로 추론하지 않고 백엔드가 보낸 cue를 그대로 받는다.
   // 같은 payload의 duration_ms로 조명·TTS가 함께 움직이므로 세 채널이 어긋나지 않는다.
@@ -673,9 +651,17 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     if (!isFinish) enqueueMoment(payload)
   }, [enqueueMoment])
 
+  // 에이전트가 화면에 띄우라고 보낸 발언. 지금은 튜토리얼 코치가 유일하다.
+  // text가 비면 지우라는 뜻이다(할 말이 없어진 순간).
+  const handleAgentMessage = useCallback((payload) => {
+    const text = payload?.text || ''
+    setCoach(text ? { text, transient: Boolean(payload.transient) } : null)
+  }, [])
+
   const { state, connected, messages, send } = useWebSocket('/ws/yacht', {
     onAudioMessage: audioApi.enqueue,
     onCue: handleCue,
+    onAgentMessage: handleAgentMessage,
   })
   // /ws/yacht 채널로도 audio_ack가 흐르도록 등록 (FSM 멘트는 이 채널로 옴).
   useAudioPlayer(send)
@@ -742,43 +728,16 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     if (state && state.tutorial_mode === false) setIntroOpen(false)
   }, [state?.tutorial_mode, state])
 
+  // 코치 문구는 StrategyAgent가 정한다. 무엇을 조언할지는 판단이고, 판단은
+  // 에이전트의 일이다 — 프론트는 받아서 띄우기만 한다. 발화도 백엔드가 하므로
+  // 여기서 TTS를 따로 쏘지 않는다(쏘면 같은 말이 두 번 나간다).
   useEffect(() => {
-    if (!isTutorial || introOpen) return
-    const key = coachKeyOf(state)
-    if (key === lastCoachKeyRef.current) return
-    lastCoachKeyRef.current = key
-
-    // 굴리기 전 안내는 조작법이라 처음 한 번이면 된다. 두 번째 사람부터는
-    // 여기서 비워야 앞사람 굴림에 대한 조언이 남아 있지 않는다.
-    if (key === 'roll' || !key) {
-      const first = key === 'roll' && !seenCoachRef.current.has('roll')
-      if (first) seenCoachRef.current.add('roll')
-      setCoach(first ? { key, text: FIRST_ROLL_HINT, transient: true } : null)
-      return
-    }
-
-    const advice = adviseRoll(state)
-    if (!advice) { setCoach(null); return }
-    // 처음 굴린 사람에게만 "어떻게 다시 굴리는가"를 앞에 붙인다. 조언 자체는
-    // 매번 다르므로 반복으로 느껴지지 않지만, 조작법은 한 번이면 족하다.
-    const needsMechanic = !seenCoachRef.current.has('reroll')
-    seenCoachRef.current.add('reroll')
-    setCoach({
-      key,
-      text: needsMechanic ? `${REROLL_MECHANIC} ${advice}` : advice,
-      // 조언은 지금 테이블에 놓인 눈에 대한 말이라, 눈이 그대로인 동안은
-      // 남아 있어야 한다. 시간이 지나 사라지면 읽던 사람만 손해다.
-      transient: false,
-    })
-  }, [isTutorial, introOpen, state])
-
-  useEffect(() => {
-    if (!coach) return undefined
-    if (connected) send('TTS_REQUEST', { text: coach.text, interrupt_existing: true })
-    if (!coach.transient) return undefined
+    if (!isTutorial || introOpen) { setCoach(null); return undefined }
+    if (!coach?.transient) return undefined
+    // 짧은 안내가 화면에 오래 남으면 그것도 잡음이다. 읽을 시간만 준다.
     const timer = window.setTimeout(() => setCoach(null), readingMs(coach.text))
     return () => window.clearTimeout(timer)
-  }, [coach, connected, send])
+  }, [isTutorial, introOpen, coach])
 
   const currentPlayer = useMemo(
     () => state?.players?.find(p => p.player_id === state.current_player_id),
@@ -823,19 +782,19 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   }, [diceEditMode, canManualDiceInput])
 
   // 인트로 낭독. 문장이 아니라 line_id를 보낸다 — 문장의 소유자는 백엔드
-  // (agents/lines.py)라 페르소나를 바꾸면 여기를 건드리지 않아도 말투가 바뀐다.
+  // (agents/tools/lines.py)라 페르소나를 바꾸면 여기를 건드리지 않아도 말투가 바뀐다.
   const narrateLine = useCallback((lineId) => {
     if (!connected || !lineId) return
     send('NARRATION_REQUEST', { line_id: lineId, interrupt_existing: true })
   }, [connected, send])
 
   // 새 판으로 넘어갈 때는 앞 판의 흔적을 남기지 않는다. 대기열에 남은 연출은
-  // 새 판 첫 화면에서 뒤늦게 터지고, 코치는 이미 설명한 것을 또 설명한다.
+  // 새 판 첫 화면에서 뒤늦게 터진다. 코치의 기억(무엇을 이미 설명했는지)은
+  // 백엔드 StrategyAgent가 들고 있어 START_YACHT 때 알아서 비워진다.
   const resetForNewGame = () => {
     setMomentQueue([])
     setRecentScore(null)
     setCoach(null)
-    lastCoachKeyRef.current = null
   }
 
   const startFullGame = () => {
@@ -845,7 +804,6 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
   const restartTutorial = () => {
     resetForNewGame()
-    seenCoachRef.current.clear()
     setIntroOpen(true)
     send('RESTART')
   }
