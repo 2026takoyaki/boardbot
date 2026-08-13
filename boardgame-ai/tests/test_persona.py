@@ -175,6 +175,17 @@ def test_말투_지시가_TTS_안전_규칙을_담는다(persona_id: str) -> Non
     assert "숫자" in prompt  # 원문의 숫자를 바꾸지 말라는 규칙
 
 
+@pytest.mark.parametrize("persona_id", sorted(PERSONAS))
+def test_출고된_페르소나_파일이_고유명사를_유지한다(persona_id: str) -> None:
+    """persona_lines/*.json은 손으로도 고칠 수 있는 파일이라, 코드 리뷰만으로는
+    "강도"가 "도둑"으로 바뀌는 걸 못 잡는다. use_persona가 실제로 하는 검사를
+    그대로 돌려 확정한다 — 걸리면 그 줄만 조용히 원문으로 폴백하므로, 테스트가
+    없으면 화면과 다른 이름이 나가는 걸 CI가 아니라 사람이 듣고서야 안다."""
+    applied, rejected = lines.use_persona(persona_id)
+    assert rejected == {}, f"{persona_id}: {rejected}"
+    assert applied > 0
+
+
 # ── 5. 전환은 목소리·말투·화면을 함께 바꾼다 ─────────────────────────────────
 # 셋이 따로 놀면 목소리만 바뀌고 말투는 그대로이거나, 음성과 자막이 다른 말을
 # 하게 된다. 전환은 반드시 apply_persona를 거친다.

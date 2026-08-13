@@ -30,10 +30,10 @@ PHASE_TIPS: dict[str, str] = {
 PHASE_KO: dict[str, str] = {
     "night_doppelganger": "도플갱어",
     "night_seer":         "예언자",
-    "night_robber":       "도둑",
-    "night_troublemaker": "말썽꾼",
+    "night_robber":       "강도",
+    "night_troublemaker": "말썽쟁이",
     "night_drunk":        "주정뱅이",
-    "night_insomniac":    "불면증 환자",
+    "night_insomniac":    "불면증환자",
 }
 
 STRATEGY_PHASES = frozenset(PHASE_TIPS)

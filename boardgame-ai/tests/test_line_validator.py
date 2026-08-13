@@ -69,6 +69,40 @@ def test_영문_칸_이름을_그대로_두면_통과() -> None:
     )
 
 
+# ── 고유명사(역할명·족보명) ──────────────────────────────────────────────────────
+# 영문 표기(_ASCII_WORD)는 이미 잡힌다. 여기서 새로 잡는 것은 한글로만 적힌
+# 고유명사다 — "라지 스트레이트"가 "L. Straight"로 대체되면 영문 손실은 0이라
+# 기존 검사를 통과했다. 실제로 화난 누나 페르소나가 그랬다.
+
+
+def test_역할명이_다른_역할명으로_바뀌면_잡는다() -> None:
+    """'강도'가 '도둑'이 되면 이 게임에 없는 역할이 된다."""
+    problems = validate_line("강도는 깨어나세요.", "도둑아 깨어나라.")
+    assert any("고유명사 유실" in p and "강도" in p for p in problems)
+
+
+def test_말썽쟁이가_말썽꾼으로_바뀌면_잡는다() -> None:
+    problems = validate_line("말썽쟁이는 깨어나세요.", "말썽꾼아 깨어나라.")
+    assert any("고유명사 유실" in p and "말썽쟁이" in p for p in problems)
+
+
+def test_한글_족보명이_영문으로만_대체되면_잡는다() -> None:
+    """원문에 한글·영문 표기가 같이 있는데 변환문엔 영문만 남으면, 영문 손실
+    검사(_ASCII_WORD)만으로는 못 잡는다 — ASCII는 그대로 있기 때문이다."""
+    original = "라지 스트레이트 30점이에요. 지금 L. Straight 칸에 넣으세요."
+    converted = "L. Straight 30점이잖아. 지금 L. Straight 칸에 넣으라고."
+    problems = validate_line(original, converted)
+    assert any("고유명사 유실" in p and "라지 스트레이트" in p for p in problems)
+
+
+def test_역할명을_그대로_두면_통과() -> None:
+    assert validate_line("강도는 깨어나세요.", "강도야, 얼른 깨어나라.") == []
+
+
+def test_역할과_무관한_문장은_고유명사_검사에_안_걸린다() -> None:
+    assert validate_line("주사위를 굴려주세요.", "야 주사위 굴려라.") == []
+
+
 # ── TTS가 읽어버리는 것 ────────────────────────────────────────────────────────
 
 

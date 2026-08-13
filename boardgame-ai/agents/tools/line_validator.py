@@ -25,6 +25,22 @@ _NUMBER = re.compile(r"\d+")
 # 번역되면 화면에서 그 칸을 못 찾는다.
 _ASCII_WORD = re.compile(r"[A-Za-z]+")
 
+# 한글로만 적힌 고유명사는 _ASCII_WORD가 못 잡는다. "라지 스트레이트"가
+# "L. Straight"로 대체돼도(둘 다 원문에 있던 표현이라도) ASCII 손실은 0이라
+# 통과해버린 적이 있다 — 화난 누나 페르소나가 실제로 그랬다.
+#
+# 프롬프트로 "역할 이름을 바꾸지 마라"고 당부해도 확률적이다. 여기서 확정적으로
+# 막는다: 늑대인간 역할명은 frontend/src/components/werewolf/RoleRegistration.jsx의
+# 카드 이름과 정확히 같아야 한다 — 다르면 화면 카드와 음성이 다른 이름을 말한다.
+# "도둑"이 아니라 "강도"다, "말썽꾼"이 아니라 "말썽쟁이"다.
+_PROTECTED_TERMS: tuple[str, ...] = (
+    # 늑대인간 역할명 (RoleRegistration.jsx 기준)
+    "도플갱어", "늑대인간", "하수인", "예언자", "강도", "말썽쟁이",
+    "주정뱅이", "불면증환자", "무두장이", "사냥꾼", "프리메이슨", "마을주민",
+    # 요트 족보명 — 영문 표기는 _ASCII_WORD가 이미 보호하므로 한글 구어체만.
+    "풀 하우스", "스몰 스트레이트", "라지 스트레이트", "요트",
+)
+
 # TTS가 그대로 읽어버리는 것들. "별표 별표 풀하우스"가 된다.
 #
 # 물결표 하나(~)는 뺐다. 마크다운 취소선은 두 개(~~)이고, 하나짜리는 한국어에서
@@ -73,6 +89,11 @@ def validate_line(original: str, converted: str) -> list[str]:
     words_after = set(_ASCII_WORD.findall(converted))
     if lost := words_before - words_after:
         problems.append(f"영문 표기 유실: {', '.join(sorted(lost))}")
+
+    # "도둑"→"강도"처럼 다른 낱말로 바뀌면 사라진 쪽만 잡힌다. 대체어가 뭐였는지는
+    # 리포트에서 원문·변환문을 나란히 보면 된다.
+    if lost_terms := [t for t in _PROTECTED_TERMS if t in original and t not in converted]:
+        problems.append(f"고유명사 유실: {', '.join(lost_terms)}")
 
     # 원문에 이미 있던 기호는 문제 삼지 않는다 — 개발용 "[개발]" 접두어처럼
     # 의도적으로 넣은 것이 있다. LLM이 **새로** 붙인 것만 잡는다.
