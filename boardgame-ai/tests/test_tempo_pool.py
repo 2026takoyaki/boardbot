@@ -50,10 +50,15 @@ def _persona():
 @pytest.mark.anyio
 async def test_변형이_풀에_들어가고_prewarm_목록으로_나온다():
     llm.set_client(
-        _StubClient(json.dumps({
-            "tempo.half": ["반 지났어요.", "절반이요."],
-            "tempo.hurry": ["슬슬 정하시죠."],
-        }, ensure_ascii=False))
+        _StubClient(
+            json.dumps(
+                {
+                    "tempo.half": ["반 지났어요.", "절반이요."],
+                    "tempo.hurry": ["슬슬 정하시죠."],
+                },
+                ensure_ascii=False,
+            )
+        )
     )
 
     texts = await tempo_pool.regenerate(_persona())
@@ -88,15 +93,20 @@ async def test_깨진_json은_원문만_남긴다():
 @pytest.mark.anyio
 async def test_읽을_수_없는_변형은_버린다():
     llm.set_client(
-        _StubClient(json.dumps({
-            "tempo.half": [
-                "",                      # 빈 문장
-                "{player}님 서두르세요",   # 채워줄 사람이 없는 슬롯
-                "재" * 60,                # 재촉이라기엔 너무 긺
-                42,                       # 문자열이 아님
-                "반 지났어요.",            # 이것만 통과
-            ],
-        }, ensure_ascii=False))
+        _StubClient(
+            json.dumps(
+                {
+                    "tempo.half": [
+                        "",  # 빈 문장
+                        "{player}님 서두르세요",  # 채워줄 사람이 없는 슬롯
+                        "재" * 60,  # 재촉이라기엔 너무 긺
+                        42,  # 문자열이 아님
+                        "반 지났어요.",  # 이것만 통과
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
     )
 
     await tempo_pool.regenerate(_persona())
@@ -112,9 +122,7 @@ def test_풀이_비면_고정_멘트로_떨어진다():
 
 @pytest.mark.anyio
 async def test_같은_문장을_연속으로_뽑지_않는다():
-    llm.set_client(
-        _StubClient(json.dumps({"tempo.half": ["가", "나", "다"]}, ensure_ascii=False))
-    )
+    llm.set_client(_StubClient(json.dumps({"tempo.half": ["가", "나", "다"]}, ensure_ascii=False)))
     await tempo_pool.regenerate(_persona())
 
     picks = [tempo_pool.pick("tempo.half") for _ in range(20)]

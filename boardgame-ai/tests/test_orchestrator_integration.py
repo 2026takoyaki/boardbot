@@ -237,8 +237,11 @@ async def test_한마디는_전환이_와도_취소되지_않는다(rig):
     # 곧바로 다음 차례로 넘어간다.
     await orch.on_state_change(
         AgentContext(
-            game_type="yacht", fsm_state="AWAITING_ROLL",
-            active_player=None, players=[], game_specific={},
+            game_type="yacht",
+            fsm_state="AWAITING_ROLL",
+            active_player=None,
+            players=[],
+            game_specific={},
         ),
         state_version=2,
     )

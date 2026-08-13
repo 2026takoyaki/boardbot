@@ -178,7 +178,10 @@ def test_요트_진행_경로의_narration이_전부_렌더된다() -> None:
     fsm.handle_event(
         GameEvent(
             event_type=YachtEventType.DICE_ESCAPED.value,
-            actor_id="p1", confidence=1.0, frame_id=0, data={},
+            actor_id="p1",
+            confidence=1.0,
+            frame_id=0,
+            data={},
         )
     )
     record()
@@ -283,15 +286,24 @@ def _werewolf_session(audio: _FakeAudio | None = None):
 def test_카탈로그에_프론트가_쓰는_line_id가_전부_있다() -> None:
     """프론트 컴포넌트가 참조하는 id. 빠지면 그 화면이 빈칸으로 뜬다."""
     필요 = [
-        "werewolf.setup_intro", "werewolf.setup_flip", "werewolf.setup_take",
-        "werewolf.setup_place", "werewolf.setup_center", "werewolf.setup_close_eyes",
-        "werewolf.setup_confirm", "werewolf.role_select_prompt",
-        "werewolf.morning", "werewolf.discussion_start",
-        "werewolf.vote_intro", "werewolf.game_end",
-        "werewolf_practice.setup_no_hide", "werewolf_practice.morning",
+        "werewolf.setup_intro",
+        "werewolf.setup_flip",
+        "werewolf.setup_take",
+        "werewolf.setup_place",
+        "werewolf.setup_center",
+        "werewolf.setup_close_eyes",
+        "werewolf.setup_confirm",
+        "werewolf.role_select_prompt",
+        "werewolf.morning",
+        "werewolf.discussion_start",
+        "werewolf.vote_intro",
+        "werewolf.game_end",
+        "werewolf_practice.setup_no_hide",
+        "werewolf_practice.morning",
         "werewolf_practice.day_rules",
         # 튜토리얼도 확인/투표 문구는 일반 모드를 물려받아야 한다.
-        "werewolf_practice.setup_confirm", "werewolf_practice.vote_intro",
+        "werewolf_practice.setup_confirm",
+        "werewolf_practice.vote_intro",
         *[f"werewolf.vote_count_{n}" for n in range(6)],
     ]
     catalog = lines.catalog()
@@ -345,8 +357,10 @@ def test_요트_인트로_line_id가_전부_있다() -> None:
     빠진_것 = [
         line_id
         for line_id in (
-            "yacht.intro_what", "yacht.intro_turn",
-            "yacht.intro_table", "yacht.intro_score",
+            "yacht.intro_what",
+            "yacht.intro_turn",
+            "yacht.intro_table",
+            "yacht.intro_score",
         )
         if not catalog.get(line_id)
     ]

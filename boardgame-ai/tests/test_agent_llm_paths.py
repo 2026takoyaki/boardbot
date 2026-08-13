@@ -155,9 +155,7 @@ def _violation_ctx() -> AgentContext:
 
 
 def _foul() -> GameEvent:
-    return GameEvent(
-        event_type="dice_rolled", actor_id="p2", confidence=1.0, frame_id=0
-    )
+    return GameEvent(event_type="dice_rolled", actor_id="p2", confidence=1.0, frame_id=0)
 
 
 def test_제지는_llm_없이_즉시_나간다():

@@ -16,9 +16,18 @@ from agents.strategy_agent import StrategyAgent
 from agents.tools import lines, werewolf_coach, yacht_coach
 
 ALL_OPEN = [
-    "ones", "twos", "threes", "fours", "fives", "sixes",
-    "choice", "four_of_a_kind", "full_house",
-    "small_straight", "large_straight", "yacht",
+    "ones",
+    "twos",
+    "threes",
+    "fours",
+    "fives",
+    "sixes",
+    "choice",
+    "four_of_a_kind",
+    "full_house",
+    "small_straight",
+    "large_straight",
+    "yacht",
 ]
 
 
@@ -94,8 +103,10 @@ def test_요트는_굴린_뒤에만_훈수한다() -> None:
 def test_가장_높은_칸을_알려준다() -> None:
     agent = _enabled()
     ctx = _ctx(
-        "yacht", "AWAITING_SCORE",
-        dice_values=[5, 5, 5, 5, 5], available_categories=ALL_OPEN,
+        "yacht",
+        "AWAITING_SCORE",
+        dice_values=[5, 5, 5, 5, 5],
+        available_categories=ALL_OPEN,
     )
     result = agent.on_state_change(ctx)
     assert result is not None
@@ -106,8 +117,10 @@ def test_점수가_없으면_버릴_칸을_고르라고_한다() -> None:
     """0점인데 '여기 넣으세요'라고 하면 조언이 아니다."""
     agent = _enabled()
     ctx = _ctx(
-        "yacht", "AWAITING_SCORE",
-        dice_values=[1, 2, 3, 4, 6], available_categories=["yacht", "four_of_a_kind"],
+        "yacht",
+        "AWAITING_SCORE",
+        dice_values=[1, 2, 3, 4, 6],
+        available_categories=["yacht", "four_of_a_kind"],
     )
     result = agent.on_state_change(ctx)
     assert result is not None
@@ -117,8 +130,10 @@ def test_점수가_없으면_버릴_칸을_고르라고_한다() -> None:
 def test_읽히지_않은_눈이_있으면_침묵() -> None:
     agent = _enabled()
     ctx = _ctx(
-        "yacht", "AWAITING_SCORE",
-        dice_values=[1, 2, None, 4, 5], available_categories=ALL_OPEN,
+        "yacht",
+        "AWAITING_SCORE",
+        dice_values=[1, 2, None, 4, 5],
+        available_categories=ALL_OPEN,
     )
     assert agent.on_state_change(ctx) is None
 
@@ -131,8 +146,10 @@ def test_훈수는_한글_칸_이름을_쓴다() -> None:
     듣는 말이라 '엘 스트레이트'로 읽히면 안 된다."""
     agent = _enabled()
     ctx = _ctx(
-        "yacht", "AWAITING_SCORE",
-        dice_values=[2, 3, 4, 5, 6], available_categories=["large_straight"],
+        "yacht",
+        "AWAITING_SCORE",
+        dice_values=[2, 3, 4, 5, 6],
+        available_categories=["large_straight"],
     )
     result = agent.on_state_change(ctx)
     assert result is not None

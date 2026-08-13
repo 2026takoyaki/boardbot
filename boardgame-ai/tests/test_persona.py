@@ -198,8 +198,8 @@ async def test_전환하면_목소리와_말투가_함께_바뀐다(tmp_path, mo
 
     report = await apply_persona(target, mgr, prewarm=False)
 
-    assert mgr.persona.id == target                      # 목소리
-    assert lines.get("werewolf.night_start") == "밤이다. 눈 감아라."   # 말투
+    assert mgr.persona.id == target  # 목소리
+    assert lines.get("werewolf.night_start") == "밤이다. 눈 감아라."  # 말투
     assert report.applied == 1
 
 
@@ -299,5 +299,7 @@ def test_흥분_말투가_기본과_다르다() -> None:
         base = persona.voice_for()
         excited = persona.voice_for(DELIVERY_EXCITED)
         assert (base.speaking_rate, base.emotion, base.emotion_intensity) != (
-            excited.speaking_rate, excited.emotion, excited.emotion_intensity
+            excited.speaking_rate,
+            excited.emotion,
+            excited.emotion_intensity,
         ), f"{persona.id}: 흥분 말투가 기본과 같다"

@@ -19,9 +19,19 @@ from backend.persona_control import apply_persona
 
 # 슬롯을 가진 모든 문장을 렌더할 수 있도록 값을 넉넉히 준다.
 _PARAMS = {
-    "player": "성민", "scorer": "성민", "next": "형승", "label": "풀하우스",
-    "score": 25, "values": "1, 2, 3", "remaining": "두 번", "count": "다섯",
-    "headline": "성민", "face": "3", "run": "3-4-5", "triple": "3", "pair": "5",
+    "player": "성민",
+    "scorer": "성민",
+    "next": "형승",
+    "label": "풀하우스",
+    "score": 25,
+    "values": "1, 2, 3",
+    "remaining": "두 번",
+    "count": "다섯",
+    "headline": "성민",
+    "face": "3",
+    "run": "3-4-5",
+    "triple": "3",
+    "pair": "5",
 }
 
 

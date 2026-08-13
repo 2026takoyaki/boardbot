@@ -42,9 +42,7 @@ class _FakeOpenAI:
             "R",
             (),
             {
-                "choices": [
-                    type("C", (), {"message": type("M", (), {"content": content})()})()
-                ],
+                "choices": [type("C", (), {"message": type("M", (), {"content": content})()})()],
                 "usage": type("U", (), {"completion_tokens": 7})(),
             },
         )()

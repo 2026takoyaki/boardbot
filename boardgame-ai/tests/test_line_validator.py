@@ -39,9 +39,7 @@ def test_없던_슬롯을_만들어내면_잡는다() -> None:
 
 def test_숫자가_바뀌면_잡는다() -> None:
     """규칙 안내가 거짓말이 된다."""
-    problems = validate_line(
-        "중앙 카드 2장을 확인할 수 있습니다.", "중앙 카드 3장 봐도 된다."
-    )
+    problems = validate_line("중앙 카드 2장을 확인할 수 있습니다.", "중앙 카드 3장 봐도 된다.")
     assert any("숫자" in p for p in problems)
 
 
@@ -60,16 +58,15 @@ def test_숫자_순서가_달라도_통과() -> None:
 
 def test_영문_칸_이름을_번역하면_잡는다() -> None:
     """화면 점수판에는 '4 of a Kind'라고 적혀 있어 한국어로 바꾸면 못 찾는다."""
-    problems = validate_line(
-        "4 of a Kind 칸에 20점을 넣을 수 있어요.", "포카드 칸에 20점 넣어라."
-    )
+    problems = validate_line("4 of a Kind 칸에 20점을 넣을 수 있어요.", "포카드 칸에 20점 넣어라.")
     assert any("영문 표기" in p for p in problems)
 
 
 def test_영문_칸_이름을_그대로_두면_통과() -> None:
-    assert validate_line(
-        "4 of a Kind 칸에 20점을 넣을 수 있어요.", "야 4 of a Kind에 20점 박아라."
-    ) == []
+    assert (
+        validate_line("4 of a Kind 칸에 20점을 넣을 수 있어요.", "야 4 of a Kind에 20점 박아라.")
+        == []
+    )
 
 
 # ── TTS가 읽어버리는 것 ────────────────────────────────────────────────────────

@@ -52,9 +52,7 @@ async def test_페이즈_종료_경고를_line_id로_받아_문장으로_바꾼�
     said = await _collect(agent)
 
     # timeout 4.05 → 경고 시점이 거의 지금. 4보다 커야 경고 경로를 탄다.
-    agent.on_state_change(
-        _ctx(turn_timeout=4.05, phase_end_warning_line="tempo.close_eyes_again")
-    )
+    agent.on_state_change(_ctx(turn_timeout=4.05, phase_end_warning_line="tempo.close_eyes_again"))
     await asyncio.sleep(0.2)
 
     assert said == [(lines.get("tempo.close_eyes_again"), AudioPriority.HIGH)]
@@ -66,9 +64,7 @@ async def test_풀에_변형이_있으면_그중_하나로_말한다():
     agent = TempoAgent()
     said = await _collect(agent)
 
-    agent.on_state_change(
-        _ctx(turn_timeout=4.05, phase_end_warning_line="tempo.close_eyes_again")
-    )
+    agent.on_state_change(_ctx(turn_timeout=4.05, phase_end_warning_line="tempo.close_eyes_again"))
     await asyncio.sleep(0.2)
 
     assert said == [("눈 다시 감으셔유~", AudioPriority.HIGH)]
@@ -90,9 +86,7 @@ async def test_상태가_바뀌면_앞_페이즈의_재촉은_취소된다():
     agent = TempoAgent()
     said = await _collect(agent)
 
-    agent.on_state_change(
-        _ctx(turn_timeout=4.2, phase_end_warning_line="tempo.close_eyes_again")
-    )
+    agent.on_state_change(_ctx(turn_timeout=4.2, phase_end_warning_line="tempo.close_eyes_again"))
     agent.on_state_change(_ctx(turn_timeout=None))  # 다음 페이즈로 넘어감
     await asyncio.sleep(0.4)
 

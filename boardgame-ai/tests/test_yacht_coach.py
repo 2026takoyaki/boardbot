@@ -14,9 +14,18 @@ from agents.strategy_agent import StrategyAgent
 from agents.tools import lines, yacht_coach
 
 ALL_OPEN = [
-    "ones", "twos", "threes", "fours", "fives", "sixes",
-    "choice", "four_of_a_kind", "full_house",
-    "small_straight", "large_straight", "yacht",
+    "ones",
+    "twos",
+    "threes",
+    "fours",
+    "fives",
+    "sixes",
+    "choice",
+    "four_of_a_kind",
+    "full_house",
+    "small_straight",
+    "large_straight",
+    "yacht",
 ]
 
 
@@ -110,8 +119,16 @@ def test_마지막_굴림이면_칸을_고르라고_한다() -> None:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("1", "1이"), ("2", "2가"), ("3", "3이"), ("4", "4가"), ("5", "5가"), ("6", "6이"),
-     ("3-4-5", "3-4-5가"), ("1-2-3", "1-2-3이")],
+    [
+        ("1", "1이"),
+        ("2", "2가"),
+        ("3", "3이"),
+        ("4", "4가"),
+        ("5", "5가"),
+        ("6", "6이"),
+        ("3-4-5", "3-4-5가"),
+        ("1-2-3", "1-2-3이"),
+    ],
 )
 def test_받침에_맞는_조사를_붙인다(value: str, expected: str) -> None:
     """'5이 세 개'는 눈에 거슬리고, TTS로 읽히면 더 티가 난다.
@@ -226,11 +243,11 @@ async def test_새_판에서는_조작법을_다시_설명한다() -> None:
 @pytest.mark.parametrize(
     ("dice", "expected"),
     [
-        ([5, 5, 5, 5, 5], True),    # 요트
-        ([2, 3, 4, 5, 6], True),    # 라지스트레이트
-        ([3, 3, 3, 3, 1], False),   # 포카드
-        ([2, 2, 2, 5, 5], False),   # 풀하우스
-        ([1, 2, 3, 4, 6], False),   # 스몰스트레이트
+        ([5, 5, 5, 5, 5], True),  # 요트
+        ([2, 3, 4, 5, 6], True),  # 라지스트레이트
+        ([3, 3, 3, 3, 1], False),  # 포카드
+        ([2, 2, 2, 5, 5], False),  # 풀하우스
+        ([1, 2, 3, 4, 6], False),  # 스몰스트레이트
     ],
 )
 def test_희귀한_족보에만_흥분한다(dice: list[int], expected: bool) -> None:
