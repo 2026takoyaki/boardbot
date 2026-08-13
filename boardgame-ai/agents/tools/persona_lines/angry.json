@@ -92,7 +92,6 @@
   "werewolf_practice.vote_count_4": "사",
   "werewolf_practice.vote_count_5": "오",
   "werewolf_practice.vote_intro": "투표 시작하겠다. 카운트다운 시작되면 플레이어 지목해.",
-  "yacht.dev_late_game": "[개발] 후반 상황 만들었다. {player} 크게 넣으면 역전 연출 뜬다.",
   "yacht.dice_escaped": "주사위가 트레이 밖으로 나갔네. 다시 굴려.",
   "yacht.dice_unreadable": "안 읽힌 주사위 값이 있어. 화면에서 값 입력해.",
   "yacht.game_finish": "{scorer}, {label} {score}점이다. 게임 끝났어.",

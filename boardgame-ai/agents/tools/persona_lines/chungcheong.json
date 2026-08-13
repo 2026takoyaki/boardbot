@@ -92,7 +92,6 @@
   "werewolf_practice.vote_count_4": "사",
   "werewolf_practice.vote_count_5": "오",
   "werewolf_practice.vote_intro": "투표를 시작하겠슈. 카운트다운 시작되면 플레이어를 지목해주셔유.",
-  "yacht.dev_late_game": "[개발] 후반 상황을 만들었슈. {player}님이 크게 넣으면 역전 연출이 뜨는 겨.",
   "yacht.dice_escaped": "주사위가 트레이 밖으로 나갔슈. 다시 굴려보셔유.",
   "yacht.dice_unreadable": "읽히지 않은 주사위 값이 있슈. 화면에서 값을 넣어주셔유.",
   "yacht.game_finish": "{scorer}님이, {label} {score}점 넣었슈. 게임이 끝났구먼유.",

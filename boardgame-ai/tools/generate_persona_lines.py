@@ -65,6 +65,11 @@ _TASK_RULES = """\
 - {} 로 감싼 슬롯. 글자 그대로 남기고 값을 채워 넣지 않는다.
   ("{player}님 차례입니다" → "{player} 니 차례다"  O
    "{player}님 차례입니다" → "성민이 차례다"        X)
+- 슬롯 바로 뒤에 받침으로 갈리는 조사를 붙이지 않는다. 무슨 이름이 들어올지
+  모르기 때문이다. 야/아, 이/가, 은/는, 을/를, 와/과 가 그렇다.
+  ("{player}야, 굴려라"  X  — '성민야'가 된다
+   "{player}, 얼른 굴려라"  O
+   "{player}님"처럼 '님'을 끼우는 것은 안전하다)
 - 숫자. "카드 2장"은 그대로 2장이다.
 - 영문 표기(4 of a Kind, L. Straight, Yacht 등). 화면 점수판에 적힌 이름이라
   번역하면 플레이어가 그 칸을 못 찾는다.
@@ -146,7 +151,10 @@ async def generate(persona_id: str, model: str, dry_run: bool, force: bool = Fal
         print(f"'{persona_id}'는 없는 페르소나입니다. 가능: {', '.join(PERSONAS)}")
         return 1
 
-    originals = dict(lines.LINES)
+    # 개발 모드 전용 멘트는 변환하지 않는다. 플레이어가 들을 일이 없고,
+    # '[개발]' 같은 대괄호가 섞여 있어 검사에도 걸린다. lines.py에 그렇게
+    # 적혀 있는데 정작 여기서 걸러내지 않아 변환되고 있었다.
+    originals = {k: v for k, v in lines.LINES.items() if not v.lstrip().startswith("[개발]")}
     kept = {} if force else _existing(persona_id)
     todo = {k: v for k, v in originals.items() if k not in kept}
 
