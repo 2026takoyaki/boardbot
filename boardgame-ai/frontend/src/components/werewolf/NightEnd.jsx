@@ -1,17 +1,12 @@
 import { useEffect, useState } from 'react'
 import { audio } from '../../hooks/useAudioPlayer'
-
-const PRACTICE_RULE_TTS =
-  '낮 시간은 밤 시간 동안 어떤 행동들이 있었는지 추론하며 늑대인간을 찾아내는 시간입니다. ' +
-  '투표를 통해 처단할 플레이어를 결정합니다. ' +
-  '플레이어 중 늑대인간이 아무도 없다면 아무도 처단해서는 안 됩니다. ' +
-  '단, 늑대인간이 없어도 하수인이 있다면 하수인을 처단해야 마을주민팀이 승리합니다. ' +
-  '늑대인간과 하수인이 모두 있다면 하수인이 아닌 늑대인간을 처단해야 마을주민팀이 승리합니다. ' +
-  '이때 하수인은 늑대인간 대신 본인이 처단당하도록 유도하여 늑대인간팀이 승리하도록 돕습니다. ' +
-  '그리고 늑대인간의 존재 여부와 상관 없이 무두장이가 처단된다면 무두장이 혼자 승리합니다.'
+import { narrate, useLines } from '../../lines'
 
 export default function NightEnd({ onComplete, send, isPracticeMode }) {
   const [showDiscussion, setShowDiscussion] = useState(false)
+  // 문장의 소유자는 백엔드다. 화면 문구도 같은 카탈로그에서 읽으므로
+  // 페르소나를 바꾸면 자막과 음성이 함께 바뀐다.
+  const line = useLines()
 
   useEffect(() => {
     const cleanups = []
@@ -20,7 +15,7 @@ export default function NightEnd({ onComplete, send, isPracticeMode }) {
       // 아침이 TTS 종료 → 규칙 설명 TTS 종료 → onComplete 순으로 진행
       const startRuleExplanation = () => {
         setShowDiscussion(true)
-        send?.('TTS_REQUEST', { text: PRACTICE_RULE_TTS })
+        narrate(send, 'werewolf_practice.day_rules')
         // 규칙 TTS가 시작되지 않을 경우 폴백
         const fallback = setTimeout(onComplete, 25000)
         cleanups.push(() => clearTimeout(fallback))
@@ -38,7 +33,7 @@ export default function NightEnd({ onComplete, send, isPracticeMode }) {
 
       // PhaseTransition(dawn) 2500ms 이후 아침이 TTS 시작
       const t1 = setTimeout(() => {
-        send?.('TTS_REQUEST', { text: '아침이 밝았습니다.' })
+        narrate(send, 'werewolf_practice.morning')
         // 아침이 TTS가 시작되지 않을 경우 폴백
         const fallback1 = setTimeout(startRuleExplanation, 8000)
         cleanups.push(() => clearTimeout(fallback1))
@@ -53,11 +48,14 @@ export default function NightEnd({ onComplete, send, isPracticeMode }) {
     } else {
       // 일반 모드: 기존 고정 타이머 유지
       const t1 = setTimeout(() => {
-        send?.('TTS_REQUEST', { text: '아침이 밝았습니다. 모두 눈을 뜨세요.' })
+        // 화면이 큰 제목 + 작은 부제로 나눠 보여주는 두 줄. 발화는 이어서 한다
+        // (오디오 큐가 순서를 지키므로 한 문장처럼 들린다).
+        narrate(send, 'werewolf.morning')
+        narrate(send, 'werewolf.morning_open_eyes')
       }, 4000)
       const t2 = setTimeout(() => {
         setShowDiscussion(true)
-        send?.('TTS_REQUEST', { text: '자, 지금부터 토론을 시작합니다. 늑대인간을 찾아내세요.' })
+        narrate(send, 'werewolf.discussion_start')
       }, 8000)
       const t3 = setTimeout(onComplete, 13000)
       cleanups.push(() => clearTimeout(t1), () => clearTimeout(t2), () => clearTimeout(t3))
@@ -142,8 +140,10 @@ export default function NightEnd({ onComplete, send, isPracticeMode }) {
 
         {/* 텍스트 */}
         <div style={styles.textBlock}>
-          <div style={styles.title}>아침이 밝았습니다</div>
-          {!isPracticeMode && <div style={styles.subtitle}>모두 눈을 뜨세요</div>}
+          <div style={styles.title}>{line('werewolf.morning')}</div>
+          {!isPracticeMode && (
+            <div style={styles.subtitle}>{line('werewolf.morning_open_eyes')}</div>
+          )}
           {showDiscussion && (
             <div style={styles.discussion}>
               {isPracticeMode ? (
@@ -156,7 +156,7 @@ export default function NightEnd({ onComplete, send, isPracticeMode }) {
                     · 무두장이가 처단되면 무두장이 혼자 승리합니다
                   </div>
                 </>
-              ) : '자, 지금부터 토론을 시작합니다. 늑대인간을 찾아내세요.'}
+              ) : line('werewolf.discussion_start')}
             </div>
           )}
         </div>

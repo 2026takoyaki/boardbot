@@ -26,6 +26,11 @@ from games.yacht.state import (
 
 logger = logging.getLogger(__name__)
 
+# 낭독용 족보 이름. **띄어쓰지 않는다.**
+#
+# TTS는 공백을 끊어 읽을 자리로 본다. "풀 하우스"는 "풀"과 "하우스"로 갈려
+# 앞말과 붙어버린다 — "성민님풀 / 하우스 / 25점입니다"처럼 들린다.
+# 한 덩어리로 읽혀야 할 이름은 붙여 쓴다.
 _CATEGORY_TTS_LABELS: dict[str, str] = {
     "ones": "에이스",
     "twos": "투",
@@ -35,9 +40,9 @@ _CATEGORY_TTS_LABELS: dict[str, str] = {
     "sixes": "식스",
     "choice": "초이스",
     "four_of_a_kind": "포카드",
-    "full_house": "풀 하우스",
-    "small_straight": "스몰 스트레이트",
-    "large_straight": "라지 스트레이트",
+    "full_house": "풀하우스",
+    "small_straight": "스몰스트레이트",
+    "large_straight": "라지스트레이트",
     "yacht": "요트",
 }
 
@@ -138,7 +143,7 @@ class YachtFSM(BaseFSM):
     def start(self) -> list[WSMessage]:
         self.state.phase = YachtPhase.AWAITING_ROLL.value
         self.state.state_version += 1
-        self.state.last_message = f"{self.state.current_player.playername}님, 주사위를 굴려주세요."
+        self.state.narrate("yacht.turn_start", player=self.state.current_player.playername)
         return [
             self._make_state_update(),
             self._emit_fusion_context(),
@@ -150,15 +155,13 @@ class YachtFSM(BaseFSM):
         if event.event_type == YachtEventType.ROLL_UNREADABLE.value:
             return self._handle_roll_unreadable(event)
         if event.event_type == YachtEventType.DICE_ESCAPED.value:
-            return self._warn_and_keep_roll_phase(
-                "주사위가 트레이 밖으로 나갔습니다. 다시 굴려주세요."
-            )
+            return self._warn_and_keep_roll_phase("yacht.dice_escaped")
         if event.event_type in (
             YachtEventType.RULE_VIOLATION.value,
             YachtEventType.RULE_VIOLATION_LOWER.value,
         ):
             return self._warn_and_keep_roll_phase(
-                f"지금은 {self.state.current_player.playername}님 차례입니다.",
+                "yacht.wrong_turn", player=self.state.current_player.playername
             )
         return []
 
@@ -220,13 +223,14 @@ class YachtFSM(BaseFSM):
     def restore_state(
         self,
         state: YachtGameState,
-        message: str | None = None,
+        line_id: str | None = None,
+        **params: Any,
     ) -> list[WSMessage]:
         restored_version = max(self.state.state_version, state.state_version) + 1
         self.state = state
         self.state.state_version = restored_version
-        if message is not None:
-            self.state.last_message = message
+        if line_id is not None:
+            self.state.narrate(line_id, **params)
         return self._state_context_messages()
 
     def _handle_roll_confirmed(self, event: GameEvent) -> list[WSMessage]:
@@ -239,7 +243,7 @@ class YachtFSM(BaseFSM):
             return []
         if not self._is_current_actor(event.actor_id):
             return self._warn_and_keep_roll_phase(
-                f"지금은 {self.state.current_player.playername}님 차례입니다.",
+                "yacht.wrong_turn", player=self.state.current_player.playername
             )
 
         dice_values = event.data.get("dice_values", [])
@@ -260,7 +264,7 @@ class YachtFSM(BaseFSM):
             if self.state.roll_count >= 3
             else YachtPhase.AWAITING_KEEP.value
         )
-        self.state.last_message = self._roll_message()
+        self.narrate_roll()
         self.state.state_version += 1
 
         messages = self._state_context_messages()
@@ -302,7 +306,7 @@ class YachtFSM(BaseFSM):
             self.state.keep_mask = self._normalize_keep_mask(data.get("keep_mask"))
         self.state.phase = YachtPhase.AWAITING_ROLL.value
         self.state.state_version += 1
-        self.state.last_message = f"{self.state.current_player.playername}님, 다시 굴려주세요."
+        self.state.narrate("yacht.reroll_prompt", player=self.state.current_player.playername)
         return self._state_context_messages()
 
     def _handle_score_category(self, data: dict, player_id: str | None) -> list[WSMessage]:
@@ -373,8 +377,8 @@ class YachtFSM(BaseFSM):
         if self.state.is_final_round_complete:
             self.state.finish_game()
             self.state.state_version += 1
-            self.state.last_message = (
-                f"{scorer_name}님 {score_label} {score}점입니다. 게임이 종료되었습니다."
+            self.state.narrate(
+                "yacht.game_finish", scorer=scorer_name, label=score_label, score=score
             )
             # Benchmark hook: 정상 게임 종료 (completion_rate 측정용).
             try:
@@ -403,9 +407,12 @@ class YachtFSM(BaseFSM):
 
         self.state.advance_player()
         self.state.phase = YachtPhase.AWAITING_ROLL.value
-        self.state.last_message = (
-            f"{scorer_name}님 {score_label} {score}점입니다. "
-            f"{self.state.current_player.playername}님 차례입니다."
+        self.state.narrate(
+            "yacht.score_recorded",
+            scorer=scorer_name,
+            label=score_label,
+            score=score,
+            next=self.state.current_player.playername,
         )
         return _with_bonus(
             [
@@ -593,12 +600,12 @@ class YachtFSM(BaseFSM):
             "unknown_indices": [int(i) for i in unknown_indices],
         }
         self.state.phase = YachtPhase.AWAITING_SCORE.value
-        self.state.last_message = "읽히지 않은 주사위 값이 있습니다. 화면에서 값을 입력해주세요."
+        self.state.narrate("yacht.dice_unreadable")
         self.state.state_version += 1
         return self._state_context_messages()
 
-    def _warn_and_keep_roll_phase(self, message: str) -> list[WSMessage]:
-        self.state.last_message = message
+    def _warn_and_keep_roll_phase(self, line_id: str, **params: Any) -> list[WSMessage]:
+        self.state.narrate(line_id, **params)
         self.state.state_version += 1
         return [self._make_state_update()]
 
@@ -612,12 +619,20 @@ class YachtFSM(BaseFSM):
         """
         return actor_id in (None, self.state.current_player.player_id)
 
-    def _roll_message(self) -> str:
-        values = ", ".join(str(v) for v in self.state.dice_values)
+    def narrate_roll(self) -> None:
+        """굴림 결과 안내. 마지막 굴림이면 값을 읽어주고, 아니면 남은 기회를 알린다.
+
+        세션의 수동 보정 경로도 이걸 부른다 — 같은 상황에 다른 안내가 나가면
+        안 되므로 판단을 한 곳에 둔다.
+        """
         if self.state.phase == YachtPhase.AWAITING_SCORE.value:
-            return f"주사위 결과는 {values}입니다. 점수 칸을 선택해주세요."
-        remaining_text = {2: "두 번", 1: "한 번"}.get(max(0, 3 - self.state.roll_count), "0번")
-        return f"기회 {remaining_text} 남았습니다. 다시 굴리거나 점수 칸을 선택해주세요."
+            self.state.narrate(
+                "yacht.roll_final",
+                values=", ".join(str(v) for v in self.state.dice_values),
+            )
+            return
+        remaining = {2: "두 번", 1: "한 번"}.get(max(0, 3 - self.state.roll_count), "0번")
+        self.state.narrate("yacht.roll_partial", remaining=remaining)
 
     def _normalize_keep_mask(self, keep_mask: Any) -> list[bool]:
         if not isinstance(keep_mask, list) or len(keep_mask) != 5:

@@ -2,57 +2,41 @@
 
 모든 TTS 발화는 FSM이 아닌 이 에이전트가 전담한다.
 - 요트: FSM의 last_message를 읽어 매 굴림/상태마다 동적으로 발화.
-- 늑대인간: 페이즈별 고정 스크립트(_WEREWOLF_SCRIPTS)를 사용하며, 중복 발화를 방지.
-스크립트는 게임별 dict로 관리하며, {player} 등 템플릿 변수를 지원한다.
+- 늑대인간: 페이즈별 고정 스크립트를 사용하며, 중복 발화를 방지.
+
+멘트 원문은 `agents/tools/lines.py`가 소유한다 — 페르소나가 말투를 바꾸려면 문장이
+한 곳에 모여 있어야 한다. 여기는 "언제 어떤 line_id를 발화할지"만 결정한다.
+
+line_id는 `<game_type>.<fsm_state>`로 그대로 조립한다. 매핑 테이블을 따로 두면
+그 테이블이 또 하나의 문장 소유자가 되어 모아둔 의미가 없어진다.
+
+vote_countdown/final_role_reveal/result는 FUSION_CONTEXT를 emit하지 않으므로 제외.
+day_discussion은 NightEnd 컴포넌트가 "아침이 밝았습니다 → 토론 시작" 순서를
+관리하므로 여기서 발화하면 순서가 충돌한다.
+
+LLM은 안내를 만들지 않는다. 안내는 매 상태 전환마다 나가는 말이라 캐시에서
+즉시 나와야 하고, 생성에 실패하면 진행이 끊긴다. LLM이 붙는 자리는 안내
+'뒤에' 덧붙는 상황 한마디(reaction)뿐이다 — 이건 늦어도 되고, 못 나오면
+그냥 안 나온다. 이미 할 말은 안내가 다 했기 때문이다.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from agents.base import BaseAgent, Intervention
 from agents.context import AgentContext
+from agents.tools import lines, llm
 from core.audio import AudioPriority
 
+# 한마디 덧붙일 자리. 매 굴림마다 코멘트를 달면 진행자가 수다스러워서 게임이
+# 굴러가지 않는다. 점수가 확정되는 순간에만 반응한다.
+_REACTION_LINE_IDS = frozenset({"yacht.score_recorded", "yacht.game_finish"})
 
-# ── 늑대인간 페이즈 스크립트 ────────────────────────────────────────────────────
-# FSM은 상태 전환만 담당. TTS 발화는 ProgressAgent가 전담.
-# catalog.py STATIC_LINES와 동일 문자열 → AudioManager static 캐시 hit.
-# vote_countdown/final_role_reveal/result는 FUSION_CONTEXT를 emit하지 않으므로 제외.
-_WEREWOLF_SCRIPTS: dict[str, str] = {
-    "night_start":        "밤이 되었습니다. 모두 눈을 감아주세요.",
-    "night_doppelganger": "도플갱어는 깨어나세요. 다른 플레이어 1명의 카드를 확인하세요. 그 역할이 됩니다.",
-    "night_werewolf":     "늑대인간은 깨어나세요. 서로를 확인하고 다시 눈을 감으세요.",
-    "night_minion":       "하수인은 깨어나세요. 늑대인간들은 엄지를 들어올려 자신을 알려주세요.",
-    "night_mason":        "프리메이슨은 깨어나세요. 서로를 확인하고 다시 눈을 감으세요.",
-    "night_seer":         "예언자는 깨어나세요. 다른 플레이어 1명 또는 중앙 카드 2장을 확인할 수 있습니다.",
-    "night_robber":       "도둑은 깨어나세요. 다른 플레이어 1명의 카드와 자신의 카드를 교환할 수 있습니다.",
-    "night_troublemaker": "말썽꾼은 깨어나세요. 자신을 제외한 두 플레이어의 카드를 서로 교환하세요.",
-    "night_drunk":        "주정뱅이는 깨어나세요. 중앙 카드 1장을 가져와 자신의 카드와 교환하세요. 새 카드는 볼 수 없습니다.",
-    "night_insomniac":    "불면증환자는 깨어나세요. 자신의 카드를 확인하세요.",
-    # day_discussion: NightEnd 컴포넌트가 "아침이 밝았습니다 → 토론 시작" 순서를 관리.
-    # ProgressAgent가 여기서 발화하면 NightEnd TTS와 순서 충돌 → 제거.
-    # vote_countdown: VoteCountdown.jsx 마운트 시 직접 발화 — FUSION_CONTEXT 타이밍 불일치 방지.
-}
+# 이 점수 아래로는 침묵한다. 4점짜리마다 감탄하면 요트가 터졌을 때 할 말이 없다.
+_REACTION_MIN_SCORE = 20
 
-# 튜토리얼 모드 — 눈을 감지 않고 진행하므로 "깨어나세요" 대신 차례 안내,
-# 각 역할 플레이어가 직접 행동을 수행하는 방식으로 발화. NightRoleAnnounce.jsx의
-# tutorialAnnounce/tutorialAction 문구와 일치시킨다.
-_WEREWOLF_PRACTICE_SCRIPTS: dict[str, str] = {
-    "night_start":        "밤이 되었습니다. 튜토리얼 모드에서는 눈을 감지 않고 역할 순서대로 행동을 진행합니다.",
-    "night_doppelganger": "도플갱어는 기본적으로 마을주민팀이지만 팀이 바뀔 수 있는 역할입니다. 밤 시간에 다른 플레이어 1명의 카드를 확인하고 본인도 그 역할이 됩니다. 확인한 역할이 늑대인간이나 하수인이면 늑대인간팀, 무두장이면 무두장이팀으로 변경됩니다. 낮 시간에 바뀐 역할을 주장하며 혼란을 줄 수 있습니다.",
-    "night_werewolf":     "늑대인간은 늑대인간팀 역할입니다. 밤 시간에 눈을 떠 다른 늑대인간들과 서로를 확인합니다. 낮 시간에 마을주민인 척 행동하며 다른 늑대인간들과 협력해 마을주민들을 처단하도록 유도합니다.",
-    "night_minion":       "하수인은 늑대인간팀 역할입니다. 밤 시간에 늑대인간들이 엄지를 들면 눈을 떠 누가 늑대인간인지 확인합니다. 단, 늑대인간들은 하수인이 누구인지 모릅니다. 낮 시간에 늑대인간으로 의심받을 행동을 하여 늑대인간 대신 본인이 처단당하도록 유도합니다.",
-    "night_mason":        "프리메이슨은 마을주민팀 역할입니다. 프리메이슨은 항상 두 명입니다. 밤 시간에 다른 프리메이슨과 눈을 마주치며 서로를 확인합니다. 낮 시간에 서로를 믿고 협력하며 함께 늑대인간을 찾아냅니다.",
-    "night_seer":         "예언자는 마을주민팀 역할입니다. 밤 시간에 다른 플레이어 1명의 카드를 확인하거나, 중앙 카드 2장을 확인할 수 있습니다. 낮 시간에 본인이 확인한 정보를 바탕으로 마을주민들의 추리를 돕습니다.",
-    "night_robber":       "강도는 마을주민팀 역할입니다. 밤 시간에 다른 플레이어 1명의 카드를 자신의 카드와 맞교환하고 바뀐 역할을 확인합니다. 단, 카드를 빼앗긴 플레이어는 이 사실을 모릅니다. 낮 시간에 바뀐 역할로 행동하며 역할을 빼앗긴 플레이어에게 혼란을 줍니다.",
-    "night_troublemaker": "말썽쟁이는 마을주민팀 역할입니다. 밤 시간에 자신을 제외한 두 플레이어의 카드를 맞교환하며 두 플레이어의 역할은 확인하지 않습니다. 단, 역할이 맞교환된 두 플레이어는 이 사실을 모릅니다. 낮 시간에 플레이어들이 본인의 역할을 잘못 알고 행동하도록 합니다.",
-    "night_drunk":        "주정뱅이는 마을주민팀 역할입니다. 밤 시간에 중앙 카드 1장과 자신의 카드를 교환하며 본인의 바뀐 역할은 확인하지 않습니다. 낮 시간에 자신이 어떤 역할인지 전혀 모른 채 추리에 참여해야 하는 역할입니다.",
-    "night_insomniac":    "불면증환자는 마을주민팀 역할입니다. 밤 시간이 끝날 무렵 가장 마지막으로 자신의 카드를 확인합니다. 카드가 바뀌어 있다면 누군가 본인의 역할을 교환했다는 것을 알 수 있습니다. 낮 시간에 이 정보를 바탕으로 마을주민들의 추리를 돕습니다.",
-}
-
-_SCRIPTS: dict[str, dict[str, str]] = {
-    "werewolf":          _WEREWOLF_SCRIPTS,
-    "werewolf_practice": _WEREWOLF_PRACTICE_SCRIPTS,
-}
+_REACTION_MAX_TOKENS = 80
 
 
 class ProgressAgent(BaseAgent):
@@ -62,6 +46,7 @@ class ProgressAgent(BaseAgent):
 
     def __init__(self) -> None:
         self._last_state: str = ""
+        self._last_reaction: str = ""
 
     def on_state_change(self, ctx: AgentContext) -> Intervention | None:
         if ctx.game_type == "yacht":
@@ -72,8 +57,8 @@ class ProgressAgent(BaseAgent):
         if ctx.game_specific.get("tutorial_mode") and ctx.fsm_state != "AWAITING_ROLL":
             return None
         # 요트는 같은 fsm_state(awaiting_keep 등)가 매 굴림마다 반복되므로
-        # 상태명 중복 체크 대신 last_message 내용으로 TTS 발화를 결정한다.
-        text = ctx.game_specific.get("last_message", "")
+        # 상태명 중복 체크를 하지 않는다 — 굴릴 때마다 새로 안내해야 한다.
+        text = self._render(ctx.game_specific)
         if not text:
             return None
         return Intervention(
@@ -83,19 +68,34 @@ class ProgressAgent(BaseAgent):
             suppress_lower=False,
         )
 
+    @staticmethod
+    def _render(game_specific: dict[str, Any]) -> str:
+        """발화 지시(narration)를 문장으로. 지시가 없으면 last_message로 폴백.
+
+        폴백은 아직 narration으로 옮기지 않은 경로를 위한 것이다. 전부 옮기고
+        나면 지울 것 — 문장이 두 경로로 들어오면 페르소나가 한쪽을 놓친다.
+        """
+        narration = game_specific.get("narration")
+        if narration:
+            rendered = lines.render(
+                str(narration.get("line_id", "")), **narration.get("params", {})
+            )
+            if rendered:
+                return rendered
+        return game_specific.get("last_message") or ""
+
     def _werewolf_progress(self, ctx: AgentContext) -> Intervention | None:
         # 같은 상태로 중복 호출 방지 (늑대인간 페이즈는 게임 내 반복되지 않음)
         if ctx.fsm_state == self._last_state:
             return None
         self._last_state = ctx.fsm_state
 
-        scripts = _SCRIPTS.get(ctx.game_type, {})
-        template = scripts.get(ctx.fsm_state)
-        if not template:
+        text = lines.render(
+            f"{ctx.game_type}.{ctx.fsm_state}",
+            player=ctx.player_name(ctx.active_player) or "",
+        )
+        if not text:
             return None
-
-        player_name = ctx.player_name(ctx.active_player) or ""
-        text = template.replace("{player}", player_name)
 
         return Intervention(
             agent=self.name,
@@ -103,3 +103,75 @@ class ProgressAgent(BaseAgent):
             priority=AudioPriority.NORMAL,
             suppress_lower=False,  # 전략 에이전트와 공존 가능
         )
+
+    # ── 상황 한마디 (LLM, 백그라운드) ──────────────────────────────────────────
+    # 안내가 나간 뒤에 덧붙는다. 안내는 이미 캐시로 즉시 나갔으므로 이 한마디가
+    # 2~3초 늦어도 침묵이 생기지 않는다. 실패하면 그냥 안 붙는다.
+
+    async def reaction(self, ctx: AgentContext) -> Intervention | None:
+        """방금 벌어진 일에 대한 짧은 반응. 반응할 순간이 아니면 None."""
+        moment = self._reaction_moment(ctx)
+        if moment is None:
+            return None
+        line_id, params = moment
+
+        # 같은 굴림에 두 번 반응하지 않는다. 상태 전환이 여러 번 통지될 수 있다.
+        key = f"{line_id}:{params.get('scorer')}:{params.get('label')}:{params.get('score')}"
+        if key == self._last_reaction:
+            return None
+        self._last_reaction = key
+
+        finished = line_id == "yacht.game_finish"
+        # 결과는 바로 앞에서 이미 발표했다. 그걸 알려주지 않으면 이름·족보·
+        # 점수를 그대로 되풀이해서, 같은 말을 두 번 듣게 된다.
+        result = await llm.get_client().complete(
+            llm.persona_style()
+            + "당신은 요트다이스 진행자입니다.\n"
+            "결과 발표와 다음 차례 안내는 방금 당신이 이미 했습니다. "
+            "이제 그 결과에 대한 감상만 한 문장으로 짧게 덧붙이세요.\n"
+            "- 이름, 족보 이름, 점수를 다시 말하지 마세요. 방금 말했습니다.\n"
+            "- 결과를 다시 알리지 말고, 그것에 대해 느낀 것만 말하세요.\n"
+            "- 없는 숫자나 이름을 지어내지 마세요.",
+            "방금 발표한 내용: {who}님이 {label}에 {score}점.{tail}".format(
+                who=params.get("scorer", ""),
+                label=params.get("label", ""),
+                score=params.get("score", 0),
+                tail=" 이걸로 게임이 끝났습니다." if finished else "",
+            ),
+            max_tokens=_REACTION_MAX_TOKENS,
+            tag="progress.reaction",
+        )
+        if not result.text:
+            return None
+        return Intervention(
+            agent=self.name,
+            tts_text=result.text,
+            priority=AudioPriority.NORMAL,
+            suppress_lower=False,
+        )
+
+    @staticmethod
+    def _reaction_moment(ctx: AgentContext) -> tuple[str, dict[str, Any]] | None:
+        """반응할 만한 순간인가. 아니면 None."""
+        narration = ctx.game_specific.get("narration")
+        if not isinstance(narration, dict):
+            return None
+        line_id = str(narration.get("line_id", ""))
+        if line_id not in _REACTION_LINE_IDS:
+            return None
+        params = narration.get("params") or {}
+        if not isinstance(params, dict):
+            return None
+        try:
+            score = int(params.get("score", 0))
+        except (TypeError, ValueError):
+            return None
+        # 게임이 끝나는 순간은 점수와 무관하게 한마디 할 값어치가 있다.
+        if line_id != "yacht.game_finish" and score < _REACTION_MIN_SCORE:
+            return None
+        return line_id, params
+
+    def reset(self) -> None:
+        """새 판 시작 시. 앞 판의 마지막 순간에 다시 반응하지 않도록."""
+        self._last_state = ""
+        self._last_reaction = ""

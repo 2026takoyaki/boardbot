@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { narrate } from '../../lines'
 
 const ROLES = [
   { id: 'doppelganger', name: '도플갱어', image: '/roles/doppelganger.png', team: '마을 팀', color: '#7C3AED' },
@@ -39,9 +40,7 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
 
   useEffect(() => {
     if (!connected) return
-    send?.('TTS_REQUEST', {
-      text: `이번 게임에 사용할 카드 ${toKoreanNum(needed)}장을 선택해주세요. 선택한 카드만 테이블에 올려두고 나머지 카드는 정리해주세요.`,
-    })
+    narrate(send, 'werewolf.role_select_prompt', { count: toKoreanNum(needed) })
   }, [connected])
 
   const selectedRoles = selected

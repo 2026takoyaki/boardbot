@@ -13,6 +13,7 @@ from fastapi import WebSocket
 
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
+from agents.tools import lines
 from audio.manager import AudioManager
 from backend.dev import is_dev_mode
 from bridge.local_bridge import LocalBridge
@@ -61,8 +62,30 @@ class YachtSession:
         # FSM 상태 변경 직렬화 — 비전 스레드와 WS 스레드가 동시에 호출 가능
         self._fsm_lock = threading.Lock()
 
+    async def _speak(self, text: str | None, interrupt_existing: bool = False) -> None:
+        """프론트가 요청한 발화. 같은 문장이 연달아 오면 한 번만 읽는다.
+
+        튜토리얼 화면이 리렌더될 때마다 같은 안내를 다시 보내는 경로가 있어,
+        중복 억제가 없으면 같은 말을 두세 번 반복한다.
+        """
+        if not text or self._audio_manager is None:
+            return
+        if interrupt_existing:
+            await self._audio_manager.interrupt_interruptible("tutorial_step_changed")
+        now = time.monotonic()
+        last_text, last_at = self._last_tts_request
+        if text == last_text and now - last_at < 4.0:
+            return
+        self._last_tts_request = (text, now)
+        state_version = self.fsm.state.state_version if self.fsm is not None else 0
+        await self._audio_manager.enqueue_tts(text=text, state_version=state_version)
+
     async def send_hello(self) -> None:
-        await self.send(WSMessage.make_hello({"game_type": "yacht"}))
+        # 멘트 카탈로그를 접속 시 통째로 준다. 프론트도 같은 문장을 화면에 그려야
+        # 하는데(튜토리얼 인트로 등) 발화마다 왕복하면 타이밍이 흔들린다.
+        await self.send(
+            WSMessage.make_hello({"game_type": "yacht", "lines": lines.catalog()})
+        )
 
     async def dispatch_vision_event(self, event: GameEvent) -> None:
         """yacht_runner가 호출. 비전 이벤트를 FSM에 전달하고 응답을 클라이언트로."""
@@ -105,18 +128,22 @@ class YachtSession:
                 self._agent.set_strategy_enabled(bool(payload.get("enabled", False)))
             return
 
+        if input_type == "NARRATION_REQUEST":
+            # 프론트가 문장이 아니라 line_id를 보낸다. 문장은 백엔드가 소유하므로
+            # 페르소나를 바꾸면 프론트를 건드리지 않아도 말투가 바뀐다.
+            await self._speak(
+                lines.render(
+                    str(payload.get("line_id", "")), **dict(payload.get("params") or {})
+                ),
+                interrupt_existing=bool(payload.get("interrupt_existing")),
+            )
+            return
+
         if input_type == "TTS_REQUEST":
-            text = str(payload.get("text") or "").strip()
-            if text and self._audio_manager is not None:
-                if bool(payload.get("interrupt_existing")):
-                    await self._audio_manager.interrupt_interruptible("tutorial_step_changed")
-                now = time.monotonic()
-                last_text, last_at = self._last_tts_request
-                if text == last_text and now - last_at < 4.0:
-                    return
-                self._last_tts_request = (text, now)
-                state_version = self.fsm.state.state_version if self.fsm is not None else 0
-                await self._audio_manager.enqueue_tts(text=text, state_version=state_version)
+            await self._speak(
+                str(payload.get("text") or "").strip(),
+                interrupt_existing=bool(payload.get("interrupt_existing")),
+            )
             return
 
         if input_type == "BGM_SET":
@@ -239,7 +266,7 @@ class YachtSession:
                     self.fsm.state.dice_values = sorted_values
                     self.fsm.state.keep_mask = sorted_keep_mask
                     self.fsm.state.unreadable_roll = None
-                    self.fsm.state.last_message = self.fsm._roll_message()
+                    self.fsm.narrate_roll()
                     self.fsm.state.state_version += 1
                     messages = self.fsm._state_context_messages()
                     self.undo_stack.append(previous_state)
@@ -317,8 +344,7 @@ class YachtSession:
             player_name = restored_state.current_player.playername
             with self._fsm_lock:
                 messages = self.fsm.restore_state(
-                    restored_state,
-                    f"{player_name}님의 주사위 굴림을 되돌렸습니다.",
+                    restored_state, "yacht.undo_roll", player=player_name
                 )
             await self.send_many(messages)
             return
@@ -338,6 +364,12 @@ class YachtSession:
         players = _normalize_players(payload.get("players"))
         self.tutorial_mode = _is_tutorial_mode(payload)
         self.tutorial_complete = False
+        if self._agent is not None:
+            # 코치가 화면에도 떠야 한다. 조언은 듣고 흘리는 안내가 아니라
+            # 눈으로 확인하며 따라가는 것이라 통로를 열어준다.
+            self._agent.set_broadcast(self.send)
+            # 앞 판에서 이미 설명한 조작법을 새 판에서 또 설명하지 않도록.
+            self._agent.reset_for_new_game()
         with self._fsm_lock:
             self.undo_stack = []
             self.fsm = YachtFSM(players)
@@ -354,14 +386,13 @@ class YachtSession:
             # 짧아야 한다. 이 문장은 ProgressAgent가 매 턴 그대로 읽는데,
             # 세 명이 열두 라운드를 돌면 서른여섯 번 들린다. 굴리는 법은
             # 화면 인트로에서 한 번 설명했으므로 여기서는 차례만 알린다.
-            self.fsm.state.last_message = (
-                f"{self.fsm.state.current_player.playername}님 차례입니다. 주사위를 굴려주세요."
+            self.fsm.state.narrate(
+                "yacht.tutorial_turn_start",
+                player=self.fsm.state.current_player.playername,
             )
         elif self.fsm.state.phase == YachtPhase.AWAITING_KEEP.value:
             remaining = {2: "두 번", 1: "한 번"}.get(max(0, 3 - self.fsm.state.roll_count), "0번")
-            self.fsm.state.last_message = (
-                f"기회 {remaining} 남았습니다. 다시 굴리거나 점수 칸을 선택해주세요."
-            )
+            self.fsm.state.narrate("yacht.roll_partial", remaining=remaining)
         else:
             return
 
@@ -393,9 +424,8 @@ class YachtSession:
         if others:
             others[0].scores["choice"] = 6
         self.fsm.state.state_version += 1
-        self.fsm.state.last_message = (
-            f"[개발] 후반 상황을 만들었습니다. {self.fsm.state.current_player.playername}님이 "
-            "크게 넣으면 역전 연출이 뜹니다."
+        self.fsm.state.narrate(
+            "yacht.dev_late_game", player=self.fsm.state.current_player.playername
         )
 
     def _roll_was_recorded(self, previous_state: YachtGameState) -> bool:
@@ -422,9 +452,7 @@ class YachtSession:
         if not all(len(player.scores) >= 1 for player in self.fsm.state.players):
             return
         self.tutorial_complete = True
-        self.fsm.state.last_message = (
-            "튜토리얼이 끝났습니다. 게임 선택 화면으로 돌아가거나 정식 게임을 시작해보세요."
-        )
+        self.fsm.state.narrate("yacht.tutorial_complete")
         self.fsm.state.state_version += 1
         messages.append(
             WSMessage(
@@ -485,6 +513,8 @@ class YachtSession:
             "dice_values": list(state.dice_values),
             "available_categories": list(state.available_categories),
             "roll_count": state.roll_count,
+            # 문장이 아니라 발화 지시를 넘긴다. 문장 조립은 ProgressAgent가 한다.
+            "narration": state.narration,
             "last_message": state.last_message,
             "tutorial_mode": self.tutorial_mode,
         }
@@ -517,6 +547,16 @@ class YachtSession:
             message.payload["can_undo"] = bool(self.undo_stack)
             message.payload["tutorial_mode"] = self.tutorial_mode
             message.payload["tutorial_complete"] = self.tutorial_complete
+            # 화면 상태줄 문구. FSM은 line_id만 내보내므로 여기서 문장으로 만든다.
+            # ProgressAgent가 발화할 때와 같은 카탈로그를 쓰니 화면과 음성이
+            # 어긋나지 않는다 — 페르소나가 걸리면 둘 다 같이 바뀐다.
+            narration = message.payload.get("narration")
+            if narration:
+                rendered = lines.render(
+                    str(narration.get("line_id", "")), **narration.get("params", {})
+                )
+                if rendered:
+                    message.payload["last_message"] = rendered
         # 조명은 프론트엔드와 같은 스트림을 본다. 화면이 state_update로 다시
         # 그리듯 조명도 같은 메시지로 Scene을 잡으므로 트리거 누락이 없다.
         if self._light is not None:

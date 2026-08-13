@@ -2,6 +2,10 @@
 
 asyncio 백그라운드 태스크로 동작. 상태 전환 시 기존 태스크를 취소하고 새로 시작.
 turn_timeout이 None이면 타이머를 만들지 않는다.
+
+LLM은 여기서 직접 부르지 않는다. 재촉은 제때 나와야 재촉이라 생성 지연을
+감당할 수 없다 — 변형 문장은 게임 시작 전에 agents/tools/tempo_pool.py가
+미리 만들어 두고, 이 에이전트는 그중 하나를 뽑아 쓰기만 한다.
 """
 
 from __future__ import annotations
@@ -11,19 +15,20 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
-from core.audio import AudioPriority
-
 from agents.context import AgentContext
+from agents.tools import lines, tempo_pool
+from core.audio import AudioPriority
 
 logger = logging.getLogger(__name__)
 
 TtsCb = Callable[[str, AudioPriority], Awaitable[None]]
 
-# (경과 비율, 안내 멘트) — 타임아웃의 해당 비율 시점에 발화
+# (경과 비율, line_id) — 타임아웃의 해당 비율 시점에 발화.
+# 멘트 원문은 agents/tools/lines.py가 소유한다 (페르소나 일괄 변환 대상).
 _MILESTONES: list[tuple[float, str]] = [
-    (0.5,  "절반의 시간이 지났습니다."),
-    (0.8,  "시간이 얼마 남지 않았습니다."),
-    (0.95, "시간이 거의 다 됐습니다!"),
+    (0.5,  "tempo.half"),
+    (0.8,  "tempo.hurry"),
+    (0.95, "tempo.almost"),
 ]
 
 
@@ -33,7 +38,7 @@ class TempoAgent:
     name = "tempo"
 
     def __init__(self) -> None:
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._tts_cb: TtsCb | None = None
 
     def set_tts_callback(self, cb: TtsCb) -> None:
@@ -45,7 +50,7 @@ class TempoAgent:
         if ctx.turn_timeout is None or ctx.turn_timeout <= 0:
             return
         self._task = asyncio.create_task(
-            self._run(ctx.turn_start_time, ctx.turn_timeout, ctx.phase_end_warning)
+            self._run(ctx.turn_start_time, ctx.turn_timeout, ctx.phase_end_warning_line)
         )
 
     def stop(self) -> None:
@@ -56,10 +61,12 @@ class TempoAgent:
             self._task.cancel()
         self._task = None
 
-    async def _run(self, start_time: float, timeout: float, end_warning: str | None = None) -> None:
+    async def _run(
+        self, start_time: float, timeout: float, end_warning_line: str | None = None
+    ) -> None:
         if self._tts_cb is None:
             return
-        if end_warning and timeout > 4:
+        if end_warning_line and timeout > 4:
             # 페이즈 종료 4초 전 경고 (야간 페이즈용). 비율 마일스톤 대신 사용.
             fire_at = start_time + timeout - 4
             wait = fire_at - time.time()
@@ -68,12 +75,9 @@ class TempoAgent:
                     await asyncio.sleep(wait)
                 except asyncio.CancelledError:
                     return
-            try:
-                await self._tts_cb(end_warning, AudioPriority.HIGH)
-            except Exception:
-                logger.exception("[TempoAgent] TTS 발화 실패")
+            await self._say(end_warning_line)
         else:
-            for ratio, text in _MILESTONES:
+            for ratio, line_id in _MILESTONES:
                 fire_at = start_time + timeout * ratio
                 wait = fire_at - time.time()
                 if wait > 0:
@@ -81,7 +85,14 @@ class TempoAgent:
                         await asyncio.sleep(wait)
                     except asyncio.CancelledError:
                         return
-                try:
-                    await self._tts_cb(text, AudioPriority.HIGH)
-                except Exception:
-                    logger.exception("[TempoAgent] TTS 발화 실패")
+                await self._say(line_id)
+
+    async def _say(self, line_id: str) -> None:
+        """미리 만들어 둔 변형 중 하나로 말한다. 없으면 고정 멘트 그대로."""
+        text = tempo_pool.pick(line_id) or lines.get(line_id)
+        if not text or self._tts_cb is None:
+            return
+        try:
+            await self._tts_cb(text, AudioPriority.HIGH)
+        except Exception:
+            logger.exception("[TempoAgent] TTS 발화 실패")

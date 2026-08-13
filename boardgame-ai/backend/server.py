@@ -17,21 +17,22 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 import cv2
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
+from agents.orchestrator import AgentOrchestrator
+from agents.personas import get_persona
 from audio.catalog import BGM_DIR, SFX_DIR, TTS_CACHE_DIR
 from audio.manager import AudioManager
-from audio.prewarm import prewarm_static
 from audio.tts_engine import TTSEngine
-from agents.orchestrator import AgentOrchestrator
 from backend.dev import DEV_ENV_VAR, is_dev_mode, seat_registration_events
 from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
+from backend.persona_control import apply_persona
 from backend.routes.players import router as players_router
 from backend.werewolf_runner import WerewolfRunner
 from backend.werewolf_session import WerewolfSession
@@ -46,13 +47,9 @@ from vision.yacht.config import VisionConfig
 
 logger = logging.getLogger(__name__)
 
-# .env를 가장 먼저 로드해 GOOGLE_APPLICATION_CREDENTIALS가 TTSEngine 초기화 전에 반영되도록.
-# 상대경로는 boardgame-ai 루트 기준으로 절대경로화.
+# .env를 가장 먼저 로드해 TYPECAST_API_KEY가 TTS 어댑터 초기화 전에 반영되도록.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
-_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-if _creds and not Path(_creds).is_absolute():
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(_PROJECT_ROOT / _creds)
 
 
 @asynccontextmanager
@@ -75,14 +72,21 @@ async def lifespan(app: FastAPI):
     if bench_dir is not None:
         logger.info("BENCH_TRACE active. Results: %s", bench_dir)
 
-    # 오디오: TTSEngine + AudioManager 부팅, static 사전 합성
+    # 오디오: TTSEngine + AudioManager 부팅, static 사전 합성.
+    # 목소리는 페르소나가 소유한다. 어떤 페르소나로 시작할지는 여기서 고른다 —
+    # audio 계층은 페르소나를 받아 쓸 뿐 고르지 않는다.
     tts_engine = TTSEngine()
     audio_manager = AudioManager(tts_engine)
-    if tts_engine.is_available():
-        stats = await prewarm_static(tts_engine)
-        logger.info("audio prewarm_static: %s", stats)
-    else:
-        logger.warning("TTS engine not available — STATIC/SESSION 캐시 hit만 동작")
+    # 목소리·말투·화면 문구를 한 번에 맞춘다. 셋이 따로 놀면 목소리만 바뀌고
+    # 말투는 그대로이거나, 음성과 자막이 다른 말을 하게 된다.
+    # 변환 파일이 없거나 검사에 걸린 줄은 중립 원문으로 나간다.
+    # 엔진 가용성은 페르소나가 고른 엔진 기준으로 본다. 페르소나마다 엔진이
+    # 다를 수 있어서, 기본 엔진만 보면 엉뚱한 판단을 한다.
+    persona = get_persona(os.environ.get("PERSONA"))
+    tts_ok = tts_engine.is_available(persona.voice_for())
+    if not tts_ok:
+        logger.warning("TTS 엔진(%s)을 쓸 수 없습니다 — 캐시 hit만 동작합니다", persona.provider)
+    await apply_persona(persona.id, audio_manager, prewarm=tts_ok)
 
     # 조명: 전구가 없어도 서버는 그대로 뜬다.
     # 실제 전구는 LIGHT_DRIVER=yeelight + LIGHT_BULB_IP 로 opt-in.
@@ -195,6 +199,33 @@ app.mount("/bgm", StaticFiles(directory=str(BGM_DIR)), name="bgm")
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/debug/agents")
+def debug_agents() -> dict[str, Any]:
+    """지금 에이전트가 어떤 상태인지 한눈에.
+
+    LLM 실패는 규칙 기반으로 조용히 폴백하므로 로그를 뒤지지 않으면 "LLM이
+    그냥 안 붙은 것"과 구분되지 않는다. 여기서 사유가 보이게 한다.
+    """
+    from agents.tools import lines, llm, tempo_pool
+
+    persona = get_persona(lines.active_persona_id())
+    return {
+        "persona": {
+            "id": persona.id,
+            "display_name": persona.display_name,
+            "voice": persona.voice_name,
+            "provider": persona.provider,
+            "말투_적용": f"{lines.applied_count()}/{len(lines.LINES)}",
+        },
+        "llm": llm.get_client().stats(),
+        "tempo_pool": tempo_pool.stats(),
+        "tts": {
+            "engine": persona.provider,
+            "available": app.state.tts_engine.is_available(persona.voice_for()),
+        },
+    }
 
 
 # ── 개발 모드 ─────────────────────────────────────────────────────────────────
@@ -332,8 +363,9 @@ async def ws_tablet(websocket: WebSocket) -> None:
 def _bench_ws_log(event: str, path: str) -> None:
     """Benchmark hook (BENCH_TRACE=1에서만 실제 기록)."""
     try:
-        from benchmarks.common.trace_setup import bench_log
         import time as _t
+
+        from benchmarks.common.trace_setup import bench_log
         bench_log().info("ws_%s %s %.6f", event, path, _t.time())
     except Exception:
         pass

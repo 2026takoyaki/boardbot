@@ -27,9 +27,7 @@ const STEPS = [
     title: '주사위 5개로 족보를 만듭니다',
     body: `같은 눈을 모으거나 연속된 눈을 만들면 점수가 됩니다. 점수판 ${TOTAL_ROUNDS}칸을 `
       + '하나씩 채워가고, 다 채웠을 때 총점이 가장 높은 사람이 이깁니다.',
-    narration:
-      '요트다이스는 주사위 다섯 개로 족보를 만드는 게임입니다. '
-      + '점수판 열두 칸을 하나씩 채워가고, 총점이 가장 높은 사람이 이깁니다.',
+    lineId: 'yacht.intro_what',
     visual: <WhatVisual />,
   },
   {
@@ -38,9 +36,7 @@ const STEPS = [
     title: '한 턴에 세 번까지 굴립니다',
     body: '마음에 드는 눈은 남기고 나머지만 다시 굴립니다. 세 번을 다 쓰지 않고 '
       + '중간에 멈춰도 됩니다.',
-    narration:
-      '한 턴에 주사위를 세 번까지 굴릴 수 있습니다. '
-      + '마음에 드는 눈은 남기고 나머지만 다시 굴리면 됩니다.',
+    lineId: 'yacht.intro_turn',
     visual: <TurnVisual />,
   },
   {
@@ -50,9 +46,7 @@ const STEPS = [
     body: '남길 주사위는 트레이 한쪽의 킵 존으로 옮겨두고, 나머지만 다시 굴리세요. '
       + '카메라가 알아서 읽습니다. '
       + '눈이 잘못 읽혔다면 화면의 “주사위 눈 수정”으로 바로잡을 수 있습니다.',
-    narration:
-      '주사위는 직접 손으로 굴리고, 남길 주사위는 트레이 한쪽의 킵 존으로 옮겨주세요. '
-      + '카메라가 알아서 읽습니다. 태블릿에서는 점수 칸만 고르면 됩니다.',
+    lineId: 'yacht.intro_table',
     visual: <TableVisual />,
   },
   {
@@ -62,23 +56,21 @@ const STEPS = [
     body: '점수판에 예상 점수가 미리 보입니다. 원하는 칸을 누르면 그 점수로 확정됩니다. '
       + `한 번 채운 칸은 다시 쓸 수 없고, 위쪽 여섯 칸 합이 ${BONUS_THRESHOLD}점을 넘으면 `
       + `보너스 ${BONUS_SCORE}점을 받습니다.`,
-    narration:
-      '굴림이 끝나면 점수판에서 칸을 하나 골라주세요. 예상 점수가 미리 표시됩니다. '
-      + '한 번 채운 칸은 다시 쓸 수 없으니 신중하게 고르세요.',
+    lineId: 'yacht.intro_score',
     visual: <ScoreVisual />,
   },
 ]
 
-export default function YachtTutorial({ onDone, onNarrate }) {
+export default function YachtTutorial({ onDone, onNarrateLine }) {
   const [index, setIndex] = useState(0)
   const step = STEPS[index]
   const isLast = index === STEPS.length - 1
 
-  // 낭독은 카드가 바뀔 때 한 번만. onNarrate가 매 렌더 새로 만들어져도
+  // 낭독은 카드가 바뀔 때 한 번만. onNarrateLine이 매 렌더 새로 만들어져도
   // 같은 문장을 다시 읽지 않도록 ref에 담아 의존성에서 뺀다.
-  const narrateRef = useRef(onNarrate)
-  useEffect(() => { narrateRef.current = onNarrate }, [onNarrate])
-  useEffect(() => { narrateRef.current?.(STEPS[index].narration) }, [index])
+  const narrateRef = useRef(onNarrateLine)
+  useEffect(() => { narrateRef.current = onNarrateLine }, [onNarrateLine])
+  useEffect(() => { narrateRef.current?.(STEPS[index].lineId) }, [index])
 
   return (
     <div style={styles.overlay}>

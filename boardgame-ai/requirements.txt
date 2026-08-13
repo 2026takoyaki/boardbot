@@ -12,8 +12,8 @@ fastapi
 uvicorn[standard]
 websockets
 
-# 오디오
-google-cloud-texttospeech>=2.16
+# 오디오. TTS는 Typecast REST API를 쓴다(audio/tts/typecast.py).
+httpx>=0.27
 aiofiles>=23.0
 
 # 조명. 설치는 하되 사용은 opt-in이다 — LIGHT_DRIVER=yeelight 일 때만 쓰이고,

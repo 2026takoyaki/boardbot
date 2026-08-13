@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from core.audio import AudioPriority
-from core.constants import AgentRole
+from core.constants import AgentRole, MsgType
+from core.envelope import WSMessage
 from core.events import GameEvent
 
 from agents.base import Intervention
@@ -37,6 +39,8 @@ if TYPE_CHECKING:
     from audio.manager import AudioManager
 
 logger = logging.getLogger(__name__)
+
+MessageCb = Callable[[WSMessage], Awaitable[None]]
 
 _AGENT_ROLE_MAP: dict[str, str] = {
     "rules":    AgentRole.REFEREE.value,
@@ -55,12 +59,31 @@ class AgentOrchestrator:
         self._strategy = StrategyAgent()
         self._current_ctx: AgentContext | None = None
         self._state_version: int = 0
+        self._broadcast: MessageCb | None = None
+        self._tasks: set[asyncio.Task[None]] = set()
+        # 훈수만 따로 붙잡는다. 새 상황이 오면 앞의 것을 취소해야 하는데,
+        # 한마디까지 같이 취소하면 점수가 확정된 순간의 반응이 매번 사라진다.
+        self._strategy_task: asyncio.Task[None] | None = None
 
         self._tempo.set_tts_callback(
             lambda text, prio: self._send_tts(text, prio, AgentRole.TEMPO.value)
         )
 
     # ── 공개 인터페이스 ────────────────────────────────────────────────────────
+
+    def set_broadcast(self, cb: MessageCb) -> None:
+        """화면에도 띄워야 하는 개입(코치 등)을 내보낼 통로.
+
+        오디오는 AudioManager가 알아서 가지만, 눈으로 보며 따라야 하는 조언은
+        화면까지 가야 한다. 설정하지 않으면 발화만 하고 화면은 건드리지 않는다.
+        """
+        self._broadcast = cb
+
+    def reset_for_new_game(self) -> None:
+        """새 판 시작 시 호출 — 에이전트가 앞 판에 대해 기억하는 것을 비운다."""
+        self._strategy.reset_coach()
+        self._progress.reset()
+        self._rules.reset()
 
     def set_strategy_enabled(self, enabled: bool) -> None:
         self._strategy.set_enabled(enabled)
@@ -84,48 +107,161 @@ class AgentOrchestrator:
             if result.suppress_lower:
                 return
 
-        # 3) 전략 에이전트 — 백그라운드로 실행 (지연이 있어도 게임 흐름 차단 없음)
-        asyncio.create_task(self._run_strategy(ctx))
+        # 3) LLM을 쓰는 것들 — 백그라운드로 (지연이 있어도 게임 흐름 차단 없음).
+        # 지금의 state_version을 넘긴다. 2~4초 뒤 돌아왔을 때 self._state_version은
+        # 이미 다음 단계를 가리키므로, 그때 읽으면 옛 상황에 대한 말이 최신으로
+        # 둔갑한다.
+        #
+        # 둘을 따로 띄우는 이유는 취소 여부가 다르기 때문이다.
+        #   훈수    지금 그 결정에 대한 말 → 판이 넘어가면 쓸모가 없다
+        #   한마디  이미 벌어진 일에 대한 말 → 판이 넘어가도 유효하다
+        self._start_strategy(ctx, state_version)
+        self._track(asyncio.create_task(self._run_reaction(ctx, state_version)))
+
+    def _start_strategy(self, ctx: AgentContext, version: int) -> None:
+        """훈수 생성을 시작한다. 앞의 것이 아직 돌고 있으면 취소한다.
+
+        취소하지 않으면 굴림이 빠를 때 호출만 쌓이고 결과는 전부 버려진다 —
+        실측으로 0.2초 간격 전환 10회에 LLM 호출 10건이 뜨고 9건이 폐기됐다.
+        어차피 못 쓸 말을 만드느라 돈과 커넥션을 쓰는 셈이다.
+        """
+        if self._strategy_task is not None and not self._strategy_task.done():
+            self._strategy_task.cancel()
+        self._strategy_task = asyncio.create_task(self._run_strategy(ctx, version))
+        self._track(self._strategy_task)
+
+    def _track(self, task: asyncio.Task[None]) -> None:
+        """태스크 참조를 붙잡아 둔다 — 놓으면 GC가 실행 도중 회수할 수 있다."""
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def on_game_event(self, event: GameEvent) -> None:
         """게임 이벤트 수신 시 세션에서 호출 (FSM 처리 이전에 호출 권장)."""
         if self._current_ctx is None:
             return
         result = self._rules.on_game_event(event, self._current_ctx)
-        if result:
-            await self._dispatch(result)
+        if not result:
+            return
+        # 제지가 먼저, 이유는 나중에. 설명을 기다렸다 함께 내보내면 이미 굴러간
+        # 주사위 뒤에 제지가 도착한다.
+        await self._dispatch(result)
+        self._track(
+            asyncio.create_task(self._run_rules_explain(result, self._state_version))
+        )
 
     def stop(self) -> None:
-        """세션 종료 시 호출 — 백그라운드 타이머 정리."""
+        """세션 종료 시 호출 — 백그라운드 타이머·태스크 정리.
+
+        정리하지 않으면 죽은 세션의 전략 태스크가 살아남아 이미 닫힌 소켓으로
+        발화를 밀어 넣는다.
+        """
         self._tempo.stop()
+        for task in list(self._tasks):
+            if not task.done():
+                task.cancel()
+        self._tasks.clear()
+        self._strategy_task = None
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
 
-    async def _run_strategy(self, ctx: AgentContext) -> None:
-        result = await self._strategy.on_state_change_async(ctx)
-        if result:
-            await self._dispatch(result)
+    async def _run_rules_explain(self, violation: Intervention, version: int) -> None:
+        detail = await self._rules.explain(violation)
+        if detail:
+            await self._dispatch(detail, version)
 
-    async def _dispatch(self, intervention: Intervention) -> None:
+    async def _run_reaction(self, ctx: AgentContext, version: int) -> None:
+        """방금 벌어진 일에 대한 한마디.
+
+        판이 넘어갔어도 버리지 않는다 — 이미 벌어진 일에 대한 말이라 2초 늦었다고
+        틀린 말이 되지 않는다. 반응할 순간이 아니면 LLM을 부르지도 않는다.
+        """
+        reaction = await self._progress.reaction(ctx)
+        if reaction:
+            await self._dispatch(reaction, version)
+
+    async def _run_strategy(self, ctx: AgentContext, version: int) -> None:
+        result = await self._strategy.on_state_change_async(ctx)
+        if not result:
+            return
+        # "여기에 넣으세요"는 지금 그 결정을 앞둔 사람에게만 맞는 말이고,
+        # 이미 넣은 뒤에 도착하면 틀린 말이 된다. 취소가 늦어 살아남은 경우를
+        # 대비해 내보내기 직전에 한 번 더 본다.
+        if self._is_stale(version):
+            logger.debug("[AgentOrchestrator] 지난 상황의 훈수를 버림 (v=%d)", version)
+            return
+        await self._dispatch(result, version)
+
+    def _is_stale(self, version: int) -> bool:
+        """이 개입이 만들어진 뒤로 판이 넘어갔는가.
+
+        state_version을 쓰지 않는 게임(0으로 고정)에서는 항상 False다 —
+        판단할 근거가 없으면 말하는 쪽을 택한다.
+        """
+        return version > 0 and version < self._state_version
+
+    async def _dispatch(self, intervention: Intervention, version: int | None = None) -> None:
+        """개입을 화면·음성으로 내보낸다.
+
+        version은 이 개입이 **어느 상황에 대한 것인지**다. 백그라운드에서 늦게
+        만들어진 개입은 반드시 만들어질 당시의 값을 넘겨야 한다. 생략하면
+        지금 값을 쓰는데, 그러면 옛 상황에 대한 말이 최신으로 찍혀 AudioManager의
+        stale 폐기를 그대로 통과한다.
+        """
+        stamp = self._state_version if version is None else version
+        # 화면 먼저. 조언은 듣기 전에 눈에 들어와 있어야 따라갈 수 있고,
+        # 합성 지연을 기다렸다 띄우면 말이 끝난 뒤에 글이 뜬다.
+        if intervention.display:
+            await self._send_agent_message(intervention, stamp)
         if intervention.tts_text:
+            # delivery가 있으면 그 말투로. 목소리는 페르소나 것 그대로고
+            # 톤만 갈린다(AudioManager가 agent 값으로 말투를 고른다).
             await self._send_tts(
                 intervention.tts_text,
                 intervention.priority,
-                agent=_AGENT_ROLE_MAP.get(intervention.agent, AgentRole.NARRATOR.value),
+                agent=intervention.delivery
+                or _AGENT_ROLE_MAP.get(intervention.agent, AgentRole.NARRATOR.value),
+                sequence_id=intervention.sequence_id,
+                seq_index=intervention.seq_index,
+                state_version=stamp,
             )
+
+    async def _send_agent_message(self, intervention: Intervention, version: int) -> None:
+        """화면에 띄울 에이전트 발언. text가 비면 화면에서 지우라는 뜻이다."""
+        if self._broadcast is None:
+            return
+        msg = WSMessage(
+            msg_type=MsgType.AGENT_MESSAGE.value,
+            payload={
+                "agent": intervention.agent,
+                "text": intervention.tts_text or "",
+                "transient": intervention.transient,
+            },
+            state_version=version,
+        )
+        try:
+            await self._broadcast(msg)
+        except Exception:
+            logger.exception("[AgentOrchestrator] agent_message 전송 실패")
 
     async def _send_tts(
         self,
         text: str,
         priority: AudioPriority,
         agent: str = AgentRole.NARRATOR.value,
+        sequence_id: str | None = None,
+        seq_index: int = 0,
+        state_version: int | None = None,
     ) -> None:
         try:
             await self._audio.enqueue_tts(
                 text=text,
                 agent=agent,
                 priority=priority,
-                state_version=self._state_version,
+                sequence_id=sequence_id,
+                seq_index=seq_index,
+                state_version=(
+                    self._state_version if state_version is None else state_version
+                ),
             )
         except Exception:
             logger.exception("[AgentOrchestrator] TTS 전송 실패 (agent=%s)", agent)

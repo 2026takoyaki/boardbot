@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react'
+import { narrate } from '../../lines'
 
 const ROLE_NAMES = {
   doppelganger: '도플갱어',
@@ -84,9 +85,7 @@ export default function GameEndWW({
   }, [deckRoles])
 
   useEffect(() => {
-    send?.('TTS_REQUEST', {
-      text: `${headline}. 이제 각자 자신의 카드를 공개해 주세요. 승패는 여러분이 직접 확인하시면 됩니다.`,
-    })
+    narrate(send, 'werewolf.game_end', { headline })
   }, [])
 
   return (

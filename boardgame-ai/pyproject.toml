@@ -37,6 +37,12 @@ strict = true
 module = ["vision.*", "games.*", "audio.*", "backend.*"]
 disallow_untyped_defs = false
 
+# 타입 스텁을 제공하지 않는 서드파티. 설치되어 있을 때만 mypy가 보게 되므로,
+# 개발 환경마다 오류 수가 달라지는 것을 막는다.
+[[tool.mypy.overrides]]
+module = ["google.cloud.*", "openai.*", "yeelight.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

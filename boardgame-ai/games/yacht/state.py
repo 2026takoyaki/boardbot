@@ -63,7 +63,13 @@ class YachtGameState:
     state_version: int = 0
     winner: str | None = None
     unreadable_roll: dict[str, Any] | None = None
+    # 화면 상태줄 문구. narration이 있으면 백엔드가 그것을 렌더해 채운다 —
+    # FSM은 문장을 만들지 않는다.
     last_message: str | None = None
+    # 발화 지시: {"line_id": ..., "params": {...}}. "무슨 말을 할지"가 아니라
+    # "무슨 일이 일어났는지"만 담는다. 문장은 agents/tools/lines.py가 소유하고,
+    # 페르소나가 걸리면 같은 line_id가 다른 말투로 렌더된다.
+    narration: dict[str, Any] | None = None
 
     @classmethod
     def new(cls, players: list[Player | str | dict[str, Any]]) -> YachtGameState:
@@ -128,6 +134,17 @@ class YachtGameState:
         self.keep_mask = [False] * 5
         self.unreadable_roll = None
 
+    def narrate(self, line_id: str, **params: Any) -> None:
+        """이번 전이에서 무슨 일이 일어났는지 기록한다. 문장은 만들지 않는다.
+
+        값이 None인 파라미터는 버린다 — 슬롯이 빈 채로 렌더되는 편이
+        "None님 차례입니다"보다 낫다.
+        """
+        self.narration = {
+            "line_id": line_id,
+            "params": {k: v for k, v in params.items() if v is not None},
+        }
+
     def finish_game(self) -> None:
         self.phase = YachtPhase.GAME_END.value
         best_total = max(p.total for p in self.players)
@@ -151,4 +168,5 @@ class YachtGameState:
             "winner": self.winner,
             "unreadable_roll": self.unreadable_roll,
             "last_message": self.last_message,
+            "narration": self.narration,
         }

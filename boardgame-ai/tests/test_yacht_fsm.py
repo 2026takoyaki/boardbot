@@ -33,9 +33,13 @@ def test_start_sends_roll_context_for_first_player():
     assert ctx["allowed_actors"] == ["p1"]
     assert YachtEventType.ROLL_CONFIRMED.value in ctx["expected_events"]
     assert YachtEventType.ROLL_UNREADABLE.value in ctx["expected_events"]
-    # TTS는 FSM이 아닌 ProgressAgent가 last_message를 읽어 발화
+    # FSM은 문장을 만들지 않는다 — line_id와 데이터만 내보내고 문장 조립은
+    # ProgressAgent(agents/tools/lines.py)가 한다. TTS도 FSM이 아닌 에이전트가 발화.
     assert _messages_of(msgs, MsgType.TTS_PLAY.value) == []
-    assert fsm.state.last_message == "p1님, 주사위를 굴려주세요."
+    assert fsm.state.narration == {
+        "line_id": "yacht.turn_start",
+        "params": {"player": "p1"},
+    }
 
 
 def test_roll_confirmed_moves_to_keep_before_third_roll():
@@ -110,10 +114,12 @@ def test_score_selection_records_score_and_advances_player():
     assert fsm.state.current_player.player_id == "p2"
     assert fsm.state.phase == YachtPhase.AWAITING_ROLL.value
     assert _messages_of(msgs, MsgType.FUSION_CONTEXT.value)[0].payload["active_player"] == "p2"
-    # TTS는 FSM이 아닌 ProgressAgent가 last_message를 읽어 발화
+    # TTS는 FSM이 아닌 ProgressAgent가 narration을 렌더해 발화
     assert _messages_of(msgs, MsgType.TTS_PLAY.value) == []
-    assert "에이스" in fsm.state.last_message
-    assert "2점" in fsm.state.last_message
+    assert fsm.state.narration == {
+        "line_id": "yacht.score_recorded",
+        "params": {"scorer": "p1", "label": "에이스", "score": 2, "next": "p2"},
+    }
 
 
 def test_turn_transition_emits_cue_with_structured_payload():

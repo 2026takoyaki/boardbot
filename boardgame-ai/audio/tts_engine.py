@@ -1,7 +1,8 @@
-"""Google Cloud TTS 비동기 래퍼.
+"""TTS 합성 + 디스크 캐시.
 
 캐시 정책:
-- cache_key = sha1(text + voice.name + speaking_rate + pitch).
+- cache_key = sha1(엔진 + 보이스 설정 + 텍스트). 엔진이 키에 들어가야
+  엔진을 바꿨을 때 옛 음성이 재생되지 않는다.
 - 결과 wav는 cache_layer에 따라 static/session/<id>/dynamic/ 하위에 저장.
 - synthesize() 호출 시 캐시 hit이면 API 호출 0회, 즉시 Path 반환.
 
@@ -9,11 +10,11 @@
 - asyncio.Semaphore(max_concurrency)로 동시 API 호출 제한 → quota burst 방지. 기본값 4.
 
 장애 처리:
-- Google API 실패/타임아웃 시 None 반환. 상위(AudioManager)가 text-only fallback 결정.
+- 엔진 실패/타임아웃 시 None 반환. 상위(AudioManager)가 text-only fallback 결정.
 
 환경:
-- GOOGLE_APPLICATION_CREDENTIALS 환경변수가 서비스 계정 JSON 키 경로를 가리켜야 함.
-- 미설정 시 TTSEngine.is_available() == False, synthesize는 즉시 None.
+- 합성 자체는 audio/tts/ 아래 어댑터가 한다. 필요한 키도 거기에 적혀 있다.
+- 엔진을 쓸 수 없으면 is_available() == False, synthesize는 즉시 None.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 from pathlib import Path
 
 from audio.catalog import (
@@ -31,12 +31,9 @@ from audio.catalog import (
     STATIC_CACHE_DIR,
     VoiceConfig,
 )
+from audio.tts.base import DEFAULT_PROVIDER, TTSProvider, get_provider
 
 logger = logging.getLogger(__name__)
-
-# Google SDK는 lazy import — credential 없이도 모듈 import는 통과해야 테스트가 쉬워짐.
-_texttospeech = None
-_AudioEncoding = None
 
 
 def _bench_log_hit(key: str, layer: str) -> None:
@@ -61,21 +58,6 @@ def _bench_log_miss(key: str, layer: str, elapsed_ms: float) -> None:
         pass
 
 
-def _lazy_import_google() -> bool:
-    global _texttospeech, _AudioEncoding
-    if _texttospeech is not None:
-        return True
-    try:
-        from google.cloud import texttospeech as _tts  # type: ignore[import-not-found]
-
-        _texttospeech = _tts
-        _AudioEncoding = _tts.AudioEncoding
-        return True
-    except ImportError:
-        logger.warning("google-cloud-texttospeech not installed; TTS disabled")
-        return False
-
-
 CacheLayer = str  # "static" | "session" | "dynamic"
 
 
@@ -91,46 +73,63 @@ def _cache_dir_for(layer: CacheLayer, session_id: str | None = None) -> Path:
     raise ValueError(f"unknown cache layer: {layer}")
 
 
+# 캐시 키 스키마 버전. 키 구성이 바뀌면 올린다 — 옛 파일이 새 규칙으로 hit되어
+# 엉뚱한 목소리가 재생되는 것을 막는다.
+_CACHE_SCHEMA = "v2"
+
+
 def _make_cache_key(text: str, voice: VoiceConfig) -> str:
-    """텍스트 + 보이스 설정 → sha1 16자 hex."""
-    raw = f"{text}|{voice.name}|{voice.language_code}|{voice.speaking_rate}|{voice.pitch}"
+    """텍스트 + 보이스 설정 → sha1 16자 hex.
+
+    엔진(provider)이 반드시 들어가야 한다. 안 넣으면 Typecast로 바꿔도
+    옛 엔진이 만든 파일이 그대로 hit되어 목소리가 안 바뀐다.
+    """
+    raw = "|".join([
+        _CACHE_SCHEMA,
+        voice.provider,
+        voice.model or "",
+        voice.emotion or "",
+        f"{voice.emotion_intensity}",
+        voice.name,
+        voice.language_code,
+        f"{voice.speaking_rate}",
+        f"{voice.pitch}",
+        text,
+    ])
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
 class TTSEngine:
-    """Google Cloud TTS 합성 + 디스크 캐시.
+    """텍스트 → 오디오 파일. 엔진은 보이스가 지정한다.
 
     Usage:
         engine = TTSEngine()
         path = await engine.synthesize("안녕하세요", voice, "static")
     """
 
-    def __init__(self, max_concurrency: int = 4, timeout_sec: float = 4.0) -> None:
+    def __init__(self, max_concurrency: int = 4, timeout_sec: float = 20.0) -> None:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._timeout = timeout_sec
-        self._client = None
-        self._available = False
-        self._init_client()
+        # 엔진은 보이스마다 다를 수 있다(페르소나가 고른다). 한 번 만든 어댑터는
+        # 재사용한다 — 매번 새로 만들면 커넥션 풀이 낭비된다.
+        self._providers: dict[str, TTSProvider] = {}
 
-    def _init_client(self) -> None:
-        if not _lazy_import_google():
-            return
-        creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        if not creds or not Path(creds).exists():
-            logger.warning(
-                "GOOGLE_APPLICATION_CREDENTIALS not set or file missing; TTS disabled "
-                "(set in .env to enable Google Cloud TTS)"
-            )
-            return
-        try:
-            self._client = _texttospeech.TextToSpeechClient()
-            self._available = True
-            logger.info("TTSEngine ready (credentials=%s)", creds)
-        except Exception:
-            logger.exception("Failed to init Google TTS client")
+    def provider_for(self, voice: VoiceConfig) -> TTSProvider:
+        key = voice.provider or DEFAULT_PROVIDER
+        if key not in self._providers:
+            provider = get_provider(key)
+            self._providers[key] = provider
+            if provider.is_available():
+                logger.info("TTS 엔진 준비됨: %s", provider.name)
+            else:
+                logger.warning(
+                    "TTS 엔진 사용 불가: %s (%s)", provider.name, provider.unavailable_reason()
+                )
+        return self._providers[key]
 
-    def is_available(self) -> bool:
-        return self._available
+    def is_available(self, voice: VoiceConfig | None = None) -> bool:
+        """합성 가능 여부. 보이스를 주면 그 엔진 기준으로 판단한다."""
+        return self.provider_for(voice or DEFAULT_VOICE).is_available()
 
     def cache_path(
         self,
@@ -142,7 +141,8 @@ class TTSEngine:
         """text/voice/layer로 결정되는 캐시 파일 경로(존재 여부 무관)."""
         v = voice or DEFAULT_VOICE
         key = _make_cache_key(text, v)
-        return _cache_dir_for(cache_layer, session_id) / f"{key}.wav"
+        ext = self.provider_for(v).audio_ext
+        return _cache_dir_for(cache_layer, session_id) / f"{key}.{ext}"
 
     def cache_hit(
         self,
@@ -167,11 +167,12 @@ class TTSEngine:
         cache_layer: CacheLayer = "dynamic",
         session_id: str | None = None,
     ) -> Path | None:
-        """텍스트 → wav 파일. 캐시 hit이면 즉시 반환, miss면 Google API 호출.
+        """텍스트 → 오디오 파일. 캐시 hit이면 즉시 반환, miss면 엔진 호출.
 
-        반환: 캐시 파일 경로. 합성 실패 또는 SDK 미설치 시 None.
+        반환: 캐시 파일 경로. 합성 실패 또는 엔진 사용 불가 시 None.
         """
         v = voice or DEFAULT_VOICE
+        provider = self.provider_for(v)
         path = self.cache_path(text, v, cache_layer, session_id)
 
         if path.exists():
@@ -181,8 +182,11 @@ class TTSEngine:
             _bench_log_hit(path.stem, cache_layer)
             return path
 
-        if not self._available:
-            logger.debug("synthesize: TTS unavailable, returning None for %r", text[:30])
+        if not provider.is_available():
+            logger.debug(
+                "synthesize: %s 사용 불가(%s) — %r 건너뜀",
+                provider.name, provider.unavailable_reason(), text[:30],
+            )
             return None
 
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,46 +196,24 @@ class TTSEngine:
         try:
             async with self._semaphore:
                 wav_bytes = await asyncio.wait_for(
-                    asyncio.to_thread(self._synthesize_sync, text, v),
+                    asyncio.to_thread(provider.synthesize_sync, text, v),
                     timeout=self._timeout,
                 )
         except TimeoutError:
-            logger.warning("synthesize: timeout after %.1fs for %r", self._timeout, text[:30])
+            logger.warning("synthesize: %.1fs 타임아웃 — %r", self._timeout, text[:30])
             return None
         except Exception:
-            logger.exception("synthesize: Google TTS API call failed for %r", text[:30])
+            logger.exception("synthesize: %s 호출 실패 — %r", provider.name, text[:30])
             return None
 
         if not wav_bytes:
             return None
 
         # 원자성: 임시 파일에 쓰고 rename → 부분 쓰기로 인한 깨진 캐시 방지.
-        tmp_path = path.with_suffix(".wav.tmp")
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_bytes(wav_bytes)
         tmp_path.replace(path)
         elapsed_ms = (_t.time() - synth_start) * 1000
         _bench_log_miss(path.stem, cache_layer, elapsed_ms)
         logger.info("synthesized %d bytes → %s", len(wav_bytes), path.name)
         return path
-
-    def _synthesize_sync(self, text: str, voice: VoiceConfig) -> bytes:
-        """Google SDK 동기 호출. asyncio.to_thread로 감싸 비동기화."""
-        assert self._client is not None
-        assert _texttospeech is not None
-        input_msg = _texttospeech.SynthesisInput(text=text)
-        voice_params = _texttospeech.VoiceSelectionParams(
-            language_code=voice.language_code,
-            name=voice.name,
-        )
-        audio_config = _texttospeech.AudioConfig(
-            audio_encoding=_AudioEncoding.LINEAR16,
-            sample_rate_hertz=16000,
-            speaking_rate=voice.speaking_rate,
-            pitch=voice.pitch,
-        )
-        response = self._client.synthesize_speech(
-            input=input_msg,
-            voice=voice_params,
-            audio_config=audio_config,
-        )
-        return response.audio_content  # bytes

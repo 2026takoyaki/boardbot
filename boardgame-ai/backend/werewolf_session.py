@@ -12,6 +12,7 @@ from fastapi import WebSocket
 
 from agents.context import AgentContext
 from agents.orchestrator import AgentOrchestrator
+from agents.tools import lines
 from audio.manager import AudioManager
 from backend.dev import is_dev_mode
 from bulb.controller import LightController
@@ -88,7 +89,11 @@ class WerewolfSession:
     # ── 공개 인터페이스 ────────────────────────────────────────────────────────
 
     async def send_hello(self) -> None:
-        await self.send(WSMessage.make_hello({"game_type": "werewolf"}))
+        # 멘트 카탈로그를 접속 시 통째로 준다. 프론트도 같은 문장을 화면에 그려야
+        # 하는데(타이핑 애니메이션 등) 발화마다 왕복하면 타이밍이 흔들린다.
+        await self.send(
+            WSMessage.make_hello({"game_type": "werewolf", "lines": lines.catalog()})
+        )
         # 게임 선택 즉시 파이프라인이 동작하도록 초기 FusionContext 전송
         self._state_version += 1
         self._send_fusion_context(
@@ -136,6 +141,17 @@ class WerewolfSession:
 
         if input_type == "CARD_SETUP_CONFIRM_READY":
             await self._card_setup_confirm_ready()
+            return
+
+        if input_type == "NARRATION_REQUEST":
+            # 프론트가 문장이 아니라 line_id를 보낸다. 문장은 백엔드가 소유하므로
+            # 페르소나를 바꾸면 프론트를 건드리지 않아도 말투가 바뀐다.
+            text = lines.render(
+                str(payload.get("line_id", "")), **dict(payload.get("params") or {})
+            )
+            if text and self._audio_manager is not None:
+                sv = self._fsm.state.state_version if self._fsm is not None else 0
+                await self._audio_manager.enqueue_tts(text=text, state_version=sv)
             return
 
         if input_type == "TTS_REQUEST":
@@ -265,10 +281,10 @@ class WerewolfSession:
             and not self._practice_mode
         ):
             timeout = float(PASSIVE_PHASE_DURATION)
-            phase_end_warning = "눈을 다시 감아주세요."
+            phase_end_warning = "tempo.close_eyes_again"
         elif fusion_ctx.fsm_state in ACTIVE_NIGHT_PHASES and not self._practice_mode:
             timeout = float(ACTIVE_PHASE_TIMEOUT)
-            phase_end_warning = "눈을 다시 감아주세요."
+            phase_end_warning = "tempo.close_eyes_again"
         agent_ctx = AgentContext(
             game_type="werewolf_practice" if self._practice_mode else "werewolf",
             fsm_state=fusion_ctx.fsm_state,
@@ -278,7 +294,7 @@ class WerewolfSession:
             expected_events=list(fusion_ctx.expected_events),
             turn_start_time=_time.time(),
             turn_timeout=timeout,
-            phase_end_warning=phase_end_warning,
+            phase_end_warning_line=phase_end_warning,
         )
         await self._agent.on_state_change(agent_ctx, state_version=self._state_version)
 
