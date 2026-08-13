@@ -57,6 +57,7 @@ PERSONAS: dict[str, Persona] = {
     "shagal": Persona(
         id="shagal",
         display_name="샤갈",
+        description="숏폼 밈 톤. 존댓말인데 '샤갈!'을 내지르며 과장되게 흥분합니다.",
         voice_name="tc_65bca7feace8a6fe13966252",  # Typecast '칼란'
         # 이 캐릭터의 재미는 속도가 아니라 감정선이다. 빠르게만 말하면 그냥
         # 급한 사람이 된다. toneup으로 텐션을 올리고 속도는 적당히 둔다.
@@ -114,6 +115,7 @@ PERSONAS: dict[str, Persona] = {
     "chungcheong": Persona(
         id="chungcheong",
         display_name="충청도 아저씨",
+        description="느긋한 충청도 사투리. 재촉할 일도 돌려까며 능청스럽게 말합니다.",
         voice_name="tc_6059dad0b83880769a50502f",  # Typecast '박창수'
         # 충청도 말투의 절반은 속도다. 빠르면 사투리만 남고 능청이 사라진다.
         base=Delivery(speaking_rate=0.90),
@@ -150,6 +152,7 @@ PERSONAS: dict[str, Persona] = {
     "angry": Persona(
         id="angry",
         display_name="화난 누나",
+        description="반말로 쏘아붙입니다. 미워서가 아니라 답답해서 다그치는 쪽입니다.",
         voice_name="tc_60478557f12456064b353409",  # Typecast '발키리'
         base=Delivery(speaking_rate=1.18, emotion="angry"),
         by_role={
@@ -182,6 +185,7 @@ PERSONAS: dict[str, Persona] = {
     "granny": Persona(
         id="granny",
         display_name="욕쟁이 할머니",
+        description="시장통 할머니. 타박을 하다가도 끝에는 꼭 챙겨주는 말이 붙습니다.",
         voice_name="tc_61c2f70c343884babeed840b",  # Typecast 'Sookhee'
         # 평소는 퉁명스럽게 툭툭. 화는 제지할 때만 낸다 — 처음부터 화나 있으면
         # 정작 호통칠 때 올릴 데가 없고, 그건 이미 화난 누나가 하고 있다.

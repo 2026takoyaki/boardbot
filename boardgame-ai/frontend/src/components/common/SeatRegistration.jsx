@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   IconPlus, IconCheck, IconArrowRight, IconEdit, IconTrash, IconUsers,
 } from './Icons'
+import PersonaPicker from './PersonaPicker'
 import TableVisualization from './TableVisualization'
 import HandRegistrationModal, { RANDOM_NICKNAMES } from './HandRegistrationModal'
 import { colorForPlayerId } from './seatColors'
@@ -213,13 +214,16 @@ export default function SeatRegistration({
             </span>
           )}
         </div>
-        <button
-          className="btn btn-primary btn-lg"
-          disabled={!canStart}
-          onClick={canStart ? onStart : undefined}
-        >
-          게임 선택 <IconArrowRight size={18} />
-        </button>
+        <div className="reg-foot-actions">
+          <PersonaPicker send={send} connected={connected} />
+          <button
+            className="btn btn-primary btn-lg btn-pill"
+            disabled={!canStart}
+            onClick={canStart ? onStart : undefined}
+          >
+            게임 선택 <IconArrowRight size={18} />
+          </button>
+        </div>
       </div>
 
       {showHandModal && (
@@ -389,7 +393,15 @@ export default function SeatRegistration({
           font-size: 16px; color: var(--fg-soft);
           white-space: nowrap;
         }
-        .reg-foot .btn-primary { margin-left: auto; }
+        /* 진행자 선택(원형) + 게임 선택(알약형)을 한 덩어리로 오른쪽에 붙인다.
+           목록이 이 안에서 위로 열리므로 relative 기준도 여기가 된다. */
+        .reg-foot-actions {
+          margin-left: auto;
+          display: flex; align-items: center; gap: 12px;
+        }
+        /* 알약형. 옆의 원형 버튼과 나란히 놓였을 때 모서리 반지름이 이어져
+           한 벌로 보인다 — 사각 버튼이면 둘이 따로 논다. */
+        .reg-foot .btn-pill { border-radius: 999px; }
       `}</style>
     </div>
   )
