@@ -83,6 +83,11 @@ class _QueueItem:
     sequence_id: str | None = None
     seq_index: int = 0
     state_version: int = 0  # FSM 진행 단계. 사용자가 다음 단계 가면 옛 항목은 stale.
+    # 이 항목만 다른 목소리로 합성한다(페르소나 미리듣기). msg.payload에 실어
+    # 나르지 않는 이유: 그 경로는 to_dict/from_dict 직렬화를 거치는데, 프론트가
+    # 알 필요 없는 값이라 payload에서 빼면 재구성 때 사라진다. 실제로 그렇게
+    # 만들었다가 "문장은 바뀌는데 목소리는 그대로"인 미리듣기가 나왔다.
+    voice_override: VoiceConfig | None = None
 
 
 class AudioManager:
@@ -99,6 +104,11 @@ class AudioManager:
     def __init__(self, engine: TTSEngine, persona: Persona | None = None) -> None:
         self._engine = engine
         self._broadcast: BroadcastFn | None = None
+        # 게임 세션이 없을 때 쓰는 통로. 로비·좌석 등록 구간에는 오디오 채널의
+        # 주인이 없어서, 이게 없으면 그 구간의 발화가 통째로 조용히 버려진다
+        # (진행자 미리듣기가 그랬다). 게임이 시작되면 그 세션이 주인이 되고
+        # 여기는 쓰이지 않는다.
+        self._fallback_broadcast: BroadcastFn | None = None
         self._active_session_id: str | None = None
         # 목소리의 소유자. 누가 말하든 이 한 사람의 목소리로 나가고, 에이전트는
         # 그 안에서 말투만 갈린다. audio는 페르소나를 고르지 않고 받아만 쓴다.
@@ -220,6 +230,14 @@ class AudioManager:
         self._queue.clear()
         logger.info("AudioManager broadcast attached (session_id=%s)", session_id)
 
+    def set_fallback_broadcast(self, broadcast: BroadcastFn | None) -> None:
+        """게임 세션이 없을 때 쓸 통로. 부팅 때 한 번 걸어둔다.
+
+        attach_broadcast와 달리 큐를 건드리지 않는다 — 세션 교체가 아니라
+        "주인이 없을 때 여기로 보낸다"는 기본값이기 때문이다.
+        """
+        self._fallback_broadcast = broadcast
+
     def detach_broadcast(self) -> None:
         """세션 disconnect 시 호출. 큐·현재 재생 모두 정리해 다음 세션이 깨끗하게 시작.
 
@@ -318,7 +336,9 @@ class AudioManager:
         else:
             logger.warning("handle_outbound: unexpected msg_type=%s", t)
 
-    async def _enqueue_tts_play_msg(self, msg: WSMessage) -> None:
+    async def _enqueue_tts_play_msg(
+        self, msg: WSMessage, voice: VoiceConfig | None = None
+    ) -> None:
         request = TTSRequest.from_dict(msg.payload)
         if not request.playback_id:
             request.playback_id = _new_playback_id()
@@ -343,6 +363,7 @@ class AudioManager:
             sequence_id=request.sequence_id,
             seq_index=request.seq_index,
             state_version=request.state_version,
+            voice_override=voice,
         )
         await self._enqueue(item)
 
@@ -523,7 +544,7 @@ class AudioManager:
         msg = item.msg
         if msg.msg_type == MsgType.TTS_PLAY.value:
             request = TTSRequest.from_dict(msg.payload)
-            voice = self._voice_for(request)
+            voice = item.voice_override or self._voice_for(request)
             layer, layer_session_id = self._layer_for(request.text)
             path = self._engine.cache_hit(request.text, voice, layer, session_id=layer_session_id)
             if path is None:
@@ -584,8 +605,12 @@ class AudioManager:
         seq_index: int = 0,
         interruptible: bool = True,
         state_version: int = 0,
+        voice: VoiceConfig | None = None,
     ) -> str:
-        """FSM 외부에서 직접 TTS를 큐에 넣을 때 (테스트/LLM 진입점/SFX 시퀀스)."""
+        """FSM 외부에서 직접 TTS를 큐에 넣을 때 (테스트/LLM 진입점/SFX 시퀀스).
+
+        voice를 주면 그 목소리로만 합성한다(페르소나 미리듣기).
+        """
         req = TTSRequest(
             text=text,
             priority=priority,
@@ -597,7 +622,7 @@ class AudioManager:
             state_version=state_version,
         )
         msg = WSMessage.make_tts_play(req, state_version=state_version)
-        await self._enqueue_tts_play_msg(msg)
+        await self._enqueue_tts_play_msg(msg, voice=voice)
         assert req.playback_id is not None
         return req.playback_id
 
@@ -690,6 +715,10 @@ class AudioManager:
 
         agent에 DELIVERY_EXCITED("excited")를 넣으면 흥분 말투가 된다 —
         어떤 문장이 흥분인지는 말하는 쪽이 안다.
+
+        예외는 미리듣기다. 아직 고르지 않은 페르소나를 들려주는 것이라 현재
+        페르소나 목소리로 내면 미리듣기가 되지 않는다. 그 경우는 큐 항목의
+        voice_override가 이 함수를 건너뛴다(_broadcast_item).
         """
         return self._persona.voice_for(request.agent)
 
@@ -718,13 +747,14 @@ class AudioManager:
         return f"/cache/tts/{layer}/{filename}"
 
     async def _send(self, msg: WSMessage) -> None:
-        if self._broadcast is None:
+        broadcast = self._broadcast or self._fallback_broadcast
+        if broadcast is None:
             logger.debug(
                 "AudioManager._send: no broadcast attached, dropping msg_type=%s",
                 msg.msg_type,
             )
             return
         try:
-            await self._broadcast(msg)
+            await broadcast(msg)
         except Exception:
             logger.exception("AudioManager broadcast failed (msg_type=%s)", msg.msg_type)

@@ -75,6 +75,9 @@ class Persona:
     id: str
     display_name: str
     voice_name: str
+    # 고르는 사람에게 보여줄 한 줄. 말투가 어떤지는 결국 들어봐야 알지만,
+    # 넷을 늘어놓고 고를 때 무엇이 무엇인지 구별할 실마리는 있어야 한다.
+    description: str = ""
     language_code: str = "ko-KR"
     # 이 페르소나를 합성할 엔진. 페르소나마다 다른 엔진을 쓸 수 있다 —
     # 캐릭터가 강한 목소리는 그 목소리가 있는 엔진에서만 나온다.

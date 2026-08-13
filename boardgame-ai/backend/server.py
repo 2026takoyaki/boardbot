@@ -32,7 +32,7 @@ from audio.tts_engine import TTSEngine
 from backend.dev import DEV_ENV_VAR, is_dev_mode, seat_registration_events
 from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
-from backend.persona_control import apply_persona
+from backend.persona_control import PREVIEW_LINE_ID, apply_persona, persona_options
 from backend.routes.players import router as players_router
 from backend.werewolf_runner import WerewolfRunner
 from backend.werewolf_session import WerewolfSession
@@ -42,6 +42,7 @@ from backend.yacht_runner import YachtRunner
 from backend.yacht_session import YachtSession
 from bridge.local_bridge import LocalBridge
 from bulb import LightConfig, build_controller
+from core.envelope import WSMessage
 from vision.camera import CameraManager
 from vision.yacht.config import VisionConfig
 
@@ -82,6 +83,14 @@ async def lifespan(app: FastAPI):
     # 변환 파일이 없거나 검사에 걸린 줄은 중립 원문으로 나간다.
     # 엔진 가용성은 페르소나가 고른 엔진 기준으로 본다. 페르소나마다 엔진이
     # 다를 수 있어서, 기본 엔진만 보면 엉뚱한 판단을 한다.
+    # 로비·좌석 등록 구간에는 오디오 채널의 주인(게임 세션)이 없다. 이걸 안
+    # 걸어두면 그 구간의 발화가 통째로 조용히 버려진다 — 진행자 미리듣기처럼
+    # 게임 시작 전에 소리를 내야 하는 것들이 전부 여기 해당한다.
+    async def _tablet_audio(msg: WSMessage) -> None:
+        await ws_manager.broadcast_message(msg.to_dict())
+
+    audio_manager.set_fallback_broadcast(_tablet_audio)
+
     persona = get_persona(os.environ.get("PERSONA"))
     tts_ok = tts_engine.is_available(persona.voice_for())
     if not tts_ok:
@@ -113,6 +122,9 @@ async def lifespan(app: FastAPI):
         send_fusion_context_fn=bridge.send_fusion_context,
     )
     orchestrator.set_broadcast(ws_manager.broadcast, loop)
+    # 페르소나를 바꾸면 화면 문구 카탈로그가 통째로 달라진다. broadcast는
+    # state_update 봉투를 씌우므로 그 통로로는 보낼 수 없다.
+    orchestrator.set_message_broadcast(ws_manager.broadcast_message)
     orchestrator.set_audio_manager(audio_manager)
     bridge.on_game_event(orchestrator.handle_game_event)
 
@@ -199,6 +211,16 @@ app.mount("/bgm", StaticFiles(directory=str(BGM_DIR)), name="bgm")
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/personas")
+def list_personas() -> dict[str, Any]:
+    """고를 수 있는 진행자 목록. 좌석 등록 화면의 선택 UI가 읽는다.
+
+    HTTP로 두는 이유: 한 번 받아서 그리면 끝이고 게임 중에 바뀌지 않는다.
+    지금 누가 활성인지만 전환 때 웹소켓으로 따라온다.
+    """
+    return {"personas": persona_options(), "preview_line_id": PREVIEW_LINE_ID}
 
 
 @app.get("/debug/agents")

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from audio.manager import AudioManager
 from backend.state import build_state_snapshot
@@ -38,6 +38,10 @@ class Orchestrator:
         self._werewolf_event_handler: Callable[[GameEvent, int], None] | None = None
         self._gesture_confirmed: str | None = None
         self._audio_manager: AudioManager | None = None
+        # state_update 봉투를 씌우지 않고 임의 메시지를 내보내는 통로.
+        # 페르소나를 바꾸면 화면 문구 카탈로그가 통째로 달라지는데, 그건
+        # 상태 갱신이 아니라 별개의 메시지다.
+        self._message_broadcast: Callable[[dict], Awaitable[None]] | None = None
         # 같은 sound 키가 연속해서 들어와도 frontend React가 매번 트리거하도록 시퀀스 증가.
         self._sound_seq = 0
 
@@ -48,6 +52,12 @@ class Orchestrator:
     ) -> None:
         self._broadcast_cb = cb
         self._loop = loop
+
+    def set_message_broadcast(
+        self, cb: Callable[[dict], Awaitable[None]]
+    ) -> None:
+        """임의 WSMessage(dict)를 태블릿 전체에 보내는 통로."""
+        self._message_broadcast = cb
 
     def set_pipeline_switcher(self, cb: Callable[[str | None], None]) -> None:
         self._pipeline_switcher = cb
@@ -302,6 +312,10 @@ class Orchestrator:
             pid = data.get("player_id")
             if pid:
                 self.remove_player(pid)
+        elif input_type == "set_persona":
+            self._handle_set_persona(str(data.get("persona_id", "")))
+        elif input_type == "preview_persona":
+            self._handle_preview_persona(str(data.get("persona_id", "")))
         elif input_type == "select_game":
             game_type = data.get("game_type", "")
             self._handle_select_game(game_type)
@@ -313,6 +327,57 @@ class Orchestrator:
                 self._pipeline_switcher(None)
             self._push_context(CommonPhase.PLAYER_SETUP)
             self._broadcast(snapshot)
+
+    # ── 페르소나 ──────────────────────────────────────────────────────────────
+
+    def _handle_set_persona(self, persona_id: str) -> None:
+        """진행자를 바꾼다. 목소리·말투·화면 문구가 함께 간다.
+
+        전환 자체는 오래 걸리는 일이라(캐시 재합성) 기다리지 않는다. 화면은
+        누른 즉시 바뀌고, 새 목소리는 준비되는 대로 따라온다.
+        """
+        if not persona_id or self._loop is None:
+            return
+        broadcast = self._wsmessage_broadcast()
+        asyncio.run_coroutine_threadsafe(
+            self._switch_persona_async(persona_id, broadcast), self._loop
+        )
+
+    async def _switch_persona_async(
+        self,
+        persona_id: str,
+        broadcast: Callable[[WSMessage], Awaitable[None]] | None,
+    ) -> None:
+        from backend.persona_control import schedule_persona_switch
+
+        schedule_persona_switch(persona_id, self._audio_manager, broadcast)
+
+    def _handle_preview_persona(self, persona_id: str) -> None:
+        """고르기 전에 한 마디 들려준다. 전환은 하지 않는다."""
+        if not persona_id or self._loop is None or self._audio_manager is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._preview_persona_async(persona_id), self._loop
+        )
+
+    async def _preview_persona_async(self, persona_id: str) -> None:
+        from backend.persona_control import preview_persona
+
+        with contextlib.suppress(Exception):
+            await preview_persona(persona_id, self._audio_manager)
+
+    def _wsmessage_broadcast(
+        self,
+    ) -> Callable[[WSMessage], Awaitable[None]] | None:
+        """WSMessage를 받는 broadcast로 감싼다. 전송 통로는 dict를 받는다."""
+        send = self._message_broadcast
+        if send is None:
+            return None
+
+        async def _send(msg: WSMessage) -> None:
+            await send(msg.to_dict())
+
+        return _send
 
     # ── 게임 선택 ────────────────────────────────────────────────────────────
 

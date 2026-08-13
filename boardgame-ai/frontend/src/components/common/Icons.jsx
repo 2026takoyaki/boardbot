@@ -27,6 +27,14 @@ export const IconUsers = (p) => (
     <path d="M18 19c-.4-1.6-1.2-3-2.5-4" />
   </Icon>
 )
+// 페르소나 기본 프로필. 캐릭터 이미지가 준비되면 그것으로 대체된다.
+export const IconUser = (p) => (
+  <Icon {...p}>
+    <circle cx="12" cy="8.5" r="3.8" />
+    <path d="M4.5 20c1.1-4 4-6 7.5-6s6.4 2 7.5 6" />
+  </Icon>
+)
+export const IconChevronUp = (p) => <Icon {...p}><path d="m6 15 6-6 6 6" /></Icon>
 export const IconEdit = (p) => (
   <Icon {...p}>
     <path d="M14 4l6 6L9 21H3v-6L14 4Z" />
