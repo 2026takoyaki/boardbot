@@ -38,7 +38,7 @@ class TempoAgent:
     name = "tempo"
 
     def __init__(self) -> None:
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._tts_cb: TtsCb | None = None
 
     def set_tts_callback(self, cb: TtsCb) -> None:

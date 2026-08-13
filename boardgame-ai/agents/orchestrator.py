@@ -61,6 +61,9 @@ class AgentOrchestrator:
         self._state_version: int = 0
         self._broadcast: MessageCb | None = None
         self._tasks: set[asyncio.Task[None]] = set()
+        # 훈수만 따로 붙잡는다. 새 상황이 오면 앞의 것을 취소해야 하는데,
+        # 한마디까지 같이 취소하면 점수가 확정된 순간의 반응이 매번 사라진다.
+        self._strategy_task: asyncio.Task[None] | None = None
 
         self._tempo.set_tts_callback(
             lambda text, prio: self._send_tts(text, prio, AgentRole.TEMPO.value)
@@ -105,11 +108,30 @@ class AgentOrchestrator:
                 return
 
         # 3) LLM을 쓰는 것들 — 백그라운드로 (지연이 있어도 게임 흐름 차단 없음).
-        # 태스크 참조를 붙잡아 둔다 — 놓으면 GC가 실행 도중 회수할 수 있다.
         # 지금의 state_version을 넘긴다. 2~4초 뒤 돌아왔을 때 self._state_version은
         # 이미 다음 단계를 가리키므로, 그때 읽으면 옛 상황에 대한 말이 최신으로
         # 둔갑한다.
-        task = asyncio.create_task(self._run_llm_agents(ctx, state_version))
+        #
+        # 둘을 따로 띄우는 이유는 취소 여부가 다르기 때문이다.
+        #   훈수    지금 그 결정에 대한 말 → 판이 넘어가면 쓸모가 없다
+        #   한마디  이미 벌어진 일에 대한 말 → 판이 넘어가도 유효하다
+        self._start_strategy(ctx, state_version)
+        self._track(asyncio.create_task(self._run_reaction(ctx, state_version)))
+
+    def _start_strategy(self, ctx: AgentContext, version: int) -> None:
+        """훈수 생성을 시작한다. 앞의 것이 아직 돌고 있으면 취소한다.
+
+        취소하지 않으면 굴림이 빠를 때 호출만 쌓이고 결과는 전부 버려진다 —
+        실측으로 0.2초 간격 전환 10회에 LLM 호출 10건이 뜨고 9건이 폐기됐다.
+        어차피 못 쓸 말을 만드느라 돈과 커넥션을 쓰는 셈이다.
+        """
+        if self._strategy_task is not None and not self._strategy_task.done():
+            self._strategy_task.cancel()
+        self._strategy_task = asyncio.create_task(self._run_strategy(ctx, version))
+        self._track(self._strategy_task)
+
+    def _track(self, task: asyncio.Task[None]) -> None:
+        """태스크 참조를 붙잡아 둔다 — 놓으면 GC가 실행 도중 회수할 수 있다."""
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -123,9 +145,9 @@ class AgentOrchestrator:
         # 제지가 먼저, 이유는 나중에. 설명을 기다렸다 함께 내보내면 이미 굴러간
         # 주사위 뒤에 제지가 도착한다.
         await self._dispatch(result)
-        task = asyncio.create_task(self._run_rules_explain(result, self._state_version))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._track(
+            asyncio.create_task(self._run_rules_explain(result, self._state_version))
+        )
 
     def stop(self) -> None:
         """세션 종료 시 호출 — 백그라운드 타이머·태스크 정리.
@@ -138,6 +160,7 @@ class AgentOrchestrator:
             if not task.done():
                 task.cancel()
         self._tasks.clear()
+        self._strategy_task = None
 
     # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────
 
@@ -146,23 +169,23 @@ class AgentOrchestrator:
         if detail:
             await self._dispatch(detail, version)
 
-    async def _run_llm_agents(self, ctx: AgentContext, version: int) -> None:
-        """생성이 필요한 개입들. 순서대로 — 동시에 부르면 두 멘트가 뒤엉킨다.
+    async def _run_reaction(self, ctx: AgentContext, version: int) -> None:
+        """방금 벌어진 일에 대한 한마디.
 
-        상황 한마디가 먼저다. 방금 벌어진 일에 대한 반응이라 늦을수록 어색해지고,
-        훈수는 어차피 다음 사람이 고민하는 동안 나오면 된다.
+        판이 넘어갔어도 버리지 않는다 — 이미 벌어진 일에 대한 말이라 2초 늦었다고
+        틀린 말이 되지 않는다. 반응할 순간이 아니면 LLM을 부르지도 않는다.
         """
-        # 한마디는 이미 벌어진 일에 대한 말이라, 그 사이 판이 넘어갔어도 여전히
-        # 맞는 말이다. 늦었다는 이유로 버리지 않는다.
         reaction = await self._progress.reaction(ctx)
         if reaction:
             await self._dispatch(reaction, version)
 
+    async def _run_strategy(self, ctx: AgentContext, version: int) -> None:
         result = await self._strategy.on_state_change_async(ctx)
         if not result:
             return
-        # 훈수는 다르다. "여기에 넣으세요"는 지금 그 결정을 앞둔 사람에게만
-        # 맞는 말이고, 이미 넣은 뒤에 도착하면 틀린 말이 된다.
+        # "여기에 넣으세요"는 지금 그 결정을 앞둔 사람에게만 맞는 말이고,
+        # 이미 넣은 뒤에 도착하면 틀린 말이 된다. 취소가 늦어 살아남은 경우를
+        # 대비해 내보내기 직전에 한 번 더 본다.
         if self._is_stale(version):
             logger.debug("[AgentOrchestrator] 지난 상황의 훈수를 버림 (v=%d)", version)
             return

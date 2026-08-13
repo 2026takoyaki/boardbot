@@ -59,6 +59,7 @@ class _Stats:
     ok: int = 0
     failed: int = 0
     timeouts: int = 0
+    cancelled: int = 0
     total_tokens: int = 0
     total_ms: float = 0.0
     last_error: str | None = None
@@ -219,6 +220,11 @@ class LLMClient:
         except TimeoutError:
             self._stats.timeouts += 1
             return self._fail(started, "타임아웃")
+        except asyncio.CancelledError:
+            # 상황이 지나가 부르는 쪽이 취소한 경우. 실패가 아니므로 failed로
+            # 세지 않는다. 그렇다고 안 세면 calls만 늘어 통계가 어긋난다.
+            self._stats.cancelled += 1
+            raise
         except Exception as exc:  # noqa: BLE001 — 멘트 하나로 게임이 멈추면 안 된다
             return self._fail(started, f"{type(exc).__name__}: {exc}")
 
@@ -264,6 +270,8 @@ class LLMClient:
             "ok": s.ok,
             "failed": s.failed,
             "timeouts": s.timeouts,
+            # 상황이 지나가 취소된 호출. 이게 크면 훈수 요청이 너무 잦다는 뜻이다.
+            "cancelled": s.cancelled,
             "avg_ms": round(s.total_ms / s.calls, 1) if s.calls else 0.0,
             "total_tokens": s.total_tokens,
             "last_error": s.last_error,
