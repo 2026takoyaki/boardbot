@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { audio } from '../../hooks/useAudioPlayer'
 import { narrate, useLines } from '../../lines'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
 export default function NightEnd({ onComplete, send, isPracticeMode }) {
   const [showDiscussion, setShowDiscussion] = useState(false)
@@ -65,194 +67,141 @@ export default function NightEnd({ onComplete, send, isPracticeMode }) {
   }, [])
 
   return (
-    <>
-      <style>{`
-        @keyframes sunRise {
-          0%   { transform: translateY(80px) scale(0.7); opacity: 0; }
-          60%  { opacity: 1; }
-          100% { transform: translateY(0px) scale(1); opacity: 1; }
-        }
-        @keyframes glowPulse {
-          0%, 100% { box-shadow: 0 0 60px 24px rgba(255,210,80,0.45), 0 0 120px 60px rgba(255,140,30,0.2); }
-          50%       { box-shadow: 0 0 90px 36px rgba(255,230,100,0.65), 0 0 180px 80px rgba(255,160,40,0.3); }
-        }
-        @keyframes skyFade {
-          0%   { opacity: 0; }
-          100% { opacity: 1; }
-        }
-        @keyframes textRise {
-          0%   { opacity: 0; transform: translateY(16px); }
-          100% { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+    <div className="ww-root" onClick={onComplete} style={{ ...ui.page, cursor: 'pointer' }}>
+      <WerewolfScene mood="dawn" />
+      <style>{CSS}</style>
 
-      <div onClick={onComplete} style={styles.page}>
-
-        {/* 배경 — 밤에서 여명으로 */}
-        <div style={styles.sky} />
-
-        {/* 지평선 글로우 */}
-        <div style={styles.horizonGlow} />
-
-        {/* 마을 실루엣 */}
-        <svg
-          viewBox="0 0 800 160"
-          preserveAspectRatio="xMidYMax slice"
-          style={styles.silhouette}
-        >
-          {/* 나무들 */}
-          <polygon points="60,160 80,100 100,160" fill="#0a0614" />
-          <polygon points="75,160 100,80 125,160" fill="#0a0614" />
-          <polygon points="110,160 130,105 150,160" fill="#0a0614" />
-          {/* 집들 */}
-          <rect x="170" y="120" width="60" height="40" fill="#0a0614" />
-          <polygon points="165,120 200,95 235,120" fill="#0a0614" />
-          <rect x="175" y="130" width="14" height="30" fill="#1a0a2e" />
-          {/* 탑 */}
-          <rect x="260" y="90" width="30" height="70" fill="#0a0614" />
-          <polygon points="255,92 275,68 295,92" fill="#0a0614" />
-          {/* 집 */}
-          <rect x="320" y="115" width="50" height="45" fill="#0a0614" />
-          <polygon points="315,115 345,88 375,115" fill="#0a0614" />
-          {/* 나무 */}
-          <polygon points="390,160 410,95 430,160" fill="#0a0614" />
-          <polygon points="405,160 430,75 455,160" fill="#0a0614" />
-          {/* 집 */}
-          <rect x="460" y="125" width="45" height="35" fill="#0a0614" />
-          <polygon points="455,125 482,102 510,125" fill="#0a0614" />
-          {/* 큰 건물 */}
-          <rect x="530" y="100" width="70" height="60" fill="#0a0614" />
-          <polygon points="525,102 565,72 605,102" fill="#0a0614" />
-          <rect x="558" y="78" width="14" height="24" fill="#0a0614" />
-          {/* 나무 */}
-          <polygon points="620,160 638,105 656,160" fill="#0a0614" />
-          <polygon points="648,160 670,88 692,160" fill="#0a0614" />
-          <polygon points="668,160 690,108 712,160" fill="#0a0614" />
-          {/* 집 */}
-          <rect x="715" y="120" width="55" height="40" fill="#0a0614" />
-          <polygon points="710,120 742,96 774,120" fill="#0a0614" />
-        </svg>
-
-        {/* 태양 */}
-        <div style={styles.sunContainer}>
-          <div style={styles.sun} />
-        </div>
-
-        {/* 텍스트 */}
-        <div style={styles.textBlock}>
-          <div style={styles.title}>{line('werewolf.morning')}</div>
-          {!isPracticeMode && (
-            <div style={styles.subtitle}>{line('werewolf.morning_open_eyes')}</div>
-          )}
-          {showDiscussion && (
-            <div style={styles.discussion}>
-              {isPracticeMode ? (
-                <>
-                  <div>밤 동안의 행동을 추론하며 누가 늑대인간인지 찾아내세요.</div>
-                  <div style={{ marginTop: 10, fontSize: 16, opacity: 0.8 }}>
-                    · 늑대인간이 없다면 아무도 처단하지 마세요<br />
-                    · 늑대인간이 없어도 하수인이 있다면 하수인을 처단해야 마을주민팀이 승리합니다<br />
-                    · 늑대인간과 하수인이 모두 있다면 하수인이 아닌 늑대인간을 처단해야 마을주민팀이 승리합니다<br />
-                    · 무두장이가 처단되면 무두장이 혼자 승리합니다
-                  </div>
-                </>
-              ) : line('werewolf.discussion_start')}
-            </div>
-          )}
-        </div>
-
+      {/* 해 — 지평선 뒤에서 떠올라 마을 위로 걸린다. 광선은 아주 천천히 돈다. */}
+      <div className="ww-sun-stage">
+        <div className="ww-sun-rays" />
+        <div className="ww-sun-disc" />
       </div>
-    </>
+
+      {/* 아침 빛이 화면 전체를 한 번 씻고 지나간다 */}
+      <div className="ww-daybreak" />
+
+      <div style={{ ...ui.stage, gap: 12, marginBottom: 40 }}>
+        <h1 style={{ ...ui.title, letterSpacing: '0.04em' }} className="ww-anim-title">
+          {line('werewolf.morning')}
+        </h1>
+        {!isPracticeMode && (
+          <div style={styles.subtitle} className="ww-anim-in">
+            {line('werewolf.morning_open_eyes')}
+          </div>
+        )}
+        {showDiscussion && (
+          <div style={styles.discussion} className="ww-panel ww-anim-in">
+            {isPracticeMode ? (
+              <>
+                <div style={styles.discussionHead}>
+                  밤 동안의 행동을 추론하며 누가 늑대인간인지 찾아내세요.
+                </div>
+                <ul className="ww-rules" style={styles.rules}>
+                  <li>늑대인간이 없다면 아무도 처단하지 마세요</li>
+                  <li>늑대인간이 없어도 하수인이 있다면 하수인을 처단해야 마을주민팀이 승리합니다</li>
+                  <li>늑대인간과 하수인이 모두 있다면 하수인이 아닌 늑대인간을 처단해야 마을주민팀이 승리합니다</li>
+                  <li>무두장이가 처단되면 무두장이 혼자 승리합니다</li>
+                </ul>
+              </>
+            ) : (
+              <div style={styles.discussionHead}>{line('werewolf.discussion_start')}</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
 const styles = {
-  page: {
-    minHeight: '100vh',
-    position: 'relative',
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
-
-  sky: {
-    position: 'absolute',
-    inset: 0,
-    background: 'linear-gradient(180deg, #0d0821 0%, #1e0c3a 22%, #4a1830 45%, #8c3b1e 65%, #d4641c 80%, #f0a030 100%)',
-    animation: 'skyFade 1.8s ease-out forwards',
-  },
-
-  horizonGlow: {
-    position: 'absolute',
-    bottom: '20%',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    width: '70%',
-    height: 120,
-    background: 'radial-gradient(ellipse at center bottom, rgba(255,160,40,0.35), transparent 70%)',
-    filter: 'blur(20px)',
-    pointerEvents: 'none',
-  },
-
-  silhouette: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 160,
-    pointerEvents: 'none',
-  },
-
-  sunContainer: {
-    position: 'relative',
-    zIndex: 1,
-    marginBottom: 60,
-    animation: 'sunRise 2s cubic-bezier(0.22, 0.61, 0.36, 1) forwards',
-  },
-
-  sun: {
-    width: 140,
-    height: 140,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle at 40% 38%, #fffde7, #fdd835 40%, #f57f17 80%)',
-    animation: 'glowPulse 2.4s ease-in-out 2s infinite',
-    boxShadow: '0 0 60px 24px rgba(255,210,80,0.45), 0 0 120px 60px rgba(255,140,30,0.2)',
-  },
-
-  textBlock: {
-    position: 'relative',
-    zIndex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 10,
-    animation: 'textRise 1s ease-out 1.2s both',
-  },
-
-  title: {
-    fontSize: 38,
-    fontWeight: 700,
-    color: '#fff8e1',
-    letterSpacing: -0.5,
-    textShadow: '0 2px 12px rgba(255,160,40,0.5)',
-  },
-
   subtitle: {
-    fontSize: 16,
-    color: 'rgba(255,240,200,0.85)',
+    fontSize: 17,
+    fontWeight: 550,
+    color: 'var(--w-ink-soft)',
+    animationDelay: '0.7s',
   },
 
   discussion: {
-    marginTop: 18,
-    fontSize: 20,
+    marginTop: 22,
+    padding: '20px 30px',
+    maxWidth: 'min(860px, 90vw)',
+    fontSize: 19,
+    fontWeight: 600,
+    color: 'var(--w-ink)',
+    lineHeight: 1.6,
+    textAlign: 'center',
+    wordBreak: 'keep-all',
+  },
+
+  discussionHead: { letterSpacing: '-0.01em' },
+
+  rules: {
+    margin: '14px 0 0',
+    padding: 0,
+    listStyle: 'none',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 7,
+    fontSize: 15,
     fontWeight: 500,
-    color: 'rgba(255,240,200,0.9)',
-    letterSpacing: 0.5,
-    animation: 'textRise 0.7s ease-out both',
+    color: 'var(--w-ink-soft)',
+    textAlign: 'left',
   },
 }
+
+const CSS = `
+  .ww-rules li { display: flex; gap: 9px; }
+  .ww-rules li::before { content: "·"; color: var(--w-gold); font-weight: 900; }
+
+  .ww-sun-stage {
+    position: absolute;
+    z-index: 1;
+    top: 26%;
+    left: 50%;
+    width: 168px; height: 168px;
+    transform: translateX(-50%);
+    animation: ww-sun-rise 2.4s cubic-bezier(0.16,0.8,0.24,1) both;
+  }
+  @keyframes ww-sun-rise {
+    0%   { opacity: 0; transform: translate(-50%, 210px) scale(0.62); }
+    62%  { opacity: 1; }
+    100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  }
+  .ww-sun-disc {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 36%, #fffef0 0%, #ffeda0 30%, #ffc63c 62%, #f4820f 92%);
+    box-shadow: 0 0 70px 26px rgba(255,206,80,0.45), 0 0 160px 70px rgba(255,140,30,0.24);
+    animation: ww-sun-glow 4.2s ease-in-out 2.2s infinite;
+  }
+  @keyframes ww-sun-glow {
+    0%, 100% { box-shadow: 0 0 70px 26px rgba(255,206,80,0.45), 0 0 160px 70px rgba(255,140,30,0.22); }
+    50%      { box-shadow: 0 0 104px 40px rgba(255,228,110,0.62), 0 0 220px 96px rgba(255,160,40,0.32); }
+  }
+  /* 광선. 아주 느리게 돌아 눈에 띄지 않게 화면이 살아 있게 한다. */
+  .ww-sun-rays {
+    position: absolute;
+    inset: -220%;
+    background: repeating-conic-gradient(from 0deg,
+      rgba(255,222,140,0.16) 0deg 3deg, transparent 3deg 17deg);
+    -webkit-mask-image: radial-gradient(circle, #000 12%, transparent 58%);
+    mask-image: radial-gradient(circle, #000 12%, transparent 58%);
+    animation: ww-rays-spin 90s linear infinite, ww-in 2s ease-out 1.4s both;
+  }
+  @keyframes ww-rays-spin { to { transform: rotate(360deg); } }
+
+  /* 화면을 한 번 씻고 지나가는 아침 빛 */
+  .ww-daybreak {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 30%, rgba(255,206,120,0.34) 78%, rgba(255,232,170,0.5) 100%);
+    pointer-events: none;
+    animation: ww-daybreak 2.6s ease-out both;
+  }
+  @keyframes ww-daybreak {
+    0%   { opacity: 0; }
+    40%  { opacity: 1; }
+    100% { opacity: 0.35; }
+  }
+`

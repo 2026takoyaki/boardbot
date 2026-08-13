@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { audio } from '../../hooks/useAudioPlayer'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
 // 튜토리얼 모드는 눈을 감지 않고 진행하므로 "깨어나세요" 대신 차례 안내,
 // action도 해당 역할 플레이어가 직접 행동을 수행하는 방식으로 설명한다.
@@ -149,251 +151,265 @@ export default function NightRoleAnnounce({ roleId, onComplete, onExit, isPracti
 
   const displayAnnounce = isPracticeMode ? (role.tutorialAnnounce ?? role.announce) : role.announce
   const displayAction = isPracticeMode ? (role.tutorialAction ?? role.action) : role.action
+  const counting = !isPracticeMode || practiceCounting
+  const totalSeconds = isPracticeMode ? PRACTICE_POST_TTS_SECONDS : duration
+  // 남은 시간은 숫자보다 막대가 먼저 읽힌다. 숫자는 확인용으로 옆에 남긴다.
+  const remainRatio = counting ? Math.max(0, Math.min(1, countdown / totalSeconds)) : 1
 
   return (
-    <>
-      <style>{`
-        @keyframes moonGlowPulse {
-          0%,100% { box-shadow: 0 0 48px 18px rgba(220,185,80,0.22); }
-          50%      { box-shadow: 0 0 72px 28px rgba(220,185,80,0.38); }
-        }
-        @keyframes fogDrift {
-          0%   { transform: translateX(0); }
-          100% { transform: translateX(-8%); }
-        }
-        @keyframes starFlicker { 0%,100%{opacity:.6} 50%{opacity:.2} }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(14px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes cardReveal {
-          0%   { opacity: 0; transform: scale(0.88) translateY(8px); }
-          100% { opacity: 1; transform: scale(1) translateY(0); }
-        }
-      `}</style>
+    <div className="ww-root" style={ui.page}>
+      <WerewolfScene mood="night" />
+      <style>{CSS}</style>
 
-      <div style={styles.page}>
-        <button onClick={onExit} style={exitBtn}>나가기</button>
+      <button className="ww-hover ww-press" onClick={onExit} style={ui.exitButton}>나가기</button>
 
-        {/* 배경 */}
-        <div style={styles.sky} />
 
-        {/* 달 */}
-        <div style={styles.moon} />
-
-        {/* 별 */}
-        {[
-          {t:'7%', l:'10%', s:2.2}, {t:'13%', l:'32%', s:1.4},
-          {t:'5%', l:'55%', s:1.8}, {t:'19%', l:'75%', s:1.2},
-          {t:'25%', l:'18%', s:1.0}, {t:'9%',  l:'44%', s:1.5},
-          {t:'28%', l:'90%', s:2.0}, {t:'4%',  l:'82%', s:1.4},
-          {t:'35%', l:'60%', s:1.2}, {t:'40%', l:'5%',  s:1.8},
-        ].map((st, i) => (
-          <div key={i} style={{
-            position: 'absolute', top: st.t, left: st.l,
-            width: st.s, height: st.s, borderRadius: '50%',
-            background: '#fff', opacity: 0.6,
-            animation: `starFlicker ${2.2 + i * 0.35}s ease-in-out infinite`,
-          }} />
-        ))}
-
-        {/* 마을 실루엣 */}
-        <svg viewBox="0 0 800 160" preserveAspectRatio="xMidYMax slice" style={styles.silhouette}>
-          <polygon points="40,160 62,95 84,160"    fill="#06030f" />
-          <polygon points="58,160 84,72 110,160"   fill="#06030f" />
-          <polygon points="95,160 118,100 141,160" fill="#06030f" />
-          <rect x="155" y="118" width="58" height="42" fill="#06030f" />
-          <polygon points="150,120 184,92 218,120"  fill="#06030f" />
-          <rect x="162" y="130" width="13" height="30" fill="#030108" />
-          <rect x="245" y="86" width="32" height="74" fill="#06030f" />
-          <polygon points="240,88 261,62 282,88"   fill="#06030f" />
-          <rect x="300" y="112" width="52" height="48" fill="#06030f" />
-          <polygon points="295,114 326,86 357,114" fill="#06030f" />
-          <polygon points="372,160 394,90 416,160" fill="#06030f" />
-          <polygon points="390,160 416,70 442,160" fill="#06030f" />
-          <rect x="455" y="120" width="46" height="40" fill="#06030f" />
-          <polygon points="450,122 478,98 506,122" fill="#06030f" />
-          <rect x="524" y="96" width="72" height="64" fill="#06030f" />
-          <polygon points="519,98 560,68 601,98"   fill="#06030f" />
-          <rect x="552" y="74" width="16" height="26" fill="#06030f" />
-          <polygon points="618,160 638,102 658,160" fill="#06030f" />
-          <polygon points="646,160 670,84 694,160" fill="#06030f" />
-          <rect x="710" y="118" width="54" height="42" fill="#06030f" />
-          <polygon points="705,120 737,94 769,120" fill="#06030f" />
-        </svg>
-
-        {/* 안개 */}
-        <div style={{
-          position: 'absolute', bottom: 0, left: '-8%',
-          width: '116%', height: '30%',
-          background: 'linear-gradient(to top, rgba(60,30,90,0.5) 0%, rgba(40,20,70,0.22) 55%, transparent 100%)',
-          animation: 'fogDrift 18s linear infinite alternate',
-          filter: 'blur(14px)',
-          pointerEvents: 'none',
-        }} />
-
-        {/* 중앙 컨텐츠 */}
-        <div style={styles.inner}>
-
-          <div style={{ ...styles.roleName, animation: 'fadeIn 0.6s ease-out both' }}>
-            {role.name}
+      <div style={{ ...ui.stage, gap: 26 }}>
+        {/* 카드는 왼쪽에 크게, 설명은 오른쪽에 크게. 가로로 놓인 태블릿에서
+            세로로 쌓으면 카드도 글자도 어중간하게 작아진다 — 둘을 나란히
+            놓아야 카드는 카드대로 크고, 문장은 문장대로 읽힌다. */}
+        <div style={styles.split}>
+          {/* 왼쪽 — 카드가 뒤집히며 나온다. 실제 카드를 다루는 게임이니 화면의
+              카드도 카드처럼 움직여야 한다. 페이드인은 종이가 아니라 이미지다. */}
+          <div style={styles.cardStage} key={roleId}>
+            {/* 호명된 역할만 달빛을 받는다. 카드 뒤에 빛기둥을 세워
+                "지금은 이 카드의 차례"라는 것을 글자 없이 말한다. */}
+            <div className="ww-spotlight" />
+            <div className="ww-card-flip" style={styles.card}>
+              <img src={role.image} alt={role.name} style={styles.image} />
+              <span className="ww-card-shine" />
+            </div>
+            <div className="ww-card-shadow" />
           </div>
 
-          <div style={{ ...styles.imageBox, animation: 'cardReveal 0.6s cubic-bezier(0.22,0.61,0.36,1) 0.1s both' }}>
-            <img src={role.image} alt={role.name} style={styles.image} />
+          {/* 오른쪽 — 역할 이름부터 행동 지시까지 한 덩어리로 읽힌다 */}
+          <div style={styles.info}>
+            <div style={styles.roleName} className="ww-anim-down">{role.name}</div>
+
+            <div className="ww-rule" style={styles.rule}><i /></div>
+
+            <p style={styles.announceText} className="ww-anim-in">{displayAnnounce}</p>
+            <p style={styles.actionText} className="ww-anim-in">{displayAction}</p>
+
+            <div style={styles.timerRow} className="ww-anim-in">
+              <div style={styles.track}>
+                <div
+                  style={{
+                    ...styles.trackFill,
+                    width: `${remainRatio * 100}%`,
+                    // 마지막 3초는 색이 달아오른다. 숫자를 읽지 않아도 급한 줄 안다.
+                    background: counting && countdown <= 3
+                      ? 'linear-gradient(90deg, var(--w-blood-deep), var(--w-blood))'
+                      : 'linear-gradient(90deg, var(--w-gold-deep), var(--w-gold))',
+                  }}
+                />
+              </div>
+              <span style={styles.timerText}>
+                {counting ? `${countdown}초` : '안내 중'}
+              </span>
+            </div>
           </div>
-
-          <div style={{ ...styles.textBlock, animation: 'fadeIn 0.6s ease-out 0.25s both' }}>
-            <p style={styles.announceText}>{displayAnnounce}</p>
-            <p style={styles.actionText}>{displayAction}</p>
-            {(!isPracticeMode || practiceCounting) ? (
-              <p style={styles.countdownText}>{countdown}초 후 자동으로 넘어갑니다</p>
-            ) : (
-              <p style={styles.countdownText}>안내가 끝나면 다음으로 넘어갑니다</p>
-            )}
-          </div>
-
-          {/* 건너뛰기 버튼 */}
-          <button onClick={onComplete} style={styles.skipBtn}>건너뛰기 →</button>
-
         </div>
 
+        <button onClick={onComplete} className="ww-hover ww-press" style={styles.skipBtn}>
+          건너뛰기 →
+        </button>
       </div>
-    </>
+    </div>
   )
 }
 
 const styles = {
-  page: {
-    height: '100vh',
-    overflow: 'hidden',
-    position: 'relative',
-    display: 'flex',
+  // 카드와 설명을 나란히. 카드 열은 내용만큼만 차지하고 남는 폭은 전부 글이
+  // 가져간다 — 튜토리얼의 긴 설명이 들어와도 카드가 밀려 쪼그라들지 않는다.
+  split: {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr)',
     alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-    userSelect: 'none',
+    gap: 'clamp(32px, 5vw, 64px)',
+    width: 'min(1120px, 92vw)',
   },
 
-  sky: {
-    position: 'absolute',
-    inset: 0,
-    background: 'radial-gradient(ellipse at 72% 8%, rgba(180,140,40,0.18) 0%, transparent 38%), radial-gradient(ellipse at 15% 85%, rgba(90,20,140,0.32) 0%, transparent 48%), linear-gradient(160deg, #160d38 0%, #0c1628 35%, #180c28 65%, #081420 100%)',
-  },
-
-  moon: {
-    position: 'absolute',
-    top: 48,
-    right: 90,
-    width: 90,
-    height: 90,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle at 38% 36%, #fffde7, #f5e070 40%, #c8a820 80%)',
-    animation: 'moonGlowPulse 3.5s ease-in-out infinite',
-  },
-
-  silhouette: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 160,
-    pointerEvents: 'none',
-  },
-
-  inner: {
+  cardStage: {
     position: 'relative',
-    zIndex: 1,
+    perspective: 1100,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 28,
-    marginBottom: 80,
   },
 
-  roleName: {
-    fontSize: 32,
-    fontWeight: 700,
-    color: '#F8F1DD',
-    letterSpacing: 3,
-    textShadow: '0 0 24px rgba(220,185,120,0.5)',
-  },
-
-  imageBox: {
-    width: 180,
-    height: 224,
-    borderRadius: 18,
+  card: {
+    position: 'relative',
+    // 화면 높이에 맞춰 줄어든다. 카드 비율(0.8)은 고정이라 어느 크기에서도
+    // 실제 카드와 같은 모양이다.
+    width: 'clamp(230px, 26vw, 330px)',
+    height: 'clamp(288px, 32.5vw, 412px)',
+    borderRadius: 22,
     overflow: 'hidden',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(220,185,120,0.25)',
+    background: 'linear-gradient(160deg, rgba(56,46,72,0.9), rgba(14,12,24,0.95))',
+    border: '1px solid var(--w-line-strong)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+    boxShadow: '0 30px 76px rgba(0,0,0,0.62), 0 0 54px rgba(240,207,122,0.16)',
   },
 
   image: {
     width: '100%',
     height: '100%',
     objectFit: 'contain',
+    filter: 'drop-shadow(0 12px 18px rgba(0,0,0,0.55))',
   },
 
-  textBlock: {
+  info: {
+    minWidth: 0,
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    gap: 12,
-    background: 'rgba(0,0,0,0.3)',
-    backdropFilter: 'blur(8px)',
-    border: '1px solid rgba(220,185,120,0.15)',
-    borderRadius: 16,
-    padding: '22px 40px',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+
+  roleName: {
+    fontSize: 'clamp(34px, 4.4vw, 52px)',
+    fontWeight: 850,
+    letterSpacing: '-0.02em',
+    lineHeight: 1.1,
+    color: 'var(--w-gold)',
+    textShadow: '0 0 46px rgba(240,207,122,0.45), 0 3px 14px rgba(0,0,0,0.6)',
+  },
+
+  rule: {
+    width: '100%',
+    animation: 'ww-in 700ms ease-out 0.35s both',
   },
 
   announceText: {
     margin: 0,
-    fontSize: 24,
-    fontWeight: 600,
-    color: '#F8F1DD',
-    textAlign: 'center',
+    fontSize: 'clamp(21px, 2.5vw, 30px)',
+    fontWeight: 750,
+    letterSpacing: '-0.01em',
+    lineHeight: 1.4,
+    color: 'var(--w-ink)',
+    textAlign: 'left',
+    wordBreak: 'keep-all',
+    textShadow: '0 2px 14px rgba(0,0,0,0.65)',
+    animationDelay: '0.3s',
   },
 
   actionText: {
     margin: 0,
-    fontSize: 18,
-    color: 'rgba(248,241,221,0.6)',
-    textAlign: 'center',
-    lineHeight: 1.9,
+    fontSize: 'clamp(16px, 1.72vw, 21px)',
+    fontWeight: 500,
+    color: 'var(--w-ink-soft)',
+    textAlign: 'left',
+    lineHeight: 1.8,
     whiteSpace: 'pre-line',
+    wordBreak: 'keep-all',
+    textShadow: '0 2px 12px rgba(0,0,0,0.6)',
+    animationDelay: '0.42s',
   },
 
-  countdownText: {
-    margin: 0,
-    fontSize: 14,
-    color: 'rgba(248,241,221,0.35)',
-    textAlign: 'center',
-    letterSpacing: 0.5,
+  timerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    width: '100%',
+    maxWidth: 360,
+    marginTop: 4,
+    animationDelay: '0.54s',
+  },
+
+  track: {
+    flex: 1,
+    height: 4,
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.10)',
+    overflow: 'hidden',
+  },
+
+  trackFill: {
+    height: '100%',
+    borderRadius: 999,
+    // 1초마다 오는 갱신이라 linear여야 눈금이 고르게 흐른다.
+    transition: 'width 1s linear, background 400ms ease',
+  },
+
+  timerText: {
+    fontSize: 12,
+    fontWeight: 750,
+    letterSpacing: '0.08em',
+    color: 'var(--w-ink-mute)',
+    fontVariantNumeric: 'tabular-nums',
+    width: 42,
+    textAlign: 'right',
   },
 
   skipBtn: {
-    padding: '8px 20px',
-    border: '1px solid rgba(248,241,221,0.25)',
-    borderRadius: 8,
-    background: 'rgba(255,255,255,0.08)',
-    color: 'rgba(248,241,221,0.5)',
-    cursor: 'pointer',
+    padding: '9px 22px',
+    border: '1px solid rgba(255,255,255,0.14)',
+    borderRadius: 999,
+    background: 'rgba(10,8,16,0.4)',
+    color: 'var(--w-ink-mute)',
+    fontFamily: 'inherit',
     fontSize: 13,
+    fontWeight: 650,
+    cursor: 'pointer',
+    animation: 'ww-in 600ms ease-out 0.9s both',
   },
-
 }
 
-const exitBtn = {
-  position: 'absolute', top: 20, right: 20, zIndex: 10,
-  padding: '8px 18px',
-  border: '1px solid rgba(248,241,221,0.2)',
-  borderRadius: 8,
-  background: 'rgba(255,255,255,0.08)',
-  color: 'rgba(248,241,221,0.7)',
-  fontSize: 14, fontWeight: 600, cursor: 'pointer',
-  backdropFilter: 'blur(8px)',
-}
+const CSS = `
+  /* 카드 위로 떨어지는 달빛 기둥. 카드 칸 안에 두므로 카드가 어디로 가든
+     빛도 따라간다 — 화면 가운데에 고정하면 카드가 왼쪽으로 간 순간 어긋난다. */
+  .ww-spotlight {
+    position: absolute;
+    top: -46%;
+    left: 50%;
+    width: 230%;
+    height: 200%;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse 34% 52% at 50% 34%, rgba(255,236,180,0.20), transparent 72%);
+    filter: blur(8px);
+    pointer-events: none;
+    animation: ww-in 900ms ease-out both;
+  }
+
+  /* 카드가 옆으로 한 바퀴 돌며 앉는다 */
+  @keyframes ww-flip {
+    0%   { opacity: 0; transform: rotateY(-96deg) translateY(22px) scale(0.9); }
+    58%  { opacity: 1; transform: rotateY(10deg)  translateY(-6px) scale(1.02); }
+    78%  { transform: rotateY(-3deg) translateY(0) scale(1); }
+    100% { transform: rotateY(0deg); }
+  }
+  .ww-card-flip {
+    transform-style: preserve-3d;
+    animation: ww-flip 900ms cubic-bezier(.2,.8,.25,1.05) both;
+  }
+
+  /* 카드 표면을 훑는 반사광 — 코팅된 카드로 보이게 하는 한 줄 */
+  .ww-card-shine {
+    position: absolute;
+    top: -60%; left: -40%;
+    width: 46%; height: 220%;
+    background: linear-gradient(90deg, transparent, rgba(255,246,214,0.30), transparent);
+    transform: rotate(18deg);
+    animation: ww-shine 3.8s ease-in-out 1s infinite;
+  }
+  @keyframes ww-shine {
+    0%, 62% { transform: translateX(0) rotate(18deg); opacity: 0; }
+    66%     { opacity: 1; }
+    92%     { transform: translateX(420px) rotate(18deg); opacity: 0; }
+    100%    { opacity: 0; }
+  }
+
+  /* 카드가 바닥에 드리우는 그림자. 카드가 공중에 떠 있지 않게 잡아준다. */
+  .ww-card-shadow {
+    width: 76%;
+    height: 18px;
+    margin-top: 16px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.55), transparent 72%);
+    filter: blur(5px);
+    animation: ww-in 900ms ease-out 0.2s both;
+  }
+`

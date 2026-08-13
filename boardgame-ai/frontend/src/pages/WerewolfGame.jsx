@@ -27,14 +27,20 @@ const NIGHT_PHASE_ROLES = {
 
 const normalizeRoleId = (id) => (id ?? '').replace(/_\d+$/, '')
 
+// 페이즈 사이의 빈 자리. 배경이 통째로 갈리면 전환이 끊겨 보이므로 밤하늘과
+// 같은 색을 깔고 글자만 얹는다.
 const loadingStyle = {
-  minHeight: '100vh',
-  background: '#0d1520',
+  position: 'absolute',
+  inset: 0,
+  background: 'linear-gradient(172deg, #0b0a24 0%, #0d1030 40%, #05080f 100%)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: '#eee',
-  fontFamily: "'Segoe UI', sans-serif",
+  color: 'rgba(245,239,227,0.55)',
+  fontFamily: 'var(--font)',
+  fontSize: 16,
+  fontWeight: 600,
+  letterSpacing: '-0.01em',
 }
 
 const NIGHT_PHASES = new Set(['night_start', ...Object.keys(NIGHT_PHASE_ROLES)])

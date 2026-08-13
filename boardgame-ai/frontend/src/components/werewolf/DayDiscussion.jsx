@@ -1,6 +1,8 @@
 import { useRef, useEffect } from 'react'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
-const RADIUS = 110
+const RADIUS = 128
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 // timeLeft는 백엔드 timer_remaining을 그대로 전달받아 사용한다.
@@ -23,228 +25,163 @@ export default function DayDiscussion({ timeLeft = 300, onVote, onAddTime, onExi
   const progress = Math.max(0, timeLeft / maxTimeRef.current)
   const strokeDashoffset = CIRCUMFERENCE * (1 - progress)
   const isUrgent = timeLeft <= 30
+  // 마지막 10초는 링이 아니라 화면 전체가 반응한다. 숫자를 보고 있지 않아도
+  // 시간이 끝나간다는 것을 알아야 하는 구간이다.
+  const isFinal = timeLeft <= 10
 
   return (
-    <>
-      <style>{`
-        @keyframes urgentPulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.55; }
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(12px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+    <div className="ww-root" style={ui.page}>
+      <WerewolfScene mood="day" />
+      <style>{CSS}</style>
 
-      <div style={styles.page}>
-        <button onClick={onExit} style={exitBtn}>나가기</button>
+      {isUrgent && <div className={isFinal ? 'ww-alarm ww-alarm-final' : 'ww-alarm'} />}
 
-        {/* 배경 */}
-        <div style={styles.sky} />
-        <div style={styles.haze} />
+      <button className="ww-hover ww-press" onClick={onExit} style={ui.exitButton}>나가기</button>
 
-        {/* 마을 실루엣 */}
-        <svg viewBox="0 0 800 160" preserveAspectRatio="xMidYMax slice" style={styles.silhouette}>
-          <polygon points="40,160 62,95 84,160"   fill="#1a0800" />
-          <polygon points="58,160 84,72 110,160"  fill="#1a0800" />
-          <polygon points="95,160 118,100 141,160" fill="#1a0800" />
-          <rect x="155" y="118" width="58" height="42" fill="#1a0800" />
-          <polygon points="150,120 184,92 218,120" fill="#1a0800" />
-          <rect x="162" y="130" width="13" height="30" fill="#120600" />
-          <rect x="245" y="86" width="32" height="74" fill="#1a0800" />
-          <polygon points="240,88 261,62 282,88"  fill="#1a0800" />
-          <rect x="300" y="112" width="52" height="48" fill="#1a0800" />
-          <polygon points="295,114 326,86 357,114" fill="#1a0800" />
-          <polygon points="372,160 394,90 416,160" fill="#1a0800" />
-          <polygon points="390,160 416,70 442,160" fill="#1a0800" />
-          <rect x="455" y="120" width="46" height="40" fill="#1a0800" />
-          <polygon points="450,122 478,98 506,122" fill="#1a0800" />
-          <rect x="524" y="96" width="72" height="64" fill="#1a0800" />
-          <polygon points="519,98 560,68 601,98"  fill="#1a0800" />
-          <rect x="552" y="74" width="16" height="26" fill="#1a0800" />
-          <polygon points="618,160 638,102 658,160" fill="#1a0800" />
-          <polygon points="646,160 670,84 694,160" fill="#1a0800" />
-          <rect x="710" y="118" width="54" height="42" fill="#1a0800" />
-          <polygon points="705,120 737,94 769,120" fill="#1a0800" />
-        </svg>
+      <div style={{ ...ui.stage, gap: 30 }}>
+        <span style={ui.eyebrow} className="ww-anim-down">
+          <span style={ui.eyebrowDot} />
+          토론 시간
+        </span>
 
-        {/* 중앙 타이머 */}
-        <div style={{ ...styles.timerWrapper, animation: isUrgent ? 'urgentPulse 0.8s ease-in-out infinite' : 'fadeIn 0.8s ease-out both' }}>
-
-          {/* 링 레이블 */}
-          <div style={styles.timerLabel}>토론 시간</div>
-
-          {/* SVG 링 */}
-          <svg width={280} height={280} style={{ display: 'block' }}>
-            {/* 광원 효과 */}
+        <div
+          className={isFinal ? 'ww-timer ww-timer-final' : 'ww-timer'}
+          style={styles.timerWrap}
+        >
+          <svg width={300} height={300} style={{ display: 'block', overflow: 'visible' }}>
             <defs>
-              <filter id="glow">
-                <feGaussianBlur stdDeviation="4" result="blur" />
-                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              <filter id="ww-ring-glow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="6" result="b" />
+                <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
               </filter>
-              <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor={isUrgent ? '#ff6b35' : '#F6D568'} />
-                <stop offset="100%" stopColor={isUrgent ? '#c0392b' : '#B8791A'} />
+              <linearGradient id="ww-ring" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor={isUrgent ? '#ff9a5c' : '#ffe9a8'} />
+                <stop offset="100%" stopColor={isUrgent ? '#c02a08' : '#d99a1e'} />
               </linearGradient>
             </defs>
 
-            {/* 트랙 */}
-            <circle
-              cx={140} cy={140} r={RADIUS}
-              fill="none"
-              stroke="rgba(255,255,255,0.08)"
-              strokeWidth={14}
-            />
+            {/* 눈금. 남은 시간을 각도만으로 읽기는 어렵다 — 60등분한 눈금이
+                있으면 링이 계기판처럼 읽힌다. */}
+            <g opacity="0.28">
+              {Array.from({ length: 60 }).map((_, i) => {
+                const major = i % 5 === 0
+                const angle = (i / 60) * Math.PI * 2 - Math.PI / 2
+                const outer = RADIUS + 20
+                const inner = outer - (major ? 9 : 5)
+                return (
+                  <line
+                    key={i}
+                    x1={150 + Math.cos(angle) * inner}
+                    y1={150 + Math.sin(angle) * inner}
+                    x2={150 + Math.cos(angle) * outer}
+                    y2={150 + Math.sin(angle) * outer}
+                    stroke="rgba(255,238,200,0.9)"
+                    strokeWidth={major ? 2 : 1}
+                    strokeLinecap="round"
+                  />
+                )
+              })}
+            </g>
 
-            {/* 진행 링 */}
             <circle
-              cx={140} cy={140} r={RADIUS}
+              cx={150} cy={150} r={RADIUS}
+              fill="rgba(20,8,2,0.34)"
+              stroke="rgba(255,255,255,0.10)"
+              strokeWidth={12}
+            />
+            <circle
+              cx={150} cy={150} r={RADIUS}
               fill="none"
-              stroke="url(#ringGrad)"
-              strokeWidth={14}
+              stroke="url(#ww-ring)"
+              strokeWidth={12}
               strokeLinecap="round"
               strokeDasharray={CIRCUMFERENCE}
               strokeDashoffset={strokeDashoffset}
-              transform="rotate(-90 140 140)"
-              filter="url(#glow)"
-              style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.3s' }}
+              transform="rotate(-90 150 150)"
+              filter="url(#ww-ring-glow)"
+              style={{ transition: 'stroke-dashoffset 1s linear, stroke 300ms ease' }}
             />
-
-            {/* 타이머 숫자 */}
-            <text
-              x={140} y={148}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill={isUrgent ? '#ff8c6b' : '#F8F1DD'}
-              fontSize={54}
-              fontWeight={700}
-              fontFamily="'Segoe UI', sans-serif"
-              letterSpacing={2}
-            >
-              {formatTime(timeLeft)}
-            </text>
           </svg>
+
+          {/* 숫자는 SVG text가 아니라 DOM으로 둔다 — tabular-nums가 걸려야
+              1이 나올 때마다 폭이 줄어 숫자가 좌우로 흔들리지 않는다. */}
+          <div
+            style={{
+              ...styles.clock,
+              color: isUrgent ? '#ffb08a' : 'var(--w-ink)',
+            }}
+          >
+            {formatTime(timeLeft)}
+          </div>
         </div>
 
-        {/* 하단 버튼 */}
-        <div style={styles.buttonRow}>
-          <button onClick={onAddTime} style={styles.btnSecondary}>
-            + 30초 추가
+        <div style={styles.buttonRow} className="ww-anim-in">
+          <button onClick={onAddTime} className="ww-press" style={styles.addBtn}>
+            + 30초
           </button>
-          <button onClick={onVote} style={styles.btnPrimary}>
+          <button onClick={onVote} className="ww-press" style={{ ...ui.primaryButton, flex: 1.4 }}>
             즉시 투표 →
           </button>
         </div>
-
       </div>
-    </>
+    </div>
   )
 }
 
 const styles = {
-  page: {
-    height: '100vh',
-    overflow: 'hidden',
+  timerWrap: {
     position: 'relative',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-    color: '#F8F1DD',
-    userSelect: 'none',
+    display: 'grid',
+    placeItems: 'center',
+    animation: 'ww-pop 720ms cubic-bezier(.2,.9,.25,1.25) both',
   },
 
-  sky: {
+  clock: {
     position: 'absolute',
-    inset: 0,
-    background: 'radial-gradient(ellipse at 50% 0%, rgba(240,180,60,0.18), transparent 55%), linear-gradient(180deg, #0f0800 0%, #2d1400 25%, #6e3510 50%, #b86018 70%, #d4920a 85%, #e8b830 100%)',
-  },
-
-  haze: {
-    position: 'absolute',
-    inset: 0,
-    background: 'radial-gradient(ellipse at 50% 45%, rgba(255,180,60,0.12), transparent 60%)',
-    pointerEvents: 'none',
-  },
-
-  silhouette: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 160,
-    pointerEvents: 'none',
-  },
-
-  timerWrapper: {
-    position: 'relative',
-    zIndex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 24,
-  },
-
-  timerLabel: {
-    fontSize: 13,
-    fontWeight: 700,
-    letterSpacing: 3,
-    color: 'rgba(248,241,221,0.55)',
-    textTransform: 'uppercase',
+    fontSize: 62,
+    fontWeight: 800,
+    letterSpacing: '0.01em',
+    fontVariantNumeric: 'tabular-nums',
+    textShadow: '0 4px 22px rgba(0,0,0,0.55)',
+    transition: 'color 300ms ease',
   },
 
   buttonRow: {
-    position: 'relative',
-    zIndex: 2,
     display: 'flex',
-    justifyContent: 'center',
-    gap: 20,
-    padding: '0 40px',
-    width: '100%',
-    maxWidth: 480,
+    gap: 14,
+    width: 'min(460px, 84vw)',
+    animationDelay: '0.25s',
   },
 
-  btnSecondary: {
+  addBtn: {
+    ...ui.ghostButton,
     flex: 1,
-    maxWidth: 200,
-    padding: '16px 0',
-    border: '1.5px solid rgba(246,213,104,0.35)',
-    borderRadius: 16,
-    background: 'rgba(20,10,0,0.55)',
-    backdropFilter: 'blur(8px)',
-    color: '#F6D568',
-    fontSize: 16,
-    fontWeight: 600,
-    cursor: 'pointer',
-    letterSpacing: 0.3,
-  },
-
-  btnPrimary: {
-    flex: 1,
-    maxWidth: 200,
-    padding: '16px 0',
-    border: 'none',
-    borderRadius: 16,
-    background: 'linear-gradient(135deg, #F6D568, #B8791A)',
-    color: '#1A0A00',
-    fontSize: 16,
-    fontWeight: 700,
-    cursor: 'pointer',
-    letterSpacing: 0.3,
-    boxShadow: '0 6px 0 #6B420A, 0 10px 24px rgba(0,0,0,0.4)',
+    borderColor: 'var(--w-line-strong)',
+    color: 'var(--w-gold)',
   },
 }
 
-const exitBtn = {
-  position: 'absolute', top: 20, right: 20, zIndex: 10,
-  padding: '8px 18px',
-  border: '1px solid rgba(248,241,221,0.2)',
-  borderRadius: 8,
-  background: 'rgba(255,255,255,0.08)',
-  color: 'rgba(248,241,221,0.7)',
-  fontSize: 14, fontWeight: 600, cursor: 'pointer',
-  backdropFilter: 'blur(8px)',
-}
+const CSS = `
+  /* 급할 때 화면 가장자리가 붉게 숨을 쉰다 */
+  .ww-alarm {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse 82% 76% at 50% 50%, transparent 46%, rgba(190,30,10,0.42) 100%);
+    animation: ww-alarm 1.6s ease-in-out infinite;
+  }
+  .ww-alarm-final { animation-duration: 0.75s; }
+  @keyframes ww-alarm {
+    0%, 100% { opacity: 0.25; }
+    50%      { opacity: 0.9; }
+  }
+
+  /* 마지막 10초는 링이 박동한다 */
+  .ww-timer-final { animation: ww-timer-beat 1s ease-in-out infinite !important; }
+  @keyframes ww-timer-beat {
+    0%, 100% { transform: scale(1); }
+    12%      { transform: scale(1.035); }
+    26%      { transform: scale(0.995); }
+  }
+`
