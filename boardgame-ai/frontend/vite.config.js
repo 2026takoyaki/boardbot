@@ -26,6 +26,8 @@ export default defineConfig({
       // 기존 HTTP 라우트
       '/players': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/health': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      // 진행자 목록. 좌석 등록 화면의 선택 UI가 접속 시 한 번 읽는다.
+      '/personas': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       // 개발 모드 (BOARDBOT_DEV=1). 꺼져 있으면 /dev/config가 dev_mode=false를
       // 주고, 상태를 바꾸는 나머지 /dev/* 는 404가 된다.
       '/dev': { target: 'http://127.0.0.1:8000', changeOrigin: true },

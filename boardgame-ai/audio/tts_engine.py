@@ -7,7 +7,8 @@
 - synthesize() 호출 시 캐시 hit이면 API 호출 0회, 즉시 Path 반환.
 
 동시성:
-- asyncio.Semaphore(max_concurrency)로 동시 API 호출 제한 → quota burst 방지. 기본값 4.
+- asyncio.Semaphore(max_concurrency)로 동시 API 호출 제한 → quota burst 방지.
+  기본값 2, TTS_MAX_CONCURRENCY로 조절.
 
 장애 처리:
 - 엔진 실패/타임아웃 시 None 반환. 상위(AudioManager)가 text-only fallback 결정.
@@ -22,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 from pathlib import Path
 
 from audio.catalog import (
@@ -34,6 +36,15 @@ from audio.catalog import (
 from audio.tts.base import DEFAULT_PROVIDER, TTSProvider, get_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _env_int(name: str, default: int) -> int:
+    """정수 환경변수. 값이 이상하면 기본값 — 오타 하나로 서버가 안 뜨면 곤란하다."""
+    try:
+        value = int(os.environ.get(name, "").strip())
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _bench_log_hit(key: str, layer: str) -> None:
@@ -107,7 +118,16 @@ class TTSEngine:
         path = await engine.synthesize("안녕하세요", voice, "static")
     """
 
-    def __init__(self, max_concurrency: int = 4, timeout_sec: float = 20.0) -> None:
+    def __init__(
+        self, max_concurrency: int | None = None, timeout_sec: float = 20.0
+    ) -> None:
+        # 부팅 prewarm은 100줄 넘는 문장을 한꺼번에 쏜다. 동시에 많이 보낼수록
+        # 빨리 데워지지만 rate limit(429)에 걸린 줄은 캐시에 못 들어가고, 그
+        # 문장은 게임 중에 실시간 합성을 기다리게 된다. 부팅은 어차피 비전
+        # 모델 로딩으로 느리니 여기서는 확실히 채우는 쪽을 택한다.
+        # 계정 한도가 다르면 TTS_MAX_CONCURRENCY로 조절한다.
+        if max_concurrency is None:
+            max_concurrency = _env_int("TTS_MAX_CONCURRENCY", 2)
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._timeout = timeout_sec
         # 엔진은 보이스마다 다를 수 있다(페르소나가 고른다). 한 번 만든 어댑터는
