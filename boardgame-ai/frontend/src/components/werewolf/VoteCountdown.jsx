@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { audio } from '../../hooks/useAudioPlayer'
 import { narrate } from '../../lines'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
 export default function VoteCountdown({ players = [], votes = {}, send, onExit, countdownRemaining }) {
   // votes: { player_id: target_player_id } — 현재 지목 상태 (카운트다운 중 가변)
@@ -62,116 +64,75 @@ export default function VoteCountdown({ players = [], votes = {}, send, onExit, 
 
   // countdownRemaining: null=카운트다운 없음, 0="지목!", 1/2/3=숫자
   const showCountdown = countdownRemaining != null
-  const countdownLabel = countdownRemaining === 0 ? '지목!' : String(countdownRemaining)
+  const isShout = countdownRemaining === 0
+  const countdownLabel = isShout ? '지목!' : String(countdownRemaining)
 
   return (
-    <>
-      <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(14px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes flicker {
-          0%, 100% { opacity: 1; }
-          45%      { opacity: 0.85; }
-          50%      { opacity: 0.55; }
-          55%      { opacity: 0.9; }
-        }
-        @keyframes checkPop {
-          0%   { transform: scale(0.5); opacity: 0; }
-          70%  { transform: scale(1.2); }
-          100% { transform: scale(1);   opacity: 1; }
-        }
-        @keyframes countPop {
-          0%   { transform: scale(1.4); opacity: 0; }
-          40%  { transform: scale(0.95); opacity: 1; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        @keyframes shoutPop {
-          0%   { transform: scale(0.8); opacity: 0; }
-          50%  { transform: scale(1.15); }
-          100% { transform: scale(1); opacity: 1; }
-        }
-      `}</style>
+    <div className={`ww-root${isShout ? ' ww-shake' : ''}`} style={ui.page}>
+      <WerewolfScene mood="blood" />
+      <style>{CSS}</style>
 
-      <div style={styles.page}>
-        <button onClick={onExit} style={exitBtn}>나가기</button>
+      <button className="ww-hover ww-press" onClick={onExit} style={ui.exitButton}>나가기</button>
 
-        {/* 배경 */}
-        <div style={styles.sky} />
-        <div style={styles.overlay} />
+      <div style={{ ...ui.stage, gap: 18, width: '100%' }}>
+        <div style={styles.title} className="ww-anim-title">투표</div>
 
-        {/* 마을 실루엣 */}
-        <svg viewBox="0 0 800 160" preserveAspectRatio="xMidYMax slice" style={styles.silhouette}>
-          <polygon points="40,160 62,95 84,160"    fill="#110500" />
-          <polygon points="58,160 84,72 110,160"   fill="#110500" />
-          <polygon points="95,160 118,100 141,160" fill="#110500" />
-          <rect x="155" y="118" width="58" height="42" fill="#110500" />
-          <polygon points="150,120 184,92 218,120"  fill="#110500" />
-          <rect x="162" y="130" width="13" height="30" fill="#0a0300" />
-          <rect x="245" y="86" width="32" height="74" fill="#110500" />
-          <polygon points="240,88 261,62 282,88"   fill="#110500" />
-          <rect x="300" y="112" width="52" height="48" fill="#110500" />
-          <polygon points="295,114 326,86 357,114" fill="#110500" />
-          <polygon points="372,160 394,90 416,160" fill="#110500" />
-          <polygon points="390,160 416,70 442,160" fill="#110500" />
-          <rect x="455" y="120" width="46" height="40" fill="#110500" />
-          <polygon points="450,122 478,98 506,122" fill="#110500" />
-          <rect x="524" y="96" width="72" height="64" fill="#110500" />
-          <polygon points="519,98 560,68 601,98"   fill="#110500" />
-          <rect x="552" y="74" width="16" height="26" fill="#110500" />
-          <polygon points="618,160 638,102 658,160" fill="#110500" />
-          <polygon points="646,160 670,84 694,160" fill="#110500" />
-          <rect x="710" y="118" width="54" height="42" fill="#110500" />
-          <polygon points="705,120 737,94 769,120" fill="#110500" />
-        </svg>
-
-        {/* 타이틀 */}
-        <div style={{ ...styles.title, animation: 'flicker 4s ease-in-out infinite' }}>
-          투표
+        {/* 카운트다운. 숫자가 튀어나오면서 충격파 고리가 함께 퍼진다 —
+            숫자만 바뀌면 "표시"지만 파문이 함께 가면 "호령"이 된다. */}
+        <div style={styles.countStage}>
+          {showCountdown ? (
+            <div key={countdownRemaining} style={styles.countInner}>
+              <span className="ww-shock" />
+              {isShout && <span className="ww-shock ww-shock-2" />}
+              <span
+                className={isShout ? 'ww-count ww-count-shout' : 'ww-count'}
+                style={{ color: isShout ? '#ff7038' : '#ffd9cc' }}
+              >
+                {countdownLabel}
+              </span>
+            </div>
+          ) : (
+            <div style={styles.readyLabel}>준비</div>
+          )}
         </div>
 
-        {/* 카운트다운 숫자 */}
-        {showCountdown && (
-          <div
-            key={countdownRemaining}
-            style={{
-              ...styles.countdownNum,
-              animation: countdownRemaining === 0 ? 'shoutPop 0.4s ease-out both' : 'countPop 0.35s ease-out both',
-              color: countdownRemaining === 0 ? '#ff6030' : '#f5c6c6',
-            }}
-          >
-            {countdownLabel}
-          </div>
-        )}
-
-        {/* 안내 텍스트 (카운트다운 중에도 표시) */}
-        <div style={styles.guideBox}>
+        <div style={styles.guideBox} className="ww-panel ww-anim-in">
           {selectedVoter ? (
             <>
-              <div style={styles.guideLine}>
-                지목할 상대를 선택하세요.
-              </div>
-              <div style={styles.guideLineSub}>
-                투표자: <span style={{ color: '#ff9980', fontWeight: 700 }}>
-                  {players.find(p => p.player_id === selectedVoter)?.playername}
-                </span>　|　카드를 다시 누르면 취소
+              <div style={styles.guideLine}>지목할 상대를 선택하세요.</div>
+              <div style={styles.guideSub}>
+                투표자 <b style={styles.hot}>{players.find(p => p.player_id === selectedVoter)?.playername}</b>
+                <span style={styles.sep}>·</span>카드를 다시 누르면 취소
               </div>
             </>
           ) : (
             <>
               <div style={styles.guideLine}>지목할 플레이어를 손가락으로 가리키세요.</div>
-              <div style={styles.guideLineSub}>직접 선택: 투표자 카드를 먼저 누르세요. 자기 자신 지목은 기권입니다.</div>
+              <div style={styles.guideSub}>
+                직접 선택하려면 투표자 카드를 먼저 누르세요
+                <span style={styles.sep}>·</span>자기 자신 지목은 기권
+              </div>
             </>
           )}
         </div>
 
-        {/* 진행 현황 */}
-        <div style={styles.progressLabel}>
-          {doneCount} / {total} 지목 완료
+        {/* 진행 현황은 숫자보다 채워지는 칸으로 먼저 보인다 */}
+        <div style={styles.progressRow}>
+          <div style={styles.pips}>
+            {players.map((p, i) => (
+              <span
+                key={p.player_id}
+                style={{
+                  ...styles.pip,
+                  ...(votes[p.player_id] !== undefined ? styles.pipDone : null),
+                  transitionDelay: `${i * 30}ms`,
+                }}
+              />
+            ))}
+          </div>
+          <span style={styles.progressText}>{doneCount} / {total} 지목 완료</span>
         </div>
 
-        {/* 플레이어 카드 그리드 */}
         <div style={styles.grid}>
           {players.map((p, i) => {
             const targetId = votes[p.player_id]
@@ -179,233 +140,257 @@ export default function VoteCountdown({ players = [], votes = {}, send, onExit, 
             const done = targetId !== undefined
             const isSelected = selectedVoter === p.player_id
             const clickable = send && (!done || !!selectedVoter)
-            const cardStyle = {
-              ...styles.card,
-              ...(isSelected ? styles.cardSelected : done ? styles.cardDone : styles.cardPending),
-              cursor: clickable ? 'pointer' : 'default',
-            }
             return (
               <div
                 key={p.player_id}
-                style={cardStyle}
+                className="ww-vote-card"
+                style={{
+                  ...styles.card,
+                  ...(isSelected ? styles.cardSelected : done ? styles.cardDone : styles.cardPending),
+                  cursor: clickable ? 'pointer' : 'default',
+                  animationDelay: `${0.2 + i * 0.05}s`,
+                }}
                 onClick={() => handleCardClick(p.player_id)}
               >
-                {/* 번호 */}
-                <div style={{ ...styles.cardNum, color: isSelected ? '#ffe0b2' : done ? '#ff9980' : 'rgba(245,200,190,0.4)' }}>
+                <div style={{ ...styles.cardNum, color: isSelected || done ? '#ffb59c' : 'rgba(255,214,200,0.35)' }}>
                   {String(i + 1).padStart(2, '0')}
                 </div>
-
-                {/* 이름 */}
-                <div style={{ ...styles.cardName, color: isSelected ? '#fff' : done ? '#fff' : 'rgba(245,200,190,0.6)' }}>
+                <div style={{ ...styles.cardName, opacity: isSelected || done ? 1 : 0.62 }}>
                   {p.playername}
                 </div>
-
-                {/* 상태 뱃지 */}
                 {isSelected ? (
-                  <div style={styles.badgeSelected}>선택됨</div>
+                  <div style={{ ...styles.badge, ...styles.badgeSelected }}>선택됨</div>
                 ) : done ? (
-                  <div style={styles.badgeDone}>
-                    <span style={{ animation: 'checkPop 0.3s ease-out both' }}>→</span>{' '}
+                  <div style={{ ...styles.badge, ...styles.badgeDone }} key={targetId}>
+                    <span className="ww-arrow">→</span>
                     {targetPlayer?.playername ?? '?'}
                   </div>
                 ) : (
-                  <div style={styles.badgePending}>대기 중</div>
+                  <div style={{ ...styles.badge, ...styles.badgePending }}>대기 중</div>
                 )}
               </div>
             )
           })}
         </div>
-
-
       </div>
-    </>
+    </div>
   )
 }
 
 const styles = {
-  page: {
-    height: '100vh',
-    overflow: 'hidden',
-    position: 'relative',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 20,
-    fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-    color: '#F8F1DD',
-    userSelect: 'none',
-  },
-
-  sky: {
-    position: 'absolute',
-    inset: 0,
-    background: 'linear-gradient(180deg, #0a0000 0%, #1a0200 20%, #3d0a05 42%, #7a1a08 62%, #b03010 78%, #c84010 100%)',
-  },
-
-  overlay: {
-    position: 'absolute',
-    inset: 0,
-    background: 'radial-gradient(ellipse at 50% 40%, rgba(180,30,10,0.15), transparent 65%)',
-    pointerEvents: 'none',
-  },
-
-  silhouette: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 160,
-    pointerEvents: 'none',
-  },
-
   title: {
-    position: 'relative',
-    zIndex: 1,
-    fontSize: 52,
-    fontWeight: 800,
-    letterSpacing: 8,
-    color: '#f5c6c6',
-    textShadow: '0 0 30px rgba(200,60,30,0.7), 0 2px 8px rgba(0,0,0,0.6)',
+    fontSize: 'clamp(30px, 4.6vw, 46px)',
+    fontWeight: 850,
+    letterSpacing: '0.34em',
+    paddingLeft: '0.34em',
+    color: '#ffd9cc',
+    textShadow: '0 0 44px rgba(220,70,30,0.7), 0 3px 12px rgba(0,0,0,0.7)',
   },
 
-  countdownNum: {
+  countStage: {
     position: 'relative',
-    zIndex: 1,
-    fontSize: 96,
-    fontWeight: 900,
-    letterSpacing: 4,
-    textShadow: '0 0 40px rgba(255,80,30,0.8), 0 4px 16px rgba(0,0,0,0.7)',
-    lineHeight: 1,
+    height: 108,
+    display: 'grid',
+    placeItems: 'center',
+  },
+
+  countInner: {
+    position: 'relative',
+    display: 'grid',
+    placeItems: 'center',
+  },
+
+  readyLabel: {
+    fontSize: 15,
+    fontWeight: 750,
+    letterSpacing: '0.4em',
+    paddingLeft: '0.4em',
+    color: 'rgba(255,214,200,0.35)',
   },
 
   guideBox: {
-    position: 'relative',
-    zIndex: 1,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 8,
-    background: 'rgba(0,0,0,0.35)',
-    backdropFilter: 'blur(8px)',
-    border: '1px solid rgba(200,80,50,0.25)',
-    borderRadius: 16,
-    padding: '18px 40px',
-    animation: 'fadeUp 0.7s ease-out both',
+    gap: 7,
+    padding: '16px 34px',
+    borderColor: 'rgba(255,140,90,0.24)',
+    animationDelay: '0.15s',
   },
 
   guideLine: {
-    fontSize: 20,
-    fontWeight: 600,
-    color: '#f5d8d0',
-    textAlign: 'center',
-  },
-
-  guideLineSub: {
-    fontSize: 15,
-    color: 'rgba(245,200,190,0.6)',
-    textAlign: 'center',
-  },
-
-  progressLabel: {
-    position: 'relative',
-    zIndex: 1,
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: 700,
-    letterSpacing: 2,
-    color: 'rgba(245,200,190,0.5)',
-    textTransform: 'uppercase',
+    letterSpacing: '-0.01em',
+    color: '#ffe6dc',
+  },
+
+  guideSub: {
+    fontSize: 14,
+    color: 'rgba(255,214,200,0.55)',
+  },
+
+  hot: { color: '#ff9068', fontWeight: 800 },
+  sep: { margin: '0 8px', opacity: 0.4 },
+
+  progressRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    animation: 'ww-in 600ms ease-out 0.3s both',
+  },
+
+  pips: { display: 'flex', gap: 5 },
+
+  pip: {
+    width: 22,
+    height: 4,
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.14)',
+    transition: 'background 300ms ease, box-shadow 300ms ease',
+  },
+
+  pipDone: {
+    background: 'var(--w-blood)',
+    boxShadow: '0 0 10px rgba(255,106,60,0.7)',
+  },
+
+  progressText: {
+    fontSize: 13,
+    fontWeight: 750,
+    letterSpacing: '0.1em',
+    color: 'rgba(255,214,200,0.45)',
+    fontVariantNumeric: 'tabular-nums',
   },
 
   grid: {
-    position: 'relative',
-    zIndex: 1,
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, 1fr)',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))',
     gap: 12,
-    width: '100%',
-    maxWidth: 680,
-    padding: '0 24px',
-    animation: 'fadeUp 0.7s ease-out 0.15s both',
+    width: 'min(760px, 92vw)',
+    marginTop: 4,
   },
 
   card: {
-    borderRadius: 14,
-    padding: '18px 12px',
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 16,
+    padding: '16px 12px',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: 8,
-    transition: 'background 0.3s, border-color 0.3s',
+    transition: 'background 260ms ease, border-color 260ms ease, box-shadow 260ms ease, transform 200ms ease',
+    animation: 'ww-in 520ms cubic-bezier(.2,.7,.2,1) both',
   },
 
   cardPending: {
-    background: 'rgba(0,0,0,0.3)',
-    border: '1px solid rgba(200,80,50,0.18)',
+    background: 'rgba(12,4,2,0.42)',
+    border: '1px solid rgba(255,120,80,0.14)',
   },
 
   cardDone: {
-    background: 'rgba(180,40,20,0.25)',
+    background: 'linear-gradient(180deg, rgba(150,34,14,0.34), rgba(60,10,4,0.42))',
     border: '1px solid rgba(255,120,80,0.45)',
-    boxShadow: '0 0 14px rgba(200,60,30,0.2)',
+    boxShadow: '0 0 26px rgba(200,60,30,0.22), 0 1px 0 rgba(255,255,255,0.06) inset',
   },
 
   cardSelected: {
-    background: 'rgba(255,140,60,0.22)',
-    border: '2px solid rgba(255,180,80,0.8)',
-    boxShadow: '0 0 20px rgba(255,140,60,0.35)',
+    background: 'linear-gradient(180deg, rgba(255,150,70,0.28), rgba(120,40,8,0.4))',
+    border: '1px solid rgba(255,190,110,0.85)',
+    boxShadow: '0 0 0 3px rgba(255,170,80,0.16), 0 0 30px rgba(255,150,70,0.4)',
+    transform: 'translateY(-3px)',
   },
 
   cardNum: {
-    fontSize: 12,
-    fontWeight: 700,
-    letterSpacing: 1,
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: '0.14em',
+    fontVariantNumeric: 'tabular-nums',
   },
 
   cardName: {
     fontSize: 18,
-    fontWeight: 700,
+    fontWeight: 750,
+    letterSpacing: '-0.01em',
+    color: '#fff',
     textAlign: 'center',
   },
 
-  badgeDone: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: '#ff9980',
-    background: 'rgba(200,60,30,0.3)',
-    borderRadius: 20,
-    padding: '4px 14px',
+  badge: {
     maxWidth: '100%',
+    padding: '4px 13px',
+    borderRadius: 999,
+    fontSize: 12.5,
+    fontWeight: 700,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
 
-  badgePending: {
-    fontSize: 13,
-    color: 'rgba(245,200,190,0.4)',
-    background: 'rgba(0,0,0,0.2)',
-    borderRadius: 20,
-    padding: '4px 14px',
-  },
-
-  badgeSelected: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: '#ffe0b2',
-    background: 'rgba(255,140,60,0.35)',
-    borderRadius: 20,
-    padding: '4px 14px',
-  },
+  badgeDone: { background: 'rgba(220,70,30,0.34)', color: '#ffb59c' },
+  badgePending: { background: 'rgba(0,0,0,0.26)', color: 'rgba(255,214,200,0.35)' },
+  badgeSelected: { background: 'rgba(255,170,80,0.34)', color: '#ffe4c4' },
 }
 
-const exitBtn = {
-  position: 'absolute', top: 20, right: 20, zIndex: 10,
-  padding: '8px 18px',
-  border: '1px solid rgba(248,241,221,0.2)',
-  borderRadius: 8,
-  background: 'rgba(255,255,255,0.08)',
-  color: 'rgba(248,241,221,0.7)',
-  fontSize: 14, fontWeight: 600, cursor: 'pointer',
-  backdropFilter: 'blur(8px)',
-}
+const CSS = `
+  /* "지목!" 순간 화면이 한 번 흔들린다. 게임에서 제일 센 순간이라 화면도
+     반응해야 한다 — 다만 아주 짧게. 길면 멀미가 된다. */
+  .ww-shake { animation: ww-shake 420ms cubic-bezier(.36,.07,.19,.97) both; }
+  @keyframes ww-shake {
+    0%, 100% { transform: translate(0, 0); }
+    12%      { transform: translate(-7px, 3px); }
+    28%      { transform: translate(6px, -3px); }
+    46%      { transform: translate(-5px, -2px); }
+    64%      { transform: translate(4px, 2px); }
+    82%      { transform: translate(-2px, 0); }
+  }
+
+  .ww-count {
+    display: block;
+    font-size: clamp(72px, 11vw, 118px);
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 52px rgba(255,90,40,0.75), 0 6px 20px rgba(0,0,0,0.75);
+    animation: ww-count-in 400ms cubic-bezier(.2,.9,.25,1.3) both;
+  }
+  @keyframes ww-count-in {
+    0%   { opacity: 0; transform: scale(1.55); filter: blur(9px); }
+    46%  { opacity: 1; transform: scale(0.94); filter: blur(0); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  .ww-count-shout {
+    letter-spacing: 0.1em;
+    animation: ww-shout-in 520ms cubic-bezier(.2,.9,.25,1.35) both;
+  }
+  @keyframes ww-shout-in {
+    0%   { opacity: 0; transform: scale(0.6); }
+    44%  { opacity: 1; transform: scale(1.22); }
+    72%  { transform: scale(0.97); }
+    100% { transform: scale(1); }
+  }
+
+  /* 숫자에서 퍼져나가는 충격파 */
+  .ww-shock {
+    position: absolute;
+    width: 150px; height: 150px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,120,60,0.7);
+    animation: ww-shock 700ms cubic-bezier(.15,.7,.3,1) both;
+  }
+  .ww-shock-2 { animation-delay: 130ms; border-color: rgba(255,190,120,0.55); }
+  @keyframes ww-shock {
+    0%   { opacity: 0.9; transform: scale(0.3); }
+    100% { opacity: 0;   transform: scale(2.2); }
+  }
+
+  .ww-arrow {
+    display: inline-block;
+    margin-right: 5px;
+    animation: ww-pop 320ms cubic-bezier(.2,.9,.25,1.4) both;
+  }
+
+  .ww-vote-card:active { transform: scale(0.98); }
+`

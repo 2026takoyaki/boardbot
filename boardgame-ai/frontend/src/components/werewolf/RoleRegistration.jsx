@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { narrate } from '../../lines'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
 const ROLES = [
   { id: 'doppelganger', name: '도플갱어', image: '/roles/doppelganger.png', team: '마을 팀', color: '#7C3AED' },
@@ -21,6 +23,14 @@ const ROLES = [
 ]
 
 const TEAMS = ['전체', '마을 팀', '늑대 팀', '중립 팀']
+
+// 팀 이름의 색은 팀마다 하나다. 역할 고유색(role.color)은 카드 뒤 번짐에만 쓴다 —
+// 글자까지 역할색을 따라가면 '마을 팀'이 여덟 가지 색으로 적혀 팀이 안 읽힌다.
+const TEAM_COLORS = {
+  '마을 팀': '#60A5FA',
+  '늑대 팀': '#F87171',
+  '중립 팀': '#A8A29E',
+}
 
 // 프리메이슨은 항상 쌍으로 등장 — 1장만 선택 불가 (0장 또는 2장)
 const MASON_IDS = ['mason_1', 'mason_2']
@@ -69,22 +79,22 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.moon} />
-      <div style={styles.fog} />
+    <div className="ww-root" style={styles.page}>
+      <WerewolfScene mood="dusk" />
+      <style>{CSS}</style>
 
       <aside style={styles.leftPanel}>
-        <div style={styles.logoBox}>
+        <div style={styles.logoBox} className="ww-panel">
           <div style={styles.logoSmall}>ROLE SETTING</div>
           <h1 style={styles.logoTitle}>한밤의 늑대인간</h1>
           <p style={styles.logoDesc}>플레이어 수에 맞게 역할 카드를 선택하세요.</p>
         </div>
 
-        <div style={styles.ruleCard}>
+        <div style={styles.ruleCard} className="ww-panel">
           <div style={styles.ruleLabel}>필요 카드</div>
           <div style={styles.ruleCount}>
-            {selected.length}
-            <span>/ {needed}</span>
+            <span style={{ color: done ? 'var(--w-gold)' : 'var(--w-ink)' }}>{selected.length}</span>
+            <span style={styles.ruleCountTotal}>/ {needed}</span>
           </div>
           <div style={styles.progressTrack}>
             <div
@@ -99,7 +109,7 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
           </p>
         </div>
 
-        <div style={styles.selectedBox}>
+        <div style={styles.selectedBox} className="ww-panel">
           <div style={styles.sectionTitle}>선택된 역할</div>
 
           <div style={styles.selectedGrid}>
@@ -116,7 +126,13 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
                   onClick={role ? () => toggle(role.id) : undefined}
                 >
                   {role ? (
-                    <img src={role.image} alt={role.name} style={styles.selectedImage} />
+                    <img
+                      key={role.id}
+                      src={role.image}
+                      alt={role.name}
+                      style={styles.selectedImage}
+                      className="ww-slot-in"
+                    />
                   ) : (
                     <span style={styles.emptySlot}>+</span>
                   )}
@@ -127,7 +143,7 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
         </div>
       </aside>
 
-      <main style={styles.mainPanel}>
+      <main style={styles.mainPanel} className="ww-panel">
         <header style={styles.topBar}>
           <div>
             <h2 style={styles.mainTitle}>역할 선택</h2>
@@ -135,16 +151,17 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
           </div>
 
           <div style={styles.topActions}>
-            <button type="button" onClick={onExit} style={styles.exitButton}>
+            <button type="button" onClick={onExit} className="ww-hover ww-press" style={styles.exitButton}>
               나가기
             </button>
             <button
               type="button"
               disabled={!done}
               onClick={() => onStart(selected)}
+              className={done ? 'ww-press ww-ready' : undefined}
               style={{
                 ...styles.startButton,
-                ...(!done ? styles.startButtonDisabled : {}),
+                ...(!done ? styles.startButtonDisabled : null),
               }}
             >
               게임 시작
@@ -169,7 +186,7 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
         </nav>
 
         <section style={styles.cardBoard}>
-          {filteredRoles.map((role) => {
+          {filteredRoles.map((role, index) => {
             const isSelected = selected.includes(role.id)
 
             return (
@@ -177,27 +194,26 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
                 key={role.id}
                 type="button"
                 onClick={() => toggle(role.id)}
+                className="ww-role-card"
                 style={{
                   ...styles.roleCard,
-                  ...(isSelected ? styles.roleCardSelected : {}),
+                  ...(isSelected ? styles.roleCardSelected : null),
+                  animationDelay: `${index * 28}ms`,
                 }}
               >
-                <div
-                  style={{
-                    ...styles.roleGlow,
-                    background: role.color,
-                  }}
-                />
+                {/* 팀 색은 카드 뒤에서 은은하게 번지게만 둔다. 카드 자체를
+                    팀 색으로 칠하면 열여섯 장이 색 조각보가 된다. */}
+                <div style={{ ...styles.roleGlow, background: role.color }} />
 
-                {isSelected && <div style={styles.checkBadge}>✓</div>}
+                {isSelected && <div style={styles.checkBadge} className="ww-check">✓</div>}
 
                 <div style={styles.roleImageArea}>
                   <img src={role.image} alt={role.name} style={styles.roleImage} />
                 </div>
 
                 <div style={styles.roleInfo}>
-                  <strong>{role.name}</strong>
-                  <span>{role.team}</span>
+                  <strong style={styles.roleName}>{role.name}</strong>
+                  <span style={{ ...styles.roleTeam, color: TEAM_COLORS[role.team] }}>{role.team}</span>
                 </div>
               </button>
             )
@@ -210,38 +226,14 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
 
 const styles = {
   page: {
-    height: '100vh',
-    position: 'relative',
+    position: 'absolute',
+    inset: 0,
     overflow: 'hidden',
     display: 'grid',
-    gridTemplateColumns: '280px 1fr',
+    gridTemplateColumns: '288px 1fr',
     gap: 14,
     padding: 16,
     boxSizing: 'border-box',
-    fontFamily: 'Pretendard, system-ui, sans-serif',
-    color: '#F8F1DD',
-    background:
-      'radial-gradient(circle at 25% 10%, rgba(237,196,92,0.2), transparent 24%), linear-gradient(160deg, #263A46 0%, #14252F 42%, #070D13 100%)',
-  },
-
-  moon: {
-    position: 'absolute',
-    top: 36,
-    right: 60,
-    width: 100,
-    height: 100,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle, #F3D77B 0%, #D9A93A 48%, transparent 70%)',
-    opacity: 0.3,
-    filter: 'blur(2px)',
-  },
-
-  fog: {
-    position: 'absolute',
-    inset: 0,
-    background:
-      'radial-gradient(circle at 50% 100%, rgba(255,255,255,0.08), transparent 38%), linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.28) 100%)',
-    pointerEvents: 'none',
   },
 
   leftPanel: {
@@ -254,90 +246,104 @@ const styles = {
   },
 
   logoBox: {
-    padding: 16,
-    borderRadius: 20,
-    background: 'rgba(5, 10, 15, 0.58)',
-    border: '1px solid rgba(245, 203, 92, 0.24)',
-    boxShadow: '0 22px 60px rgba(0,0,0,0.35)',
+    padding: '16px 18px',
+    animation: 'ww-in 560ms ease-out both',
   },
 
   logoSmall: {
-    color: '#EAC45C',
-    fontSize: 11,
-    fontWeight: 900,
-    letterSpacing: 3,
+    color: 'var(--w-gold)',
+    fontSize: 10.5,
+    fontWeight: 850,
+    letterSpacing: '0.28em',
   },
 
   logoTitle: {
-    margin: '5px 0 5px',
+    margin: '7px 0 6px',
     fontSize: 26,
-    lineHeight: 1.1,
-    color: '#F6D568',
-    textShadow: '0 3px 0 rgba(0,0,0,0.55), 0 0 24px rgba(246,213,104,0.28)',
+    fontWeight: 850,
+    lineHeight: 1.12,
+    letterSpacing: '-0.02em',
+    color: 'var(--w-ink)',
+    textShadow: '0 0 34px rgba(240,207,122,0.28), 0 2px 10px rgba(0,0,0,0.6)',
   },
 
   logoDesc: {
     margin: 0,
-    color: 'rgba(255,255,255,0.65)',
+    color: 'var(--w-ink-mute)',
     fontSize: 13,
-    lineHeight: 1.4,
+    lineHeight: 1.45,
+    wordBreak: 'keep-all',
   },
 
   ruleCard: {
-    padding: 14,
+    padding: '14px 18px 16px',
     borderRadius: 18,
-    background: 'linear-gradient(180deg, rgba(41,56,65,0.9), rgba(9,17,24,0.9))',
-    border: '1px solid rgba(255,255,255,0.1)',
-    boxShadow: '0 18px 40px rgba(0,0,0,0.25)',
+    animation: 'ww-in 560ms ease-out 60ms both',
   },
 
   ruleLabel: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: 'rgba(255,255,255,0.65)',
+    fontSize: 10.5,
+    fontWeight: 850,
+    letterSpacing: '0.2em',
+    color: 'var(--w-ink-faint)',
   },
 
   ruleCount: {
-    marginTop: 3,
-    fontSize: 36,
-    fontWeight: 950,
-    color: '#FFFFFF',
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: 6,
+    margin: '4px 0 10px',
+    fontSize: 38,
+    fontWeight: 900,
+    letterSpacing: '-0.03em',
+    fontVariantNumeric: 'tabular-nums',
+    transition: 'color 200ms ease',
+  },
+
+  ruleCountTotal: {
+    fontSize: 17,
+    fontWeight: 750,
+    color: 'var(--w-ink-faint)',
   },
 
   progressTrack: {
-    height: 8,
+    height: 6,
     borderRadius: 999,
     overflow: 'hidden',
-    background: 'rgba(255,255,255,0.12)',
+    background: 'rgba(255,255,255,0.10)',
   },
 
   progressFill: {
     height: '100%',
     borderRadius: 999,
-    background: 'linear-gradient(90deg, #D99D2B, #F8D76A)',
+    background: 'linear-gradient(90deg, var(--w-gold-deep), var(--w-gold))',
+    boxShadow: '0 0 12px rgba(240,207,122,0.5)',
+    // 카드를 누를 때마다 눈금이 미끄러진다. 즉시 점프하면 '반응'이 안 보인다.
+    transition: 'width 320ms cubic-bezier(.2,.8,.25,1)',
   },
 
   ruleText: {
-    margin: '8px 0 0',
-    color: 'rgba(255,255,255,0.58)',
+    margin: '9px 0 0',
+    color: 'var(--w-ink-faint)',
     fontSize: 12,
   },
 
   selectedBox: {
     flex: 1,
     minHeight: 0,
-    padding: 14,
+    padding: '14px 16px',
     borderRadius: 20,
-    background: 'rgba(5,10,15,0.46)',
-    border: '1px solid rgba(255,255,255,0.1)',
     display: 'flex',
     flexDirection: 'column',
+    animation: 'ww-in 560ms ease-out 120ms both',
   },
 
   sectionTitle: {
-    marginBottom: 10,
-    fontSize: 14,
-    fontWeight: 900,
+    marginBottom: 11,
+    fontSize: 10.5,
+    fontWeight: 850,
+    letterSpacing: '0.2em',
+    color: 'var(--w-ink-faint)',
     flexShrink: 0,
   },
 
@@ -349,17 +355,19 @@ const styles = {
 
   selectedSlot: {
     height: 50,
-    borderRadius: 11,
+    borderRadius: 12,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px dashed rgba(255,255,255,0.2)',
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px dashed rgba(255,255,255,0.16)',
+    transition: 'background 200ms ease, border-color 200ms ease, box-shadow 200ms ease',
   },
 
   selectedSlotFilled: {
-    background: 'linear-gradient(180deg, rgba(62,78,88,0.9), rgba(16,26,34,0.9))',
-    border: '1px solid rgba(246,213,104,0.45)',
+    background: 'linear-gradient(180deg, rgba(60,52,80,0.9), rgba(14,14,26,0.92))',
+    border: '1px solid var(--w-line-strong)',
+    boxShadow: '0 0 16px rgba(240,207,122,0.18)',
     cursor: 'pointer',
   },
 
@@ -371,8 +379,8 @@ const styles = {
   },
 
   emptySlot: {
-    color: 'rgba(255,255,255,0.25)',
-    fontSize: 20,
+    color: 'rgba(255,255,255,0.2)',
+    fontSize: 19,
     fontWeight: 800,
   },
 
@@ -381,13 +389,11 @@ const styles = {
     zIndex: 1,
     minWidth: 0,
     minHeight: 0,
-    padding: 16,
+    padding: 18,
     borderRadius: 24,
-    background: 'rgba(6, 13, 20, 0.62)',
-    border: '1px solid rgba(245,203,92,0.2)',
-    boxShadow: '0 28px 80px rgba(0,0,0,0.42)',
     display: 'flex',
     flexDirection: 'column',
+    animation: 'ww-in 560ms ease-out 40ms both',
   },
 
   topBar: {
@@ -408,46 +414,39 @@ const styles = {
 
   mainTitle: {
     margin: 0,
-    fontSize: 28,
-    fontWeight: 950,
+    fontSize: 27,
+    fontWeight: 850,
+    letterSpacing: '-0.02em',
   },
 
   mainSub: {
-    margin: '4px 0 0',
-    color: 'rgba(255,255,255,0.58)',
+    margin: '5px 0 0',
+    color: 'var(--w-ink-mute)',
     fontSize: 13,
   },
 
   startButton: {
-    width: 180,
+    ...ui.primaryButton,
+    width: 176,
     height: 50,
-    border: 0,
-    borderRadius: 16,
-    background: 'linear-gradient(180deg, #F6D568, #B8791A)',
-    color: '#261400',
-    fontSize: 18,
-    fontWeight: 950,
-    cursor: 'pointer',
+    padding: 0,
+    fontSize: 17,
     flexShrink: 0,
-    boxShadow: '0 6px 0 #68420E, 0 14px 22px rgba(0,0,0,0.35)',
   },
 
   exitButton: {
+    ...ui.ghostButton,
     width: 104,
     height: 50,
-    border: '1px solid rgba(255,255,255,0.18)',
-    borderRadius: 16,
-    background: 'rgba(255,255,255,0.08)',
-    color: 'rgba(255,255,255,0.82)',
-    fontSize: 16,
-    fontWeight: 900,
-    cursor: 'pointer',
+    padding: 0,
+    fontSize: 15,
     flexShrink: 0,
   },
 
   startButtonDisabled: {
-    background: 'linear-gradient(180deg, #46545D, #27323A)',
-    color: 'rgba(255,255,255,0.35)',
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.10)',
+    color: 'rgba(255,255,255,0.3)',
     boxShadow: 'none',
     cursor: 'not-allowed',
   },
@@ -456,25 +455,29 @@ const styles = {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, 1fr)',
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 12,
     flexShrink: 0,
   },
 
   teamTab: {
     height: 38,
     borderRadius: 12,
-    border: '1px solid rgba(255,255,255,0.1)',
-    background: 'rgba(255,255,255,0.06)',
-    color: 'rgba(255,255,255,0.68)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'rgba(255,255,255,0.04)',
+    color: 'var(--w-ink-mute)',
+    fontFamily: 'inherit',
     fontSize: 13,
-    fontWeight: 900,
+    fontWeight: 800,
+    letterSpacing: '-0.01em',
     cursor: 'pointer',
+    transition: 'background 160ms ease, color 160ms ease, border-color 160ms ease',
   },
 
   teamTabActive: {
-    background: 'linear-gradient(180deg, rgba(82,63,36,0.95), rgba(32,24,17,0.95))',
-    color: '#F6D568',
-    border: '1px solid rgba(246,213,104,0.42)',
+    background: 'linear-gradient(180deg, rgba(240,207,122,0.22), rgba(240,207,122,0.08))',
+    color: 'var(--w-gold)',
+    border: '1px solid var(--w-line-strong)',
+    boxShadow: '0 0 18px rgba(240,207,122,0.14)',
   },
 
   cardBoard: {
@@ -492,29 +495,31 @@ const styles = {
     isolation: 'isolate',
     borderRadius: 16,
     padding: '8px 8px 6px',
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'linear-gradient(180deg, #263B46, #0D1821)',
+    border: '1px solid rgba(255,255,255,0.10)',
+    background: 'linear-gradient(180deg, rgba(42,50,72,0.85), rgba(10,14,24,0.9))',
     cursor: 'pointer',
-    boxShadow: '0 10px 20px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.08)',
+    boxShadow: '0 12px 26px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07)',
     display: 'flex',
     flexDirection: 'column',
+    transition: 'transform 180ms cubic-bezier(.2,.8,.25,1.1), box-shadow 200ms ease, border-color 200ms ease',
+    animation: 'ww-deal-in 420ms cubic-bezier(.2,.8,.3,1.05) both',
   },
 
   roleCardSelected: {
-    border: '2px solid #F6D568',
-    boxShadow: '0 0 0 3px rgba(246,213,104,0.14), 0 0 28px rgba(246,213,104,0.28)',
-    transform: 'translateY(-2px)',
+    border: '1px solid var(--w-gold)',
+    boxShadow: '0 0 0 3px rgba(240,207,122,0.16), 0 0 30px rgba(240,207,122,0.3), 0 14px 30px rgba(0,0,0,0.45)',
+    transform: 'translateY(-4px)',
   },
 
   roleGlow: {
     position: 'absolute',
     top: -40,
     left: -24,
-    width: 120,
-    height: 120,
+    width: 130,
+    height: 130,
     borderRadius: '50%',
-    opacity: 0.22,
-    filter: 'blur(16px)',
+    opacity: 0.26,
+    filter: 'blur(18px)',
   },
 
   checkBadge: {
@@ -525,14 +530,13 @@ const styles = {
     width: 22,
     height: 22,
     borderRadius: '50%',
-    background: '#F6D568',
+    background: 'var(--w-gold)',
     color: '#211300',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    display: 'grid',
+    placeItems: 'center',
     fontSize: 11,
-    fontWeight: 950,
-    boxShadow: '0 4px 10px rgba(0,0,0,0.4)',
+    fontWeight: 900,
+    boxShadow: '0 4px 12px rgba(0,0,0,0.45), 0 0 14px rgba(240,207,122,0.6)',
   },
 
   roleImageArea: {
@@ -549,22 +553,63 @@ const styles = {
     maxWidth: '100%',
     maxHeight: '100%',
     objectFit: 'contain',
-    filter: 'drop-shadow(0 8px 8px rgba(0,0,0,0.65))',
+    filter: 'drop-shadow(0 8px 10px rgba(0,0,0,0.7))',
   },
 
   roleInfo: {
     position: 'relative',
     zIndex: 2,
-    height: 34,
+    height: 36,
     flexShrink: 0,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 10,
-    background: 'rgba(0,0,0,0.34)',
-    color: '#FFFFFF',
+    gap: 1,
+    borderRadius: 11,
+    background: 'rgba(0,0,0,0.42)',
+  },
+
+  roleName: {
     fontSize: 13,
-    fontWeight: 900,
+    fontWeight: 800,
+    letterSpacing: '-0.01em',
+    color: '#fff',
+  },
+
+  // 팀은 글자색으로만 구분한다. 뱃지를 달면 카드 한 장에 요소가 넷이 된다.
+  // 색(TEAM_COLORS)은 어두운 카드 위에서 이미 밝게 잡아둔 값이라, 예전처럼
+  // brightness로 끌어올리면 세 팀이 모두 흰색 근처로 몰린다.
+  roleTeam: {
+    fontSize: 10,
+    fontWeight: 750,
+    letterSpacing: '0.04em',
   },
 }
+
+const CSS = `
+  @keyframes ww-deal-in {
+    from { opacity: 0; transform: translateY(14px) scale(0.96); }
+    to   { opacity: 1; transform: none; }
+  }
+  /* 선택된 카드는 위로 떠 있으므로 등장 애니메이션이 끝난 뒤 그 자리를 지켜야
+     한다 — 애니메이션의 to를 덮어쓰지 않도록 hover는 shadow만 건드린다. */
+  .ww-role-card:hover { border-color: rgba(255,255,255,0.22); }
+  .ww-role-card:active { transform: scale(0.97); }
+
+  /* 선택 표시는 톡 튀어나온다. 체크가 그냥 나타나면 눌렀는지 알기 어렵다. */
+  .ww-check { animation: ww-check 320ms cubic-bezier(.2,.9,.25,1.6) both; }
+  @keyframes ww-check {
+    0%   { opacity: 0; transform: scale(0.2) rotate(-40deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0); }
+  }
+
+  .ww-slot-in { animation: ww-check 280ms cubic-bezier(.2,.9,.25,1.4) both; }
+
+  /* 필요한 장수를 다 채우면 시작 버튼이 스스로 숨을 쉰다 */
+  .ww-ready { animation: ww-ready 2.2s ease-in-out infinite; }
+  @keyframes ww-ready {
+    0%, 100% { box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset, 0 10px 30px rgba(224,178,70,0.28); }
+    50%      { box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset, 0 10px 40px rgba(240,207,122,0.6); }
+  }
+`

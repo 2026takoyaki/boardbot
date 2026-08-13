@@ -1,10 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
 const AUTO_ADVANCE_SEC = 10
 
 export default function VoteResult({ players = [], votes = {}, onComplete, editable = false, send, onConfirm }) {
   const [countdown, setCountdown] = useState(AUTO_ADVANCE_SEC)
   const [selectedVoter, setSelectedVoter] = useState(null)
+  // 막대는 0에서 자란다. 첫 렌더에 이미 제 길이면 transition이 돌 자리가 없어
+  // '집계된 결과'가 아니라 처음부터 그려진 그림으로 보인다.
+  const [grown, setGrown] = useState(false)
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setGrown(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
 
   // 비편집 모드: 자동 진행 타이머
   useEffect(() => {
@@ -62,394 +72,298 @@ export default function VoteResult({ players = [], votes = {}, onComplete, edita
   }
 
   return (
-    <>
-      <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(16px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes cardReveal {
-          0%   { opacity: 0; transform: scale(0.88) translateY(10px); }
-          100% { opacity: 1; transform: scale(1) translateY(0); }
-        }
-        @keyframes barGrow {
-          from { width: 0; }
-        }
-        @keyframes flicker {
-          0%, 100% { opacity: 1; }
-          45%      { opacity: 0.85; }
-          50%      { opacity: 0.55; }
-          55%      { opacity: 0.9; }
-        }
-      `}</style>
+    <div
+      className="ww-root"
+      onClick={editable ? undefined : onComplete}
+      style={{ ...ui.page, cursor: editable ? 'default' : 'pointer' }}
+    >
+      <WerewolfScene mood="blood" />
+      <style>{CSS}</style>
 
-      <div onClick={editable ? undefined : onComplete} style={{ ...styles.page, cursor: editable ? 'default' : 'pointer' }}>
+      {/* 심판이 확정되는 화면이라 처음 한 번 붉게 번쩍인다 */}
+      {!editable && <div className="ww-verdict-flash" />}
 
-        {/* 배경 */}
-        <div style={styles.sky} />
-        <div style={styles.overlay} />
+      <div style={{ ...ui.stage, gap: 16, ...styles.content, marginBottom: editable ? 12 : 60 }}>
+        <div style={styles.title} className="ww-anim-title">
+          {editable ? '투표 결과 맞나요?' : '투표 결과'}
+        </div>
 
-        {/* 마을 실루엣 */}
-        <svg viewBox="0 0 800 160" preserveAspectRatio="xMidYMax slice" style={styles.silhouette}>
-          <polygon points="40,160 62,95 84,160"    fill="#110500" />
-          <polygon points="58,160 84,72 110,160"   fill="#110500" />
-          <polygon points="95,160 118,100 141,160" fill="#110500" />
-          <rect x="155" y="118" width="58" height="42" fill="#110500" />
-          <polygon points="150,120 184,92 218,120"  fill="#110500" />
-          <rect x="162" y="130" width="13" height="30" fill="#0a0300" />
-          <rect x="245" y="86" width="32" height="74" fill="#110500" />
-          <polygon points="240,88 261,62 282,88"   fill="#110500" />
-          <rect x="300" y="112" width="52" height="48" fill="#110500" />
-          <polygon points="295,114 326,86 357,114" fill="#110500" />
-          <polygon points="372,160 394,90 416,160" fill="#110500" />
-          <polygon points="390,160 416,70 442,160" fill="#110500" />
-          <rect x="455" y="120" width="46" height="40" fill="#110500" />
-          <polygon points="450,122 478,98 506,122" fill="#110500" />
-          <rect x="524" y="96" width="72" height="64" fill="#110500" />
-          <polygon points="519,98 560,68 601,98"   fill="#110500" />
-          <rect x="552" y="74" width="16" height="26" fill="#110500" />
-          <polygon points="618,160 638,102 658,160" fill="#110500" />
-          <polygon points="646,160 670,84 694,160" fill="#110500" />
-          <rect x="710" y="118" width="54" height="42" fill="#110500" />
-          <polygon points="705,120 737,94 769,120" fill="#110500" />
-        </svg>
-
-        {/* 컨텐츠 */}
-        <div style={{ ...styles.content, marginBottom: editable ? 16 : 80 }}>
-
-          {/* 타이틀 */}
-          <div style={{ ...styles.title, animation: 'flicker 4s ease-in-out infinite' }}>
-            {editable ? '투표 결과 맞나요?' : '투표 결과'}
-          </div>
-
-          {/* 심판 플레이어 카드 */}
-          <div style={{ animation: 'cardReveal 0.6s cubic-bezier(0.22,0.61,0.36,1) 0.1s both' }}>
-            <div style={styles.condemnedCard}>
-              <div style={styles.avatar}>
-                <svg viewBox="0 0 48 48" width="42" height="42" fill="none">
-                  <circle cx="24" cy="18" r="9" fill="rgba(245,180,160,0.5)" />
-                  <path d="M8 42c0-8.837 7.163-16 16-16s16 7.163 16 16" stroke="rgba(245,180,160,0.5)" strokeWidth="2.5" strokeLinecap="round" />
-                </svg>
-              </div>
-              <div style={styles.condemnedLabel}>
-                <span style={styles.condemnedName}>{condemnedNames || '—'}</span>
-                <span style={styles.condemnedSuffix}> 님 심판</span>
-              </div>
+        <div style={styles.condemnedCard} className="ww-panel ww-anim-pop">
+          <div style={styles.avatarRing}>
+            <div style={styles.avatar}>
+              <svg viewBox="0 0 48 48" width="40" height="40" fill="none">
+                <circle cx="24" cy="18" r="9" fill="rgba(255,190,170,0.65)" />
+                <path
+                  d="M8 42c0-8.837 7.163-16 16-16s16 7.163 16 16"
+                  stroke="rgba(255,190,170,0.65)"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                />
+              </svg>
             </div>
           </div>
+          <div style={styles.condemnedLabel}>
+            <span style={styles.condemnedName}>{condemnedNames || '—'}</span>
+            <span style={styles.condemnedSuffix}> 님 심판</span>
+          </div>
+        </div>
 
-          {/* 득표 목록 */}
-          <div style={styles.tallyList}>
-            {tally.map((p, i) => (
+        <div style={styles.tallyList}>
+          {tally.map((p, i) => {
+            const top = p.voteCount === maxVotes && maxVotes > 0
+            return (
               <div
                 key={p.player_id}
                 style={{
                   ...styles.tallyRow,
-                  animation: `fadeUp 0.5s ease-out ${0.25 + i * 0.08}s both`,
-                  ...(p.voteCount === maxVotes && maxVotes > 0 ? styles.tallyRowHighlight : {}),
+                  ...(top ? styles.tallyRowTop : null),
+                  animationDelay: `${0.25 + i * 0.07}s`,
                 }}
+                className="ww-anim-in"
               >
                 <span style={styles.tallyName}>{p.playername}</span>
                 <div style={styles.barTrack}>
                   <div
                     style={{
                       ...styles.barFill,
-                      width: maxVotes > 0 ? `${(p.voteCount / maxVotes) * 100}%` : '0%',
-                      background: p.voteCount === maxVotes && maxVotes > 0
-                        ? 'linear-gradient(90deg, #c84010, #ff6030)'
-                        : 'rgba(245,200,190,0.25)',
-                      animation: 'barGrow 0.6s ease-out both',
+                      width: grown && maxVotes > 0 ? `${(p.voteCount / maxVotes) * 100}%` : '0%',
+                      background: top
+                        ? 'linear-gradient(90deg, var(--w-blood-deep), var(--w-blood))'
+                        : 'rgba(255,214,200,0.22)',
+                      boxShadow: top ? '0 0 16px rgba(255,106,60,0.55)' : 'none',
+                      // 막대가 자기 자리까지 자라는 것을 보여준다. 처음부터 다 차
+                      // 있으면 '집계 결과'가 아니라 '고정된 그림'으로 보인다.
+                      transitionDelay: `${0.3 + i * 0.07}s`,
                     }}
                   />
                 </div>
-                <span style={{
-                  ...styles.tallyCount,
-                  color: p.voteCount === maxVotes && maxVotes > 0 ? '#ff9980' : 'rgba(245,200,190,0.5)',
-                }}>
+                <span style={{ ...styles.tallyCount, color: top ? '#ff9068' : 'rgba(255,214,200,0.45)' }}>
                   {p.voteCount}
                 </span>
               </div>
-            ))}
-          </div>
-
-          {/* editable 모드: 투표 보정 패널 */}
-          {editable && (
-            <div style={styles.correctionPanel}>
-              <div style={styles.correctionHeader}>
-                {selectedVoter
-                  ? <span>보정할 대상을 선택하세요 — 투표자: <span style={{ color: '#ff9980', fontWeight: 700 }}>{players.find(p => p.player_id === selectedVoter)?.playername}</span></span>
-                  : '오인식 수정: 투표자 이름을 누르세요'
-                }
-              </div>
-              <div style={styles.correctionGrid}>
-                {players.map(p => {
-                  const targetId = votes[p.player_id]
-                  const targetName = targetId ? players.find(pp => pp.player_id === targetId)?.playername : '기권'
-                  const isSelected = selectedVoter === p.player_id
-                  return (
-                    <div
-                      key={p.player_id}
-                      onClick={() => handleCorrectionClick(p.player_id)}
-                      style={{
-                        ...styles.correctionRow,
-                        ...(isSelected ? styles.correctionRowSelected : {}),
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <span style={styles.correctionVoter}>{p.playername}</span>
-                      <span style={styles.correctionArrow}>→</span>
-                      <span style={styles.correctionTarget}>{targetName}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* 하단 힌트 / 확인 버튼 */}
-          {editable ? (
-            <button onClick={handleConfirm} style={confirmBtn}>
-              투표 확정
-            </button>
-          ) : (
-            <div style={styles.tapHint}>
-              화면을 터치하면 계속합니다{countdown > 0 && <span style={{ marginLeft: 6, opacity: 0.6 }}>({countdown})</span>}
-            </div>
-          )}
+            )
+          })}
         </div>
 
+        {editable && (
+          <div style={styles.correctionPanel} className="ww-panel ww-anim-in">
+            <div style={styles.correctionHeader}>
+              {selectedVoter
+                ? <span>보정할 대상을 선택하세요 — 투표자 <b style={styles.hot}>{players.find(p => p.player_id === selectedVoter)?.playername}</b></span>
+                : '오인식 수정: 투표자 이름을 누르세요'}
+            </div>
+            <div style={styles.correctionGrid}>
+              {players.map(p => {
+                const targetId = votes[p.player_id]
+                const targetName = targetId ? players.find(pp => pp.player_id === targetId)?.playername : '기권'
+                const isSelected = selectedVoter === p.player_id
+                return (
+                  <div
+                    key={p.player_id}
+                    onClick={() => handleCorrectionClick(p.player_id)}
+                    style={{
+                      ...styles.correctionRow,
+                      ...(isSelected ? styles.correctionRowSelected : null),
+                    }}
+                  >
+                    <span style={styles.correctionVoter}>{p.playername}</span>
+                    <span style={styles.correctionArrow}>→</span>
+                    <span style={styles.correctionTarget}>{targetName}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {editable ? (
+          <button onClick={handleConfirm} className="ww-press" style={{ ...ui.dangerButton, marginTop: 4, padding: '15px 52px', letterSpacing: '0.06em' }}>
+            투표 확정
+          </button>
+        ) : (
+          <div style={styles.tapHint}>
+            화면을 터치하면 계속합니다
+            {countdown > 0 && <span style={{ marginLeft: 7, opacity: 0.55 }}>({countdown})</span>}
+          </div>
+        )}
       </div>
-    </>
+    </div>
   )
 }
 
 const styles = {
-  page: {
-    height: '100vh',
-    overflow: 'hidden',
-    position: 'relative',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-    color: '#F8F1DD',
-    userSelect: 'none',
-  },
-
-  sky: {
-    position: 'absolute',
-    inset: 0,
-    background: 'linear-gradient(180deg, #0a0000 0%, #1a0200 20%, #3d0a05 42%, #7a1a08 62%, #b03010 78%, #c84010 100%)',
-  },
-
-  overlay: {
-    position: 'absolute',
-    inset: 0,
-    background: 'radial-gradient(ellipse at 50% 40%, rgba(180,30,10,0.15), transparent 65%)',
-    pointerEvents: 'none',
-  },
-
-  silhouette: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 160,
-    pointerEvents: 'none',
-  },
-
   content: {
-    position: 'relative',
-    zIndex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 16,
     width: '100%',
-    maxWidth: 480,
+    maxWidth: 520,
     padding: '0 24px',
     overflowY: 'auto',
-    maxHeight: '90vh',
+    maxHeight: '92vh',
   },
 
   title: {
-    fontSize: 32,
-    fontWeight: 800,
-    letterSpacing: 3,
-    color: '#f5c6c6',
-    textShadow: '0 0 30px rgba(200,60,30,0.7), 0 2px 8px rgba(0,0,0,0.6)',
-    animation: 'fadeUp 0.6s ease-out both',
+    fontSize: 'clamp(26px, 3.6vw, 34px)',
+    fontWeight: 850,
+    letterSpacing: '0.16em',
+    paddingLeft: '0.16em',
+    color: '#ffd9cc',
+    textShadow: '0 0 40px rgba(220,70,30,0.7), 0 3px 10px rgba(0,0,0,0.7)',
     textAlign: 'center',
   },
 
   condemnedCard: {
-    background: 'rgba(180,40,20,0.22)',
-    border: '1px solid rgba(255,120,80,0.4)',
-    borderRadius: 16,
-    padding: '14px 32px',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 8,
-    backdropFilter: 'blur(8px)',
-    boxShadow: '0 0 32px rgba(200,60,30,0.2)',
+    gap: 10,
+    padding: '16px 34px',
+    borderColor: 'rgba(255,130,90,0.42)',
+    boxShadow: '0 0 40px rgba(200,60,30,0.28), 0 24px 60px rgba(0,0,0,0.45)',
+    animationDelay: '0.12s',
+  },
+
+  // 심판당한 사람 주위로 붉은 고리가 천천히 돈다
+  avatarRing: {
+    position: 'relative',
+    padding: 4,
+    borderRadius: '50%',
+    background: 'conic-gradient(from 0deg, rgba(255,106,60,0.8), transparent 42%, rgba(255,106,60,0.8))',
+    animation: 'ww-ring-spin 6s linear infinite',
   },
 
   avatar: {
     width: 56,
     height: 56,
     borderRadius: '50%',
-    background: 'rgba(180,60,40,0.3)',
-    border: '1.5px solid rgba(255,120,80,0.3)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    background: 'rgba(60,14,6,0.85)',
+    display: 'grid',
+    placeItems: 'center',
+    animation: 'ww-ring-spin 6s linear infinite reverse',
   },
 
-  condemnedLabel: {
-    fontSize: 17,
-    textAlign: 'center',
-  },
-
-  condemnedName: {
-    fontWeight: 800,
-    color: '#ff9980',
-  },
-
-  condemnedSuffix: {
-    fontWeight: 400,
-    color: 'rgba(245,200,190,0.8)',
-  },
+  condemnedLabel: { fontSize: 17, textAlign: 'center' },
+  condemnedName: { fontWeight: 850, color: '#ff9068', fontSize: 20 },
+  condemnedSuffix: { fontWeight: 500, color: 'rgba(255,224,214,0.8)' },
 
   tallyList: {
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    gap: 7,
   },
 
   tallyRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-    background: 'rgba(0,0,0,0.28)',
-    border: '1px solid rgba(200,80,50,0.12)',
-    borderRadius: 10,
-    padding: '10px 14px',
+    background: 'rgba(10,3,2,0.4)',
+    border: '1px solid rgba(255,120,80,0.10)',
+    borderRadius: 12,
+    padding: '10px 15px',
   },
 
-  tallyRowHighlight: {
-    background: 'rgba(180,40,20,0.22)',
-    border: '1px solid rgba(255,120,80,0.35)',
+  tallyRowTop: {
+    background: 'linear-gradient(90deg, rgba(150,34,14,0.32), rgba(40,8,4,0.34))',
+    border: '1px solid rgba(255,120,80,0.4)',
   },
 
   tallyName: {
     fontSize: 14,
-    fontWeight: 600,
-    color: '#f5d8d0',
-    width: 56,
+    fontWeight: 700,
+    color: '#ffe6dc',
+    width: 62,
     flexShrink: 0,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
 
   barTrack: {
     flex: 1,
-    height: 6,
-    borderRadius: 4,
-    background: 'rgba(255,255,255,0.07)',
+    height: 7,
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.08)',
     overflow: 'hidden',
   },
 
   barFill: {
     height: '100%',
-    borderRadius: 4,
-    transition: 'width 0.6s ease-out',
+    width: 0,
+    borderRadius: 999,
+    transition: 'width 760ms cubic-bezier(.2,.8,.25,1)',
   },
 
   tallyCount: {
     fontSize: 17,
-    fontWeight: 700,
+    fontWeight: 800,
     width: 22,
     textAlign: 'right',
     flexShrink: 0,
+    fontVariantNumeric: 'tabular-nums',
   },
 
   correctionPanel: {
     width: '100%',
-    background: 'rgba(0,0,0,0.3)',
-    border: '1px solid rgba(200,80,50,0.2)',
-    borderRadius: 14,
     padding: '14px 16px',
-    animation: 'fadeUp 0.5s ease-out 0.3s both',
+    borderRadius: 16,
+    borderColor: 'rgba(255,120,80,0.2)',
+    animationDelay: '0.3s',
   },
 
   correctionHeader: {
     fontSize: 13,
-    color: 'rgba(245,200,190,0.6)',
+    color: 'rgba(255,214,200,0.6)',
     marginBottom: 10,
     textAlign: 'center',
   },
 
-  correctionGrid: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-  },
+  hot: { color: '#ff9068', fontWeight: 800 },
+
+  correctionGrid: { display: 'flex', flexDirection: 'column', gap: 6 },
 
   correctionRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    padding: '8px 12px',
-    borderRadius: 8,
-    background: 'rgba(0,0,0,0.2)',
-    border: '1px solid rgba(200,80,50,0.1)',
-    transition: 'background 0.2s, border-color 0.2s',
+    padding: '9px 13px',
+    borderRadius: 10,
+    background: 'rgba(0,0,0,0.24)',
+    border: '1px solid rgba(255,120,80,0.10)',
+    cursor: 'pointer',
+    transition: 'background 180ms ease, border-color 180ms ease',
   },
 
   correctionRowSelected: {
-    background: 'rgba(255,140,60,0.18)',
-    border: '1px solid rgba(255,180,80,0.6)',
+    background: 'rgba(255,150,70,0.2)',
+    border: '1px solid rgba(255,190,110,0.7)',
   },
 
-  correctionVoter: {
-    fontSize: 14,
-    fontWeight: 700,
-    color: '#f5d8d0',
-    width: 60,
-    flexShrink: 0,
-  },
-
-  correctionArrow: {
-    fontSize: 14,
-    color: 'rgba(245,200,190,0.4)',
-  },
-
-  correctionTarget: {
-    fontSize: 13,
-    color: '#ff9980',
-    flex: 1,
-  },
+  correctionVoter: { fontSize: 14, fontWeight: 750, color: '#ffe6dc', width: 62, flexShrink: 0 },
+  correctionArrow: { fontSize: 13, color: 'rgba(255,214,200,0.35)' },
+  correctionTarget: { fontSize: 13, color: '#ff9068', flex: 1 },
 
   tapHint: {
-    fontSize: 11,
-    color: 'rgba(245,200,190,0.3)',
-    letterSpacing: 0.5,
-    marginTop: 4,
+    fontSize: 12,
+    color: 'rgba(255,214,200,0.32)',
+    letterSpacing: '0.04em',
+    marginTop: 6,
   },
 }
 
-const confirmBtn = {
-  marginTop: 8,
-  padding: '14px 48px',
-  background: 'linear-gradient(135deg, #c84010, #ff6030)',
-  border: 'none',
-  borderRadius: 12,
-  color: '#fff',
-  fontSize: 18,
-  fontWeight: 800,
-  letterSpacing: 2,
-  cursor: 'pointer',
-  boxShadow: '0 0 24px rgba(200,60,30,0.5)',
-  fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-}
+const CSS = `
+  /* 결과가 확정되는 순간의 붉은 섬광. 한 번만 친다. */
+  .ww-verdict-flash {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(255,90,40,0.5), rgba(120,10,0,0.35) 60%, transparent 78%);
+    animation: ww-verdict 900ms ease-out both;
+  }
+  @keyframes ww-verdict {
+    0%   { opacity: 0; }
+    12%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  @keyframes ww-ring-spin { to { transform: rotate(360deg); } }
+`

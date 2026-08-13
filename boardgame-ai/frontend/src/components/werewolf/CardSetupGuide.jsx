@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { audio as audioApi } from '../../hooks/useAudioPlayer'
 import { narrate, useLines } from '../../lines'
+import WerewolfScene from './WerewolfScene'
+import * as ui from './wwUi'
 
 const ROLE_NAMES = {
   doppelganger: '도플갱어',
@@ -308,187 +310,98 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
     : null
 
   return (
-    <>
-      <style>{`
-        @keyframes moonGlowPulse {
-          0%,100% { box-shadow: 0 0 48px 18px rgba(220,185,80,0.22); }
-          50%      { box-shadow: 0 0 72px 28px rgba(220,185,80,0.38); }
-        }
-        @keyframes starFlicker { 0%,100%{opacity:.6} 50%{opacity:.2} }
-        @keyframes fogDrift {
-          0%   { transform: translateX(0); }
-          100% { transform: translateX(-8%); }
-        }
-        @keyframes cursorBlink { 0%,100%{opacity:1} 50%{opacity:0} }
-        @keyframes roleSlideIn {
-          from { opacity: 0; transform: translateY(20px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+    <div className="ww-root" style={s.page} onClick={confirming ? onComplete : undefined}>
+      <WerewolfScene mood="night" />
+      <style>{CSS}</style>
 
-      <div style={s.page} onClick={confirming ? onComplete : undefined}>
-        <button onClick={(e) => { e.stopPropagation(); onExit?.() }} style={exitBtn}>나가기</button>
-        {!confirming && (
-          <button style={skipBtn} onClick={(e) => { e.stopPropagation(); skipRef.current?.() }}>
-            건너뛰기 ▶
-          </button>
-        )}
-        <div style={s.sky} />
-        <div style={s.moon} />
+      <button
+        className="ww-hover ww-press"
+        onClick={(e) => { e.stopPropagation(); onExit?.() }}
+        style={ui.exitButton}
+      >
+        나가기
+      </button>
+      {!confirming && (
+        <button
+          className="ww-hover ww-press"
+          style={skipBtn}
+          onClick={(e) => { e.stopPropagation(); skipRef.current?.() }}
+        >
+          건너뛰기 ▶
+        </button>
+      )}
 
-        {[
-          {t:'7%',l:'10%',sz:2.2},{t:'13%',l:'32%',sz:1.4},
-          {t:'5%',l:'55%',sz:1.8},{t:'19%',l:'75%',sz:1.2},
-          {t:'25%',l:'18%',sz:1.0},{t:'9%', l:'44%',sz:1.5},
-          {t:'28%',l:'90%',sz:2.0},{t:'4%', l:'82%',sz:1.4},
-          {t:'35%',l:'60%',sz:1.2},{t:'40%',l:'5%', sz:1.8},
-        ].map((st, i) => (
-          <div key={i} style={{
-            position:'absolute', top:st.t, left:st.l,
-            width:st.sz, height:st.sz, borderRadius:'50%',
-            background:'#fff', opacity:0.6,
-            animation:`starFlicker ${2.2+i*0.35}s ease-in-out infinite`,
-          }} />
-        ))}
+      {/* 역할 설명 페이즈 */}
+      {roleExplainIdx !== null && currentRoleInfo && (
+        <div style={s.roleWrap} key={roleExplainIdx}>
+          <div style={s.roleCounter}>
+            <span style={ui.eyebrowDot} />
+            역할 소개 {roleExplainIdx + 1} / {uniqueRoles.length}
+          </div>
+          <div style={s.roleBody}>
+            <div style={{ ...s.roleImgBox, background: currentRoleInfo.gradient }}>
+              <img src={currentRoleInfo.image} alt={currentRoleInfo.name} style={s.roleImg} />
+              <span className="ww-card-gloss" />
+            </div>
+            <div style={s.roleTextCol}>
+              <div style={s.roleName}>{currentRoleInfo.name}</div>
+              <div style={s.roleSection} className="ww-panel">
+                <div style={s.roleSectionTitle}>야간 행동</div>
+                <div style={s.roleSectionBody}>{currentRoleInfo.action}</div>
+              </div>
+              <div style={s.roleSection} className="ww-panel">
+                <div style={s.roleSectionTitle}>승리 조건</div>
+                <div style={s.roleSectionBody}>{currentRoleInfo.winCondition}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-        <svg viewBox="0 0 800 160" preserveAspectRatio="xMidYMax slice" style={s.silhouette}>
-          <polygon points="40,160 62,95 84,160"    fill="#06030f" />
-          <polygon points="58,160 84,72 110,160"   fill="#06030f" />
-          <polygon points="95,160 118,100 141,160" fill="#06030f" />
-          <rect x="155" y="118" width="58" height="42" fill="#06030f" />
-          <polygon points="150,120 184,92 218,120"  fill="#06030f" />
-          <rect x="162" y="130" width="13" height="30" fill="#030108" />
-          <rect x="245" y="86" width="32" height="74" fill="#06030f" />
-          <polygon points="240,88 261,62 282,88"   fill="#06030f" />
-          <rect x="300" y="112" width="52" height="48" fill="#06030f" />
-          <polygon points="295,114 326,86 357,114" fill="#06030f" />
-          <polygon points="372,160 394,90 416,160" fill="#06030f" />
-          <polygon points="390,160 416,70 442,160" fill="#06030f" />
-          <rect x="455" y="120" width="46" height="40" fill="#06030f" />
-          <polygon points="450,122 478,98 506,122" fill="#06030f" />
-          <rect x="524" y="96" width="72" height="64" fill="#06030f" />
-          <polygon points="519,98 560,68 601,98"   fill="#06030f" />
-          <rect x="552" y="74" width="16" height="26" fill="#06030f" />
-          <polygon points="618,160 638,102 658,160" fill="#06030f" />
-          <polygon points="646,160 670,84 694,160" fill="#06030f" />
-          <rect x="710" y="118" width="54" height="42" fill="#06030f" />
-          <polygon points="705,120 737,94 769,120" fill="#06030f" />
-        </svg>
-
+      {/* 문장 진행 페이즈 */}
+      {roleExplainIdx === null && (
         <div style={{
-          position:'absolute', bottom:0, left:'-8%',
-          width:'116%', height:'30%',
-          background:'linear-gradient(to top, rgba(60,30,90,0.5) 0%, rgba(40,20,70,0.22) 55%, transparent 100%)',
-          animation:'fogDrift 18s linear infinite alternate',
-          filter:'blur(14px)',
-          pointerEvents:'none',
-        }} />
+          ...s.inner,
+          opacity: visible ? 1 : 0,
+          transition: `opacity ${FADE_MS}ms ease`,
+        }}>
+          <p style={s.sentence}>
+            {typed}
+            {!confirming && sentence && <span style={s.cursor}>|</span>}
+          </p>
 
-        {/* 역할 설명 페이즈 */}
-        {roleExplainIdx !== null && currentRoleInfo && (
-          <div style={s.roleWrap} key={roleExplainIdx}>
-            <div style={s.roleCounter}>
-              역할 소개 {roleExplainIdx + 1} / {uniqueRoles.length}
-            </div>
-            <div style={s.roleBody}>
-              <div style={{ ...s.roleImgBox, background: currentRoleInfo.gradient }}>
-                <img src={currentRoleInfo.image} alt={currentRoleInfo.name} style={s.roleImg} />
-              </div>
-              <div style={s.roleTextCol}>
-                <div style={s.roleName}>{currentRoleInfo.name}</div>
-                <div style={s.roleSection}>
-                  <div style={s.roleSectionTitle}>🌙 야간 행동</div>
-                  <div style={s.roleSectionBody}>{currentRoleInfo.action}</div>
-                </div>
-                <div style={s.roleSection}>
-                  <div style={s.roleSectionTitle}>🏆 승리 조건</div>
-                  <div style={s.roleSectionBody}>{currentRoleInfo.winCondition}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+          {confirming && CONFIRM_TEXT && typed.length >= CONFIRM_TEXT.length && (
+            <p style={s.hint}>화면을 터치하거나 OK 싸인을 해주세요</p>
+          )}
 
-        {/* 문장 진행 페이즈 */}
-        {roleExplainIdx === null && (
-          <div style={{
-            ...s.inner,
-            opacity: visible ? 1 : 0,
-            transition: `opacity ${FADE_MS}ms ease`,
-          }}>
-            <p style={s.sentence}>
-              {typed}
-              {!confirming && sentence && <span style={s.cursor}>|</span>}
-            </p>
-
-            {confirming && CONFIRM_TEXT && typed.length >= CONFIRM_TEXT.length && (
-              <p style={s.hint}>화면을 터치하거나 OK 싸인을 해주세요</p>
-            )}
-
-            {sentence?.showCards && roles.length > 0 && (
-              <div style={s.cardGrid}>
-                {roles.map((roleId, i) => (
-                  <div key={i} style={s.cardItem}>
-                    <div style={s.cardImgBox}>
-                      <img
-                        src={`/roles/${roleId}.png`}
-                        alt={ROLE_NAMES[roleId] || roleId}
-                        style={s.cardImg}
-                      />
-                    </div>
-                    <div style={s.cardName}>{ROLE_NAMES[roleId] || roleId}</div>
+          {sentence?.showCards && roles.length > 0 && (
+            <div style={s.cardGrid}>
+              {roles.map((roleId, i) => (
+                <div
+                  key={i}
+                  style={{ ...s.cardItem, animationDelay: `${i * 55}ms` }}
+                  className="ww-deal"
+                >
+                  <div style={s.cardImgBox}>
+                    <img
+                      src={`/roles/${roleId}.png`}
+                      alt={ROLE_NAMES[roleId] || roleId}
+                      style={s.cardImg}
+                    />
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </>
+                  <div style={s.cardName}>{ROLE_NAMES[roleId] || roleId}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
 const s = {
-  page: {
-    height: '100vh',
-    overflow: 'hidden',
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Segoe UI', 'Apple SD Gothic Neo', sans-serif",
-    userSelect: 'none',
-  },
-
-  sky: {
-    position: 'absolute',
-    inset: 0,
-    background: [
-      'radial-gradient(ellipse at 72% 8%, rgba(180,140,40,0.18) 0%, transparent 38%)',
-      'radial-gradient(ellipse at 15% 85%, rgba(90,20,140,0.32) 0%, transparent 48%)',
-      'linear-gradient(160deg, #160d38 0%, #0c1628 35%, #180c28 65%, #081420 100%)',
-    ].join(', '),
-  },
-
-  moon: {
-    position: 'absolute',
-    top: 48,
-    right: 90,
-    width: 90,
-    height: 90,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle at 38% 36%, #fffde7, #f5e070 40%, #c8a820 80%)',
-    animation: 'moonGlowPulse 3.5s ease-in-out infinite',
-  },
-
-  silhouette: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: '100%',
-    height: 160,
-    pointerEvents: 'none',
-  },
+  page: ui.page,
 
   inner: {
     position: 'relative',
@@ -507,11 +420,11 @@ const s = {
     // 문장 길이가 고정이 아니다 — 페르소나에 따라 같은 안내가 길어질 수 있어
     // 뷰포트 폭에 맞춰 줄어들게 둔다. nowrap이면 긴 문장이 화면 밖으로 나간다.
     fontSize: 'clamp(24px, 3.4vw, 38px)',
-    fontWeight: 600,
-    color: '#F8F1DD',
+    fontWeight: 650,
+    color: 'var(--w-ink)',
     textAlign: 'center',
-    letterSpacing: 1,
-    textShadow: '0 0 32px rgba(220,185,120,0.4)',
+    letterSpacing: '-0.01em',
+    textShadow: '0 0 42px rgba(240,207,122,0.35), 0 3px 14px rgba(0,0,0,0.6)',
     lineHeight: 1.6,
     // 두 줄까지는 자리를 미리 잡아둔다. 타이핑 도중 줄이 늘면 아래 카드가
     // 밀려 내려가 화면이 출렁인다.
@@ -523,10 +436,10 @@ const s = {
 
   cursor: {
     display: 'inline-block',
-    marginLeft: 2,
+    marginLeft: 3,
     fontWeight: 200,
-    color: 'rgba(248,241,221,0.7)',
-    animation: 'cursorBlink 0.7s step-start infinite',
+    color: 'var(--w-gold)',
+    animation: 'ww-caret 0.72s step-start infinite',
   },
 
   cardGrid: {
@@ -545,16 +458,16 @@ const s = {
   },
 
   cardImgBox: {
-    width: 76,
-    height: 96,
-    borderRadius: 10,
+    width: 78,
+    height: 98,
+    borderRadius: 12,
     overflow: 'hidden',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(220,185,120,0.25)',
+    background: 'linear-gradient(160deg, rgba(56,46,72,0.85), rgba(14,12,24,0.9))',
+    border: '1px solid var(--w-line)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 4px 18px rgba(0,0,0,0.45)',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
   },
 
   cardImg: {
@@ -565,16 +478,18 @@ const s = {
 
   cardName: {
     fontSize: 11,
-    color: 'rgba(248,241,221,0.55)',
+    fontWeight: 600,
+    color: 'var(--w-ink-mute)',
     textAlign: 'center',
   },
 
   hint: {
     margin: 0,
     fontSize: 15,
-    color: 'rgba(248,241,221,0.38)',
+    color: 'var(--w-ink-faint)',
     textAlign: 'center',
-    letterSpacing: 0.5,
+    letterSpacing: '-0.01em',
+    animation: 'ww-in 500ms ease-out both',
   },
 
   // 역할 설명 페이즈 스타일
@@ -588,15 +503,12 @@ const s = {
     maxWidth: 940,
     width: '92%',
     marginBottom: 60,
-    animation: 'roleSlideIn 0.45s ease both',
+    animation: 'ww-in 560ms cubic-bezier(.2,.7,.2,1) both',
   },
 
   roleCounter: {
-    fontSize: 14,
-    fontWeight: 700,
-    letterSpacing: 2,
-    color: 'rgba(220,185,120,0.55)',
-    textTransform: 'uppercase',
+    ...ui.eyebrow,
+    fontSize: 12,
   },
 
   roleBody: {
@@ -607,16 +519,18 @@ const s = {
   },
 
   roleImgBox: {
+    position: 'relative',
+    overflow: 'hidden',
     width: 150,
     height: 190,
-    borderRadius: 14,
-    overflow: 'hidden',
-    border: '2px solid rgba(255,255,255,0.15)',
+    borderRadius: 16,
+    border: '1px solid var(--w-line-strong)',
     flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.55)',
+    boxShadow: '0 18px 44px rgba(0,0,0,0.55), 0 0 30px rgba(240,207,122,0.12)',
+    animation: 'ww-pop 620ms cubic-bezier(.2,.9,.25,1.25) both',
   },
 
   roleImg: {
@@ -633,56 +547,64 @@ const s = {
   },
 
   roleName: {
-    fontSize: 40,
-    fontWeight: 800,
-    color: '#F8F1DD',
-    textShadow: '0 0 24px rgba(220,185,120,0.45)',
+    fontSize: 38,
+    fontWeight: 850,
+    letterSpacing: '-0.02em',
+    color: 'var(--w-ink)',
+    textShadow: '0 0 34px rgba(240,207,122,0.4)',
+    animation: 'ww-in 520ms ease-out 80ms both',
   },
 
   roleSection: {
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: '16px 20px',
+    borderRadius: 14,
+    padding: '15px 20px',
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    gap: 7,
+    animation: 'ww-in 520ms ease-out 180ms both',
   },
 
   roleSectionTitle: {
-    fontSize: 14,
-    fontWeight: 700,
-    letterSpacing: 1,
-    color: 'rgba(220,185,80,0.75)',
+    fontSize: 11.5,
+    fontWeight: 800,
+    letterSpacing: '0.18em',
+    color: 'var(--w-gold)',
   },
 
   roleSectionBody: {
-    fontSize: 21,
-    color: 'rgba(248,241,221,0.85)',
+    fontSize: 20,
+    fontWeight: 500,
+    color: 'var(--w-ink-soft)',
     lineHeight: 1.75,
+    wordBreak: 'keep-all',
   },
 }
 
-const exitBtn = {
-  position: 'absolute', top: 20, right: 20, zIndex: 10,
-  padding: '8px 18px',
-  border: '1px solid rgba(248,241,221,0.2)',
-  borderRadius: 8,
-  background: 'rgba(255,255,255,0.08)',
-  color: 'rgba(248,241,221,0.7)',
-  fontSize: 14, fontWeight: 600, cursor: 'pointer',
-  backdropFilter: 'blur(8px)',
+const skipBtn = {
+  ...ui.ghostButton,
+  position: 'absolute', bottom: 32, right: 32, zIndex: 10,
+  padding: '10px 26px',
+  borderRadius: 999,
+  fontSize: 14,
 }
 
-const skipBtn = {
-  position: 'absolute', bottom: 36, right: 36, zIndex: 10,
-  padding: '10px 28px',
-  border: '1px solid rgba(220,185,120,0.35)',
-  borderRadius: 24,
-  background: 'rgba(220,185,120,0.12)',
-  color: 'rgba(248,241,221,0.75)',
-  fontSize: 15, fontWeight: 600, cursor: 'pointer',
-  letterSpacing: 1,
-  backdropFilter: 'blur(6px)',
-  transition: 'background 0.2s, color 0.2s',
-}
+const CSS = `
+  @keyframes ww-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* 카드가 한 장씩 깔린다. 열여섯 장이 한꺼번에 나타나면 '목록'이지만
+     차례로 놓이면 '나눠주는 중'으로 보인다. */
+  @keyframes ww-deal {
+    0%   { opacity: 0; transform: translateY(-18px) rotate(-6deg) scale(0.9); }
+    70%  { opacity: 1; transform: translateY(2px) rotate(1deg) scale(1); }
+    100% { opacity: 1; transform: none; }
+  }
+  .ww-deal { animation: ww-deal 480ms cubic-bezier(.2,.8,.3,1.05) both; }
+
+  /* 역할 카드 표면의 광택 */
+  .ww-card-gloss {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(150deg, rgba(255,255,255,0.16) 0%, transparent 42%);
+    pointer-events: none;
+  }
+`
