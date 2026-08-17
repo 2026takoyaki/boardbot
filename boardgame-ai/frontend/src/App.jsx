@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useAudioPlayer, audio as audioApi } from './hooks/useAudioPlayer'
 import { useBenchBridge } from './hooks/useBenchBridge'
+import { playSfx } from './sfx'
 import DevPanel from './components/common/DevPanel'
 import LightStrip from './components/common/LightStrip'
 import SeatRegistration from './components/common/SeatRegistration'
@@ -67,13 +68,35 @@ export default function App() {
     }
   }, [registeredPlayers, firstPlayerId])
 
-  // 사운드 trigger (좌석 등록 효과음)
+  // 손이 등록될 때마다. 백엔드가 오른손·왼손 각각에서 sound_seq를 올리므로
+  // 한 사람당 두 번 울린다 — 한쪽만 인식된 상태에서 아무 반응이 없으면
+  // 됐는지 안 됐는지 모른 채로 기다리게 된다.
   useEffect(() => {
-    if (state?.sound === 'registered') {
-      const audio = new Audio('/sfx/hand_register.mp3')
-      audio.play().catch(() => {})
-    }
+    if (state?.sound === 'registered') playSfx('hand_register')
   }, [state?.sound_seq])
+
+  /**
+   * 공용 버튼 클릭음.
+   *
+   * 버튼이 `.btn`, `.gcard-cta`, `.pp-item` 등으로 흩어져 있어 한 곳에서 잡는다.
+   * 컴포넌트마다 핸들러를 붙이면 새 버튼이 생길 때마다 빠뜨린다.
+   *
+   * 소리를 따로 내는 버튼(미리듣기 등)은 data-noclick으로 빠진다 — 자기 소리와
+   * 클릭음이 겹쳐 울리면 둘 다 뭉개진다.
+   */
+  useEffect(() => {
+    const onClick = (e) => {
+      // 제외 판정은 **누른 지점**에서 위로 훑는다. 버튼을 먼저 찾고 거기서
+      // 올라가면, 버튼 안쪽 요소에 붙은 표시를 지나쳐버린다(미리듣기 아이콘이
+      // 그랬다 — span이라 부모 버튼이 먼저 잡혔다).
+      if (e.target.closest?.('[data-noclick]')) return
+      const el = e.target.closest?.('button')
+      if (!el || el.disabled) return
+      playSfx('ui_click')
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [])
 
   // 백엔드 phase가 늑대인간 게임 단계로 진입하면 page 동기화 (새로고침 복구 용도)
   // seat/lobby에서는 발동하지 않음 — 게임 선택 전 한밤 파이프라인이 켜지는 사이드이펙트 방지

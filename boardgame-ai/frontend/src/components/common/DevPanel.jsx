@@ -88,7 +88,9 @@ export default function DevPanel({ title, actions = [] }) {
   const growsUp = corner.key.startsWith('b')
 
   return (
-    <div style={{ ...styles.wrap, ...corner.style }}>
+    // 개발 도구는 게임 UI가 아니다. 클릭음이 나면 연출을 확인하는 중에
+    // 조작음이 섞여 무엇이 게임 소리인지 분간이 안 된다.
+    <div style={{ ...styles.wrap, ...corner.style }} data-noclick="">
       {open && growsUp && <Actions actions={actions} />}
 
       <div style={styles.handleRow}>
