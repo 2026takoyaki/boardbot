@@ -153,6 +153,7 @@ export default function PersonaPicker({ send, connected }) {
                 className={`pp-listen ${previewing === p.id ? 'on' : ''}`}
                 role="button"
                 tabIndex={0}
+                data-noclick=""
                 aria-label={`${p.display_name} 미리듣기`}
                 title="미리듣기"
                 onClick={(e) => preview(e, p.id)}

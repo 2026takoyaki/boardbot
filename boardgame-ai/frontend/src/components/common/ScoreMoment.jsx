@@ -106,7 +106,7 @@ function Moment({ moment, kind, look, onDone }) {
   if (!moment || !look) return null
 
   const d = moment.duration_ms
-  const enterMs = Math.round(d * 0.16)
+  const enterMs = enterMsOf(d)
   const tier = TIERS[moment.tier] ?? TIERS.great
   const showRays = kind === 'hand' ? tier.rays : false
   const bodyScale = kind === 'hand' ? tier.scale : 1
@@ -338,6 +338,24 @@ function slotsByRank(rows, rankKey) {
   return new Map(ordered.map((row, index) => [row.player_id, index]))
 }
 
+/**
+ * 등장 애니메이션 길이. 연출 전체 길이에 비례한다.
+ *
+ * 소리도 이 값을 봐야 해서 밖으로 낸다 — 효과음 쪽에서 숫자를 베껴 쓰면
+ * 연출 길이를 조정했을 때 그림과 소리가 조용히 어긋난다.
+ */
+export function enterMsOf(durationMs) {
+  return Math.round((durationMs || 0) * 0.16)
+}
+
+/** 순위표가 실제로 미끄러지는 시점. 역전 효과음은 여기에 맞춰 울려야 한다. */
+export function leadChangeSettleMs(durationMs) {
+  return Math.round(enterMsOf(durationMs) * SETTLE_BEATS)
+}
+
+// 이전 순위를 몇 박자 보여준 뒤 미끄러질지.
+const SETTLE_BEATS = 1.7
+
 function LeadChange({ moment, look, enterMs }) {
   const standings = Array.isArray(moment.standings) ? moment.standings : []
   // DOM 순서는 고정하고 자리만 옮긴다. 목록 자체를 다시 정렬하면 React가 노드를
@@ -353,7 +371,7 @@ function LeadChange({ moment, look, enterMs }) {
   useEffect(() => {
     // 이전 순위를 한 박자 보여준 뒤 미끄러진다. 곧바로 정렬해버리면 무엇이
     // 바뀌었는지 눈으로 따라갈 수 없다.
-    const timer = setTimeout(() => setSettled(true), enterMs * 1.7)
+    const timer = setTimeout(() => setSettled(true), enterMs * SETTLE_BEATS)
     return () => clearTimeout(timer)
   }, [enterMs])
 

@@ -12,10 +12,11 @@ import BonusGauge from '../components/common/BonusGauge'
 import DevPanel from '../components/common/DevPanel'
 import DiceFace from '../components/common/DiceFace'
 import RoundBanner from '../components/common/RoundBanner'
-import ScoreMoment from '../components/common/ScoreMoment'
+import ScoreMoment, { leadChangeSettleMs } from '../components/common/ScoreMoment'
 import YachtRules from '../components/common/YachtRules'
 import YachtTutorial from '../components/common/YachtTutorial'
 import { previewScore, upperSubtotal } from '../components/common/yachtScoring'
+import { playSfx, HAND_TIER_SFX, SCORE_VARIANT_SFX } from '../sfx'
 import {
   BONUS_SCORE,
   BONUS_THRESHOLD,
@@ -612,6 +613,57 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
   const dismissMoment = useCallback(() => setMomentQueue(queue => queue.slice(1)), [])
 
+  /**
+   * 주사위 인식음. 조합이 나온 굴림에서는 등급음이 대신 나가야 한다.
+   *
+   * 굴림 확정(state_update의 roll_count)과 조합 축하(cue)는 **별개의 메시지**라
+   * 프론트 도착 순서가 보장되지 않는다. 그래서 양쪽을 다 막아야 한다.
+   *   - 인식음이 먼저 걸리면 → 잠깐 미뤘다가 큐가 오면 취소한다
+   *   - 큐가 먼저 오면 → 방금 왔다는 표시를 남겨 뒤따르는 인식음을 건너뛴다
+   */
+  const diceSfxTimerRef = useRef(null)
+  const handCueAtRef = useRef(0)
+
+  const cancelDiceSfx = useCallback(() => {
+    handCueAtRef.current = Date.now()
+    if (diceSfxTimerRef.current) {
+      clearTimeout(diceSfxTimerRef.current)
+      diceSfxTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleDiceSfx = useCallback(() => {
+    // 큐가 방금 지나갔으면 이 굴림은 이미 등급음으로 축하했다.
+    if (Date.now() - handCueAtRef.current < 400) return
+    if (diceSfxTimerRef.current) clearTimeout(diceSfxTimerRef.current)
+    diceSfxTimerRef.current = setTimeout(() => {
+      diceSfxTimerRef.current = null
+      playSfx('dice_recognized')
+    }, 150)
+  }, [])
+
+  /**
+   * 역전음은 순위표가 미끄러지는 순간에 맞춘다.
+   *
+   * 모달은 이전 순위를 한 박자 보여준 뒤에 자리를 바꾼다. 그 전에 소리를 내면
+   * "역전"이라고 들리는데 화면에는 아직 예전 순위가 떠 있다. 시점은
+   * ScoreMoment가 계산해준다 — 여기서 숫자를 베끼면 연출 길이를 바꿨을 때
+   * 조용히 어긋난다.
+   */
+  const leadSfxTimerRef = useRef(null)
+  const scheduleLeadChangeSfx = useCallback((durationMs) => {
+    if (leadSfxTimerRef.current) clearTimeout(leadSfxTimerRef.current)
+    leadSfxTimerRef.current = setTimeout(() => {
+      leadSfxTimerRef.current = null
+      playSfx('lead_change')
+    }, leadChangeSettleMs(durationMs))
+  }, [])
+
+  useEffect(() => () => {
+    if (diceSfxTimerRef.current) clearTimeout(diceSfxTimerRef.current)
+    if (leadSfxTimerRef.current) clearTimeout(leadSfxTimerRef.current)
+  }, [])
+
   const handleCue = useCallback((payload) => {
     if (!payload) return
 
@@ -619,13 +671,17 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     // 않는다. 조명도 이 큐에는 반응하지 않는다 — 굴림 구간은 인식이 걸린 곳이다.
     if (payload.cue === 'yacht_hand_achieved') {
       enqueueMoment(payload)
-      playLocalSfx('score_select')
+      // 조합이 나온 굴림은 인식음 대신 등급음으로 간다. 둘 다 울리면 한 번의
+      // 굴림에 소리가 겹친다. 예약된 인식음이 있으면 취소한다.
+      cancelDiceSfx()
+      playSfx(HAND_TIER_SFX[payload.tier] || 'hand_good')
       return
     }
 
     // 상단 보너스. 득점 연출 바로 뒤에 이어진다.
     if (payload.cue === 'yacht_bonus_achieved') {
       enqueueMoment(payload)
+      playSfx('upper_bonus')
       return
     }
 
@@ -643,18 +699,30 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
       // 인라인 하이라이트는 연출 전체 길이를 넘기지 않는다.
       holdMs: Math.min(1100, payload.duration_ms || 1100),
     })
-    playLocalSfx(isFinish ? 'game_end' : 'score_select')
+    if (isFinish) {
+      playSfx('game_end')
+    } else if (variant === 'lead_change') {
+      // 역전은 소리가 둘이다. 점수는 지금 확정됐지만 순위표는 이전 순위를 한
+      // 박자 보여준 뒤에 미끄러지므로, 역전음을 지금 내면 그림보다 1초 빠르다.
+      playSfx('score_normal')
+      scheduleLeadChangeSfx(payload.duration_ms)
+    } else {
+      playSfx(SCORE_VARIANT_SFX[variant] || 'score_normal')
+    }
 
     // 상단 숫자든 족보든 "+n점"은 똑같이 뜬다. 어떤 칸이냐에 따라 반응이
     // 달라지면 플레이어는 규칙을 하나 더 외워야 한다.
     // 게임 종료만 예외 — 전용 결과 화면이 따로 있어 겹치지 않는다.
     if (!isFinish) enqueueMoment(payload)
-  }, [enqueueMoment])
+  }, [enqueueMoment, cancelDiceSfx, scheduleLeadChangeSfx])
 
-  // 에이전트가 화면에 띄우라고 보낸 발언. 지금은 튜토리얼 코치가 유일하다.
+  // 에이전트가 화면에 띄우라고 보낸 발언. 코치와 규칙 제지가 같은 통로로 온다.
   // text가 비면 지우라는 뜻이다(할 말이 없어진 순간).
   const handleAgentMessage = useCallback((payload) => {
     const text = payload?.text || ''
+    // 규칙 위반은 소리로도 알린다. 차례가 아닌 사람이 손을 댄 순간을 글로만
+    // 알리면, 정작 그 사람은 화면이 아니라 주사위를 보고 있어서 놓친다.
+    if (payload?.agent === 'rules' && text) playSfx('warn')
     setCoach(text ? { text, transient: Boolean(payload.transient) } : null)
   }, [])
 
@@ -699,10 +767,10 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     }
     if (previous && previous.playerId === current.playerId
       && current.rollCount > previous.rollCount) {
-      playLocalSfx('dice_roll')
+      scheduleDiceSfx()
     }
     previousRollRef.current = current
-  }, [state])
+  }, [state, scheduleDiceSfx])
 
   useEffect(() => {
     if (!recentScore) return undefined
@@ -1380,11 +1448,6 @@ function normalizePlayers(players) {
 function scoreCategory(category, state, send) {
   if (!DISPLAY_CATEGORIES.includes(category)) return
   send('SCORE_CATEGORY_SELECTED', { category }, state.current_player_id)
-}
-
-function playLocalSfx(name) {
-  const audio = new Audio(`/sfx/${name}.mp3`)
-  audio.play().catch(() => {})
 }
 
 function predictedScore(category, state) {

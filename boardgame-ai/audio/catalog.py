@@ -49,14 +49,30 @@ DEFAULT_VOICE = VoiceConfig(name="")
 # ── SFX 레지스트리 ─────────────────────────────────────────────────────────────
 # 키 → 정적 파일 경로. frontend는 audio_url로 접근.
 
+# 자산 파일 위치: audio/assets/sfx/<filename>. 서버가 /sfx/<filename>로 서빙.
+#
+# 소리는 세 갈래다. 섞이면 인식이 될 때마다 축하받는 꼴이 된다.
+#   시스템 피드백 — 순수 디지털 톤. 기계가 응답하는 소리
+#   요트          — 따뜻한 금색 벨. 음악적이고 감정이 실린다
+#   늑대인간      — 낮은 드론. 어둡고 분위기 위주
 SFX_REGISTRY: dict[str, str] = {
-    # 자산 파일 위치: audio/assets/sfx/<filename>. 서버가 /sfx/<filename>로 서빙.
-    "hand_register": "/sfx/hand_register.mp3",  # 좌석 등록 완료
-    "dice_roll": "/sfx/dice_roll.mp3",          # 주사위 굴림
-    "score_select": "/sfx/score_select.mp3",    # 점수판 카테고리 선택
-    "game_start": "/sfx/game_start.mp3",        # 게임 시작 알림
-    "game_end": "/sfx/game_end.mp3",            # 결과 발표 징글
-    "wolf_sound": "/sfx/wolf_sound.mp3",        # 늑대 울음. 늑대인간 밤 시작 분위기.
+    # ── 시스템 피드백 (공용) ──
+    "ui_click": "/sfx/ui_click.mp3",                  # 버튼 누름
+    "hand_register": "/sfx/hand_register.mp3",        # 손 등록. 좌우 각각 울린다
+    "dice_recognized": "/sfx/dice_recognized.mp3",    # 주사위 눈 인식 완료
+    "warn": "/sfx/warn.mp3",                          # 규칙 위반 제지
+    # ── 요트 ──
+    # 굴림 축하. 등급은 악기를 바꾸지 않고 층을 쌓아 낸다(같은 벨이 심지).
+    "hand_good": "/sfx/hand_good.mp3",                # 포카드·풀하우스·스몰
+    "hand_epic": "/sfx/hand_epic.mp3",                # 라지 스트레이트
+    "hand_legendary": "/sfx/hand_legendary.mp3",      # 야찌
+    "score_normal": "/sfx/score_normal.mp3",          # 일반 득점
+    "score_zero": "/sfx/score_zero.mp3",              # 0점 처리
+    "lead_change": "/sfx/lead_change.mp3",            # 선두 역전
+    "upper_bonus": "/sfx/upper_bonus.mp3",            # 상단 보너스 달성
+    "game_end": "/sfx/game_end.mp3",                  # 결과 발표 징글
+    # ── 늑대인간 ──
+    "wolf_sound": "/sfx/wolf_sound.mp3",              # 늑대 울음. 밤 시작 분위기
 }
 
 # BGM 레지스트리. 자산 파일: audio/assets/bgm/<filename>. 서버 /bgm/<filename>.

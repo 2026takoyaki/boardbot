@@ -333,7 +333,7 @@ async def debug_bgm_play(name: str) -> dict[str, str]:
 
 @app.post("/debug/audio/sfx/{name}")
 async def debug_sfx_play(name: str) -> dict[str, str]:
-    """SFX 재생. name = catalog.SFX_REGISTRY 키 (hand_register/dice_roll/...)."""
+    """SFX 재생. name = catalog.SFX_REGISTRY 키 (hand_register/dice_recognized/...)."""
     pbid = await app.state.audio_manager.enqueue_sfx(name)
     return {"status": "ok", "sfx": name, "playback_id": pbid}
 
