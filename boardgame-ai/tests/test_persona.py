@@ -158,16 +158,35 @@ def test_없는_id는_기본값으로_떨어진다() -> None:
     assert get_persona(None).id == DEFAULT_PERSONA_ID
 
 
-@pytest.mark.parametrize("persona_id", sorted(PERSONAS))
-def test_모든_페르소나가_말투_지시를_갖는다(persona_id: str) -> None:
+def test_모든_페르소나가_이름과_엔진을_갖는다() -> None:
+    for persona_id, persona in PERSONAS.items():
+        assert persona.display_name, persona_id
+        assert persona.provider, persona_id
+        assert persona.voice_name, persona_id
+
+
+# 말투를 덮어쓰는 '캐릭터' 페르소나. 아래 셋은 이들에게만 해당한다 —
+# 기본 진행자는 중립 원문이 곧 자기 말투라 style_prompt도 변환 파일도 없다.
+# id를 손으로 나열하지 않고 style_prompt 유무로 가른다. 새 캐릭터를 넣으면
+# 저절로 검사 대상이 되고, 목록을 고치는 것을 잊어 조용히 빠지는 일이 없다.
+CHARACTER_PERSONAS = sorted(pid for pid, p in PERSONAS.items() if p.style_prompt)
+NEUTRAL_PERSONAS = sorted(pid for pid, p in PERSONAS.items() if not p.style_prompt)
+
+
+def test_캐릭터_페르소나가_적어도_하나는_있다() -> None:
+    """위 두 목록이 style_prompt 하나로 갈리므로, 실수로 전부 비면 아래
+    검사들이 0건을 돌고도 통과해버린다. 그 구멍을 여기서 막는다."""
+    assert CHARACTER_PERSONAS
+    assert NEUTRAL_PERSONAS
+
+
+@pytest.mark.parametrize("persona_id", CHARACTER_PERSONAS)
+def test_캐릭터_페르소나가_말투_지시를_갖는다(persona_id: str) -> None:
     """style_prompt가 비면 LLM이 말투를 바꿀 근거가 없어 원문이 그대로 나간다."""
-    persona = PERSONAS[persona_id]
-    assert persona.style_prompt
-    assert persona.display_name
-    assert persona.provider
+    assert PERSONAS[persona_id].style_prompt
 
 
-@pytest.mark.parametrize("persona_id", sorted(PERSONAS))
+@pytest.mark.parametrize("persona_id", CHARACTER_PERSONAS)
 def test_말투_지시가_TTS_안전_규칙을_담는다(persona_id: str) -> None:
     """LLM 출력이 곧 TTS 입력이다. 마크다운이나 이모지가 섞이면 그대로 읽힌다."""
     prompt = PERSONAS[persona_id].style_prompt
@@ -175,7 +194,7 @@ def test_말투_지시가_TTS_안전_규칙을_담는다(persona_id: str) -> Non
     assert "숫자" in prompt  # 원문의 숫자를 바꾸지 말라는 규칙
 
 
-@pytest.mark.parametrize("persona_id", sorted(PERSONAS))
+@pytest.mark.parametrize("persona_id", CHARACTER_PERSONAS)
 def test_출고된_페르소나_파일이_고유명사를_유지한다(persona_id: str) -> None:
     """persona_lines/*.json은 손으로도 고칠 수 있는 파일이라, 코드 리뷰만으로는
     "강도"가 "도둑"으로 바뀌는 걸 못 잡는다. use_persona가 실제로 하는 검사를
@@ -184,6 +203,23 @@ def test_출고된_페르소나_파일이_고유명사를_유지한다(persona_i
     applied, rejected = lines.use_persona(persona_id)
     assert rejected == {}, f"{persona_id}: {rejected}"
     assert applied > 0
+
+
+@pytest.mark.parametrize("persona_id", NEUTRAL_PERSONAS)
+def test_중립_페르소나는_원문을_그대로_말한다(persona_id: str) -> None:
+    """'기본 진행자'는 아무것도 덮어쓰지 않는 것이 기능이다.
+
+    변환 파일을 실수로 만들어두면 아무도 눈치채지 못한 채 말투가 입혀진다 —
+    캐릭터 없는 진행자를 고른 사람에게 캐릭터가 생기는 셈이다. 덮어쓴 줄이
+    0인지, 실제로 원문이 나오는지 둘 다 본다.
+    """
+    applied, rejected = lines.use_persona(persona_id)
+    assert applied == 0
+    assert rejected == {}
+    probe = "werewolf.night_start"
+    assert lines.get(probe) == lines.original(probe)
+    # 즉석 생성 문장에도 말투 지시가 붙지 않아야 한다.
+    assert PERSONAS[persona_id].style_prompt == ""
 
 
 # ── 5. 전환은 목소리·말투·화면을 함께 바꾼다 ─────────────────────────────────

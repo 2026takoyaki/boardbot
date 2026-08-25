@@ -90,7 +90,7 @@ function toKoreanTTS(text) {
   return text.replace(/([123])(명|장|개)/g, (_, n, counter) => `${KOREAN_NUMS[Number(n)]} ${counter}`)
 }
 
-export default function NightRoleAnnounce({ roleId, onComplete, onExit, isPracticeMode }) {
+export default function NightRoleAnnounce({ roleId, onComplete, isPracticeMode }) {
   const role = ROLE_NIGHT_DATA[roleId]
   const isPassive = PASSIVE_ROLES.has(roleId)
   const duration = isPassive ? PASSIVE_DURATION : ACTIVE_DURATION
@@ -160,9 +160,6 @@ export default function NightRoleAnnounce({ roleId, onComplete, onExit, isPracti
     <div className="ww-root" style={ui.page}>
       <WerewolfScene mood="night" />
       <style>{CSS}</style>
-
-      <button className="ww-hover ww-press" onClick={onExit} style={ui.exitButton}>나가기</button>
-
 
       <div style={{ ...ui.stage, gap: 26 }}>
         {/* 카드는 왼쪽에 크게, 설명은 오른쪽에 크게. 가로로 놓인 태블릿에서

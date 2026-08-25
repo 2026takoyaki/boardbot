@@ -319,10 +319,22 @@ function HandStep({ kind }) {
         .hs-corner.tr { top: 10px; right: 10px; border-left: 0; border-bottom: 0; }
         .hs-corner.bl { bottom: 10px; left: 10px; border-right: 0; border-top: 0; }
         .hs-corner.br { bottom: 10px; right: 10px; border-left: 0; border-top: 0; }
+        /* 프레임을 꽉 채운다.
+         *
+         * contain이면 영상 비율(1280×828 ≈ 1.55)과 프레임(240×200 = 1.2)이
+         * 달라 프레임 위아래에 빈 띠가 생기고, 모서리 조준선 안이 비어 보인다.
+         * cover는 세로를 채우고 좌우를 잘라낸다 — 손은 한가운데에 있어서
+         * 안내에는 지장이 없다.
+         *
+         * **여기서 더 키우지 말 것.** 영상 파일 안에도 그림 둘레에 여백이
+         * 있는데(세로 161~678행), 그건 테이블이 공간에 놓여 보이게 하는
+         * 의도된 여백이다. 그걸 없애겠다고 확대하면 테이블 모서리가 잘려
+         * 무엇을 보고 있는지 알 수 없게 된다.
+         */
         .hs-hand-video {
           position: absolute; inset: 0;
           width: 100%; height: 100%;
-          object-fit: contain;
+          object-fit: cover;
           background: transparent;
           pointer-events: none;
         }

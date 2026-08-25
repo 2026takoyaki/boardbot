@@ -159,6 +159,13 @@ async def generate(persona_id: str, model: str, dry_run: bool, force: bool = Fal
         print(f"'{persona_id}'는 없는 페르소나입니다. 가능: {', '.join(PERSONAS)}")
         return 1
 
+    # 말투 지시가 없는 페르소나(기본 진행자)는 변환할 것이 없다. 중립 원문이
+    # 곧 그 사람의 말투라, 원문을 원문으로 바꾸는 JSON을 만들면 LLM이 손댄
+    # 만큼 원문에서 멀어지기만 한다. --all에 딸려 들어오므로 여기서 막는다.
+    if not persona.style_prompt:
+        print("  말투 지시가 없는 페르소나입니다 — 중립 원문을 그대로 씁니다. 건너뜁니다.")
+        return 0
+
     # 개발 모드 전용 멘트는 변환하지 않는다. 플레이어가 들을 일이 없고,
     # '[개발]' 같은 대괄호가 섞여 있어 검사에도 걸린다. lines.py에 그렇게
     # 적혀 있는데 정작 여기서 걸러내지 않아 변환되고 있었다.

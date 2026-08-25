@@ -15,6 +15,43 @@ import { useEffect, useRef } from 'react'
 
 const FADE_OUT_MS = 150 // 인터럽트 시 음량 감쇠 시간. 너무 길면 다음 발화 지연됨.
 
+/**
+ * 채널별 음량.
+ *
+ * 세 채널을 따로 두는 이유는 시연장에서 줄이고 싶은 것이 매번 다르기 때문이다.
+ * 사람이 많아 시끄러우면 **말**만 키워야 하고, 촬영 중이면 배경음만 내려야
+ * 하고, 주사위를 자주 굴리는 구간에서는 효과음만 거슬린다. 하나로 묶으면
+ * 그때마다 전부 같이 움직여서 결국 통째로 꺼버리게 된다.
+ *
+ * localStorage에 남기는 것은 태블릿이 화면을 옮길 때마다 App이 다시 마운트
+ * 되기 때문이다 — 매번 기본값으로 돌아가면 조절한 의미가 없다.
+ */
+const VOL_KEYS = { tts: 'boardbot.vol.tts', sfx: 'boardbot.vol.sfx', bgm: 'boardbot.vol.bgm' }
+
+function readVolume(channel) {
+  try {
+    if (typeof localStorage === 'undefined') return 1
+    const stored = localStorage.getItem(VOL_KEYS[channel])
+    // 저장된 적이 없으면 null이고, Number(null)은 0이다. 그대로 두면 처음
+    // 켠 태블릿이 소리가 통째로 꺼진 채로 시작한다 — 실제로 그랬다.
+    if (stored === null || stored === '') return 1
+    const raw = Number(stored)
+    return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 1
+  } catch {
+    // 사파리 프라이빗 등에서 막힌다. 기억을 못 할 뿐 조절은 된다.
+    return 1
+  }
+}
+
+function storeVolume(channel, value) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(VOL_KEYS[channel], String(value))
+  } catch {
+    // 이번 세션 동안은 유지된다.
+  }
+}
+
 const player = {
   current: null,       // {playback_id, type, t0, playStartAt, fadeTimer}
   audio: null,         // 단일 재사용 Audio 인스턴스 (TTS/SFX 공용)
@@ -24,6 +61,12 @@ const player = {
   bgmAudio: null,
   bgmGainDb: 0,
   duckGainDb: 0,
+  // 0.0~1.0. 위 세 채널을 각각 곱한다.
+  ttsVolume: readVolume('tts'),
+  sfxVolume: readVolume('sfx'),
+  bgmVolume: readVolume('bgm'),
+  // 음량이 바뀔 때 화면에 알린다(슬라이더가 여럿일 수 있어 구독형).
+  volumeListeners: new Set(),
   // backend가 다음을 푸시하기 전 우리에게 새 메시지가 빨리 오는 race 케이스용 슬롯
   pendingNext: null,
   // TTS 재생 종료 시 1회 호출되는 콜백 집합
@@ -54,8 +97,51 @@ function ensureBgmElement() {
 
 function applyBgmGain() {
   if (player.bgmAudio) {
-    player.bgmAudio.volume = Math.max(0, Math.min(1, dbToGain(player.bgmGainDb + player.duckGainDb)))
+    const gain = dbToGain(player.bgmGainDb + player.duckGainDb) * player.bgmVolume
+    player.bgmAudio.volume = Math.max(0, Math.min(1, gain))
   }
+}
+
+/** 지금 재생 중인 것에 바뀐 음량을 즉시 반영한다. 다음 발화까지 기다리면
+ *  슬라이더를 움직여도 아무 일이 없어 고장 난 것으로 보인다. */
+function applyCurrentVolume() {
+  if (!player.audio || !player.current) return
+  // fade-out 중이면 건드리지 않는다 — 감쇠 곡선이 도로 튀어오른다.
+  if (player.current.fadeTimer) return
+  player.audio.volume = volumeFor(player.current.type)
+}
+
+function volumeFor(msgType) {
+  return msgType === 'sfx_play' ? player.sfxVolume : player.ttsVolume
+}
+
+function notifyVolume() {
+  for (const cb of player.volumeListeners) {
+    try { cb(volumes()) } catch (_) {}
+  }
+}
+
+function volumes() {
+  return { tts: player.ttsVolume, sfx: player.sfxVolume, bgm: player.bgmVolume }
+}
+
+/** 채널 음량 설정. channel: 'tts' | 'sfx' | 'bgm', value: 0.0~1.0 */
+function setVolume(channel, value) {
+  const v = Math.max(0, Math.min(1, Number(value)))
+  if (!Number.isFinite(v) || !(channel in VOL_KEYS)) return
+  if (channel === 'tts') player.ttsVolume = v
+  else if (channel === 'sfx') player.sfxVolume = v
+  else player.bgmVolume = v
+  storeVolume(channel, v)
+  if (channel === 'bgm') applyBgmGain()
+  else applyCurrentVolume()
+  notifyVolume()
+}
+
+/** 음량 변화를 구독한다. 해제 함수를 반환. */
+function onVolumeChange(callback) {
+  player.volumeListeners.add(callback)
+  return () => player.volumeListeners.delete(callback)
 }
 
 function sendAck(playback_id, status, t0) {
@@ -96,7 +182,9 @@ async function playMessage(msg) {
   }
 
   const el = ensureAudioElement()
-  el.volume = 1.0
+  // 같은 Audio 하나로 말과 효과음을 다 내보내므로, 재생 직전에 그 종류의
+  // 음량으로 맞춘다. 한 번 정해두면 앞 재생의 음량이 그대로 따라온다.
+  el.volume = volumeFor(msg.msg_type)
   el.src = audio_url
   const t0 = Date.now() / 1000
   const playStartAt = performance.now()
@@ -205,7 +293,9 @@ function fadeOutInterrupt(playback_id) {
       clearInterval(cur.fadeTimer)
       try { el.pause() } catch (_) {}
       try { el.currentTime = 0 } catch (_) {}
-      el.volume = 1.0
+      // 다음 재생이 playMessage에서 다시 맞추지만, 그 사이에 0으로 남아
+      // 있으면 unlock 무음 재생 등이 소리 없이 지나간다.
+      el.volume = player.ttsVolume
       if (cur.type === 'tts_play') {
         player.duckGainDb = 0
         applyBgmGain()
@@ -410,4 +500,17 @@ export const audio = {
   playBgm,
   onNextTtsEnded,
   onNextTtsStarted,
+  volumes,
+  setVolume,
+  onVolumeChange,
+}
+
+/**
+ * 프론트가 직접 트리거하는 효과음(sfx.js)이 읽는 값.
+ *
+ * 그쪽은 `new Audio()`를 따로 만들어 쓰므로 이 모듈의 Audio 인스턴스를
+ * 공유하지 않는다. 그래도 음량은 같은 슬라이더를 따라야 하므로 값만 넘긴다.
+ */
+export function sfxVolume() {
+  return player.sfxVolume
 }

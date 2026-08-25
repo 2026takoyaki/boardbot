@@ -125,7 +125,7 @@ const ROLE_EXPLAIN_DELAY_MS = 4000
 // TTS 시작/종료 신호가 끝내 오지 않는 경우(합성 실패·TTS 비활성 등)의 안전장치.
 const ROLE_EXPLAIN_SAFETY_MS = 30000
 
-export default function CardSetupGuide({ roles = [], onComplete, send, wsState, onExit, isPracticeMode }) {
+export default function CardSetupGuide({ roles = [], onComplete, send, wsState, isPracticeMode }) {
   const line = useLines()
   const game = isPracticeMode ? 'werewolf_practice' : 'werewolf'
   const SENTENCES = isPracticeMode ? STEPS_PRACTICE : STEPS_NORMAL
@@ -314,13 +314,6 @@ export default function CardSetupGuide({ roles = [], onComplete, send, wsState, 
       <WerewolfScene mood="night" />
       <style>{CSS}</style>
 
-      <button
-        className="ww-hover ww-press"
-        onClick={(e) => { e.stopPropagation(); onExit?.() }}
-        style={ui.exitButton}
-      >
-        나가기
-      </button>
       {!confirming && (
         <button
           className="ww-hover ww-press"

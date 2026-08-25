@@ -7,7 +7,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 // timeLeft는 백엔드 timer_remaining을 그대로 전달받아 사용한다.
 // 로컬 setInterval 없이 백엔드 state_update(1초마다)로 동기화된다.
-export default function DayDiscussion({ timeLeft = 300, onVote, onAddTime, onExit }) {
+export default function DayDiscussion({ timeLeft = 300, onVote, onAddTime }) {
   const maxTimeRef = useRef(timeLeft)
 
   useEffect(() => {
@@ -35,8 +35,6 @@ export default function DayDiscussion({ timeLeft = 300, onVote, onAddTime, onExi
       <style>{CSS}</style>
 
       {isUrgent && <div className={isFinal ? 'ww-alarm ww-alarm-final' : 'ww-alarm'} />}
-
-      <button className="ww-hover ww-press" onClick={onExit} style={ui.exitButton}>나가기</button>
 
       <div style={{ ...ui.stage, gap: 30 }}>
         <span style={ui.eyebrow} className="ww-anim-down">

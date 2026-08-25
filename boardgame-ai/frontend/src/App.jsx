@@ -194,6 +194,7 @@ export default function App() {
       <Lobby
         players={players}
         connected={connected}
+        send={send}
         onBack={() => setPage('seat')}
         onSelectGame={handleSelectGame}
       />

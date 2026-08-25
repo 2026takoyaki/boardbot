@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
-import { audio } from '../../hooks/useAudioPlayer'
+import { audio, sfxVolume } from '../../hooks/useAudioPlayer'
 import WerewolfScene from './WerewolfScene'
 import * as ui from './wwUi'
 
-export default function NightStart({ onComplete, send, onExit, isPracticeMode }) {
+export default function NightStart({ onComplete, send, isPracticeMode }) {
   useEffect(() => {
     // night_start TTS는 모드와 무관하게 ProgressAgent가 전담 (중복 발화 방지)
 
@@ -11,8 +11,10 @@ export default function NightStart({ onComplete, send, onExit, isPracticeMode })
     // TTS가 거의 동시에 시작되더라도 최소 3초는 보장한다(밤 분위기 형성).
     // 3초 이후 TTS가 시작되면 페이드아웃해 마스킹 방지.
     // 볼륨 0.35: TTS와 겹쳐도 마스킹 최소화하며 분위기 환경음으로 깔리는 수준.
+    // 0.35는 이 소리의 '제 음량'이고, 거기에 상단바 효과음 슬라이더를 곱한다.
+    // 직접 재생하는 소리라 슬라이더를 안 거치면 다 줄여놔도 늑대만 운다.
     const wolfAudio = new Audio('/sfx/wolf_sound.mp3')
-    wolfAudio.volume = 0.35
+    wolfAudio.volume = 0.35 * sfxVolume()
     wolfAudio.play().catch(() => {})
     let wolfFadeInterval = null
     const WOLF_MIN_MS = 3000
@@ -81,14 +83,6 @@ export default function NightStart({ onComplete, send, onExit, isPracticeMode })
   return (
     <div className="ww-root" onClick={onComplete} style={{ ...ui.page, cursor: 'pointer' }}>
       <WerewolfScene mood="night" />
-
-      <button
-        className="ww-hover ww-press"
-        onClick={(e) => { e.stopPropagation(); onExit?.() }}
-        style={ui.exitButton}
-      >
-        나가기
-      </button>
 
       <div style={{ ...ui.stage, gap: 22, marginBottom: 110 }}>
         <span style={{ ...ui.eyebrow, animationDelay: '0.1s' }} className="ww-anim-down">

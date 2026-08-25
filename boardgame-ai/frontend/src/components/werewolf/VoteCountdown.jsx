@@ -4,7 +4,7 @@ import { narrate } from '../../lines'
 import WerewolfScene from './WerewolfScene'
 import * as ui from './wwUi'
 
-export default function VoteCountdown({ players = [], votes = {}, send, onExit, countdownRemaining }) {
+export default function VoteCountdown({ players = [], votes = {}, send, countdownRemaining }) {
   // votes: { player_id: target_player_id } — 현재 지목 상태 (카운트다운 중 가변)
   const [selectedVoter, setSelectedVoter] = useState(null)
 
@@ -71,8 +71,6 @@ export default function VoteCountdown({ players = [], votes = {}, send, onExit, 
     <div className={`ww-root${isShout ? ' ww-shake' : ''}`} style={ui.page}>
       <WerewolfScene mood="blood" />
       <style>{CSS}</style>
-
-      <button className="ww-hover ww-press" onClick={onExit} style={ui.exitButton}>나가기</button>
 
       <div style={{ ...ui.stage, gap: 18, width: '100%' }}>
         <div style={styles.title} className="ww-anim-title">투표</div>

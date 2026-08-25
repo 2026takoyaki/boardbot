@@ -11,9 +11,14 @@ import { IconUser, IconVolume, IconCheck, IconChevronUp } from './Icons'
  * 없는 파일을 미리 알 방법이 없으므로 onError로 판정한다. 페르소나를
  * 추가하고 그림을 아직 안 그렸을 때 얼굴만 비고 목록은 그대로 뜬다.
  */
+// 그림이 없는 것이 정상인 페르소나. '기본 진행자'는 캐릭터가 없는 자리라
+// 얼굴도 없다 — 없는 파일을 요청해 404를 받고 폴백하는 것과 결과는 같지만,
+// 그건 매번 콘솔에 빨간 줄을 남긴다. 실루엣이 곧 이 페르소나의 그림이다.
+const NO_ART = new Set(['basic'])
+
 function PersonaFace({ id, size }) {
   const [failed, setFailed] = useState(false)
-  if (failed || !id) return <IconUser size={Math.round(size * 0.55)} />
+  if (failed || !id || NO_ART.has(id)) return <IconUser size={Math.round(size * 0.55)} />
   return (
     <img
       className="pp-face"
@@ -298,13 +303,19 @@ export default function PersonaPicker({ send, connected }) {
         /* 화면 맨 아래 줄이라 위로 연다.
            오른쪽 끝을 버튼에 맞추고 왼쪽으로 펼친다 — 이 버튼은 항상 화면
            오른쪽 끝에 붙어 있어서, 왼쪽 기준으로 열면 목록이 화면 밖으로 나간다. */
+        /* 높이 상한은 지금 인원이 들어가고도 남게 잡는다. 예전 상한(420px)은
+           다섯 명이 딱 422px이라 두 픽셀 때문에 스크롤바가 생겼다 — 다 보이는
+           목록에 스크롤바만 붙어 있으면 아래에 뭐가 더 있는 줄 알게 된다.
+           상한 자체를 없애지 않는 이유는 진행자가 더 늘었을 때 목록이 화면
+           위로 넘쳐 시작 버튼을 덮는 것을 막기 위해서다. */
         .pp-pop {
           position: absolute;
           bottom: calc(100% + 12px);
           right: 0;
           width: 360px;
-          max-height: min(60vh, 420px);
+          max-height: min(74vh, 560px);
           overflow-y: auto;
+          overscroll-behavior: contain;
           background: var(--bg-surface);
           border: 1px solid var(--border);
           border-radius: 14px;

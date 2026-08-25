@@ -4,12 +4,11 @@ import { audio as audioApi, useAudioPlayer } from '../hooks/useAudioPlayer'
 import {
   IconBook,
   IconExpand,
-  IconMusic,
   IconRefresh,
-  IconVolume,
 } from '../components/common/Icons'
 import BonusGauge from '../components/common/BonusGauge'
 import DevPanel from '../components/common/DevPanel'
+import GameTopBar from '../components/common/GameTopBar'
 import DiceFace from '../components/common/DiceFace'
 import RoundBanner from '../components/common/RoundBanner'
 import ScoreMoment, { leadChangeSettleMs } from '../components/common/ScoreMoment'
@@ -68,6 +67,8 @@ const s = {
     boxSizing: 'border-box',
     overflow: 'hidden',
   },
+  // 조작 버튼은 GameTopBar가 갖는다(두 게임 공용). 여기 남은 것은 게임이
+  // 아직 안 뜬 화면에서 제목만 걸어두는 자리다 — 그 화면에는 누를 것이 없다.
   topbar: {
     position: 'absolute',
     top: 0,
@@ -86,30 +87,6 @@ const s = {
     letterSpacing: '-0.02em',
     color: 'var(--y-text)',
   },
-  topActions: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 },
-  iconButton: active => ({
-    width: 40,
-    height: 40,
-    border: `1px solid ${active ? 'var(--y-gold)' : 'var(--y-line)'}`,
-    borderRadius: 12,
-    background: active ? 'color-mix(in oklch, var(--y-gold) 20%, transparent)' : 'transparent',
-    color: active ? 'var(--y-gold)' : 'var(--y-text-mute)',
-    display: 'grid',
-    placeItems: 'center',
-    cursor: 'pointer',
-    padding: 0,
-  }),
-  topButton: {
-    border: '1px solid var(--y-line)',
-    borderRadius: 12,
-    background: 'transparent',
-    color: 'var(--y-text-soft)',
-    padding: '10px 15px',
-    fontSize: 15,
-    fontWeight: 700,
-    cursor: 'pointer',
-  },
-  disabled: { opacity: 0.4, cursor: 'not-allowed' },
 
   main: {
     minWidth: 0,
@@ -588,8 +565,6 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const [coach, setCoach] = useState(null)
   const [diceEditMode, setDiceEditMode] = useState(false)
   const [editDiceValues, setEditDiceValues] = useState([1, 1, 1, 1, 1])
-  const [ttsEnabled, setTtsEnabled] = useState(true)
-  const [bgmEnabled, setBgmEnabled] = useState(true)
   const [turnPulseKey, setTurnPulseKey] = useState(0)
   // 라운드 배너가 상시 표시 자리로 날아오는 동안은 그 자리를 비워둔다.
   const [roundBannerActive, setRoundBannerActive] = useState(false)
@@ -876,18 +851,6 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     send('RESTART')
   }
 
-  const toggleBgm = () => {
-    const next = !bgmEnabled
-    setBgmEnabled(next)
-    send('BGM_SET', { enabled: next })
-  }
-
-  const toggleTts = () => {
-    const next = !ttsEnabled
-    setTtsEnabled(next)
-    audioApi.setTtsEnabled(next)
-  }
-
   const startDiceEdit = () => {
     setEditDiceValues(
       state?.dice_values?.length === 5
@@ -908,7 +871,10 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   }
 
   const exitGame = () => {
-    audioApi.setTtsEnabled(true)
+    // 나가면서 TTS를 되살린다. 다만 무조건 켜지는 않는다 — 상단바에서 음량을
+    // 0으로 내려 꺼둔 사람에게는 그게 선택이고, 되살리면 로비부터 다시
+    // "소리는 안 나는데 진행은 느린" 상태가 된다.
+    audioApi.setTtsEnabled(audioApi.volumes().tts > 0)
     send('BGM_STOP')
     onExit?.()
   }
@@ -1032,37 +998,18 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
         ]}
       />
 
-      <div style={s.topbar}>
-        <span style={s.brand}>요트다이스</span>
-        <span style={s.topActions}>
-          <button
-            type="button"
-            style={s.iconButton(ttsEnabled)}
-            onClick={toggleTts}
-            title={ttsEnabled ? 'TTS 끄기' : 'TTS 켜기'}
-            aria-label={ttsEnabled ? 'TTS 끄기' : 'TTS 켜기'}
-          >
-            <IconVolume size={19} />
-          </button>
-          <button
-            type="button"
-            style={s.iconButton(bgmEnabled)}
-            onClick={toggleBgm}
-            title={bgmEnabled ? '배경음 끄기' : '배경음 켜기'}
-            aria-label={bgmEnabled ? '배경음 끄기' : '배경음 켜기'}
-          >
-            <IconMusic size={19} />
-          </button>
-          <button
-            style={{ ...s.topButton, ...(canUndo ? {} : s.disabled) }}
-            onClick={() => send('UNDO_ROUND')}
-            disabled={!canUndo}
-          >
-            되돌리기
-          </button>
-          <button style={s.topButton} onClick={exitGame}>나가기</button>
-        </span>
-      </div>
+      <GameTopBar
+        theme="yacht"
+        title="요트다이스"
+        send={send}
+        connected={connected}
+        onExit={exitGame}
+        onUndo={() => send('UNDO_ROUND')}
+        canUndo={canUndo}
+        // 튜토리얼은 코치가 토글과 무관하게 항상 켜진다(strategy_agent.py).
+        // 눌러도 아무 일이 없을 버튼을 두지 않는다.
+        showStrategy={!tutorialMode}
+      />
 
       <div style={s.shell}>
         <main style={s.main}>
