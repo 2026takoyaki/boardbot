@@ -4,9 +4,31 @@ import * as ui from './wwUi'
 
 const AUTO_ADVANCE_SEC = 10
 
+/**
+ * 투표 결과.
+ *
+ * 한 컴포넌트가 성격이 다른 두 화면을 그린다.
+ *
+ *   editable=false  발표. 막대가 자라고 붉게 번쩍인다. 아무 데나 눌러 넘긴다.
+ *   editable=true   확인·보정. 카메라가 잘못 읽은 지목을 사람이 고치는 자리.
+ *
+ * **보정 화면의 조작을 갈아엎었다.** 전에는 집계 막대가 화면을 차지하고
+ * 보정은 아래 작은 칸에 있었는데, 정작 이 화면에 온 이유는 고치기 위해서다.
+ * 게다가 조작이 "투표자 줄을 누르고 → 다른 줄을 누르면 그 줄의 주인이
+ * 대상이 된다"였다. 같은 줄이 누를 때마다 다른 뜻이 되고("나는 투표자다" /
+ * "나는 대상이다"), 화면에는 그 차이를 알려주는 것이 없었다. 'A → B'라고
+ * 적힌 줄을 눌렀는데 B가 아니라 A가 골라지는 식이다.
+ *
+ * 지금은 누를 때마다 뜻이 하나다.
+ *   대상 칸을 누른다        → "이 사람 지목을 고치겠다"
+ *   아래 뜬 이름을 누른다   → "이 사람을 지목했다"
+ * 고를 이름은 그 줄 **안에서** 펼쳐지므로 누구의 지목을 고르는 중인지
+ * 헷갈릴 자리가 없다.
+ */
 export default function VoteResult({ players = [], votes = {}, onComplete, editable = false, send, onConfirm }) {
   const [countdown, setCountdown] = useState(AUTO_ADVANCE_SEC)
-  const [selectedVoter, setSelectedVoter] = useState(null)
+  // 지금 대상을 고르는 중인 투표자. null이면 아무 줄도 펼쳐져 있지 않다.
+  const [editingVoter, setEditingVoter] = useState(null)
   // 막대는 0에서 자란다. 첫 렌더에 이미 제 길이면 transition이 돌 자리가 없어
   // '집계된 결과'가 아니라 처음부터 그려진 그림으로 보인다.
   const [grown, setGrown] = useState(false)
@@ -52,41 +74,138 @@ export default function VoteResult({ players = [], votes = {}, onComplete, edita
   const maxVotes = tally[0]?.voteCount ?? 0
   const condemnedNames = condemned.map(p => p.playername).join(', ')
 
-  // editable 모드: 2-탭 투표 보정
-  const handleCorrectionClick = (playerId) => {
-    if (!editable || !send) return
-    if (!selectedVoter) {
-      setSelectedVoter(playerId)
-    } else if (selectedVoter === playerId) {
-      setSelectedVoter(null)
-    } else {
-      send('werewolf_vote_player', { target_id: playerId }, selectedVoter)
-      setSelectedVoter(null)
-    }
+  const nameOf = (id) => players.find(p => p.player_id === id)?.playername
+
+  /** 한 번의 누름 = 한 가지 뜻. "이 투표자는 이 사람을 지목했다." */
+  const setVote = (voterId, targetId) => {
+    send?.('werewolf_vote_player', { target_id: targetId }, voterId)
+    setEditingVoter(null)
   }
 
-  const handleConfirm = () => {
-    if (!send) return
-    send('werewolf_vote_result_confirm', {})
-    onConfirm?.()
+  if (editable) {
+    return (
+      <div className="ww-root" style={ui.page}>
+        <WerewolfScene mood="blood" />
+        <style>{CSS}</style>
+
+        <div style={{ ...ui.stage, gap: 14, ...styles.content }}>
+          <div style={styles.title} className="ww-anim-title">투표 결과 확인</div>
+          <div style={styles.lead}>
+            카메라가 읽은 지목입니다. 틀린 것이 있으면 <b style={styles.hot}>눌러서</b> 고치세요.
+          </div>
+
+          <div style={styles.editList}>
+            {players.map((p, i) => {
+              const targetId = votes[p.player_id]
+              const isAbstain = targetId === p.player_id
+              const isOpen = editingVoter === p.player_id
+              const unread = targetId === undefined
+              return (
+                <div
+                  key={p.player_id}
+                  style={{ ...styles.editRow, ...(isOpen ? styles.editRowOpen : null), animationDelay: `${0.1 + i * 0.05}s` }}
+                  className="ww-anim-in"
+                >
+                  <div style={styles.editHead}>
+                    <span style={styles.editVoter}>{p.playername}</span>
+                    <span style={styles.editArrow}>지목 →</span>
+                    {/* 이 칸 하나가 "고치기"의 입구다. 알약 모양으로 두어
+                        옆의 이름(글자)과 눌리는 것이 구별된다. */}
+                    <button
+                      type="button"
+                      className="ww-press"
+                      style={{
+                        ...styles.targetPill,
+                        ...(unread ? styles.targetPillEmpty : null),
+                        ...(isOpen ? styles.targetPillOpen : null),
+                      }}
+                      onClick={() => setEditingVoter(isOpen ? null : p.player_id)}
+                      aria-expanded={isOpen}
+                    >
+                      {unread ? '인식 안 됨' : isAbstain ? '기권' : nameOf(targetId) ?? '?'}
+                      <span style={{ ...styles.pillCaret, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+                    </button>
+                  </div>
+
+                  {isOpen && (
+                    <div style={styles.picker}>
+                      <div style={styles.pickerHint}>
+                        <b style={styles.hot}>{p.playername}</b> 님이 누구를 지목했나요?
+                      </div>
+                      <div style={styles.chips}>
+                        {players
+                          .filter(t => t.player_id !== p.player_id)
+                          .map(t => (
+                            <button
+                              key={t.player_id}
+                              type="button"
+                              className="ww-press"
+                              style={{
+                                ...styles.chip,
+                                ...(t.player_id === targetId ? styles.chipOn : null),
+                              }}
+                              onClick={() => setVote(p.player_id, t.player_id)}
+                            >
+                              {t.playername}
+                            </button>
+                          ))}
+                        {/* 자기 자신 지목이 곧 기권이다. 규칙을 알아야만 누를 수
+                            있는 조작은 조작이 아니라 퀴즈다 — 그래서 이름 대신
+                            '기권'이라고 적어 따로 낸다. */}
+                        <button
+                          type="button"
+                          className="ww-press"
+                          style={{ ...styles.chip, ...styles.chipAbstain, ...(isAbstain ? styles.chipOn : null) }}
+                          onClick={() => setVote(p.player_id, p.player_id)}
+                        >
+                          기권
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* 집계는 여기서 거들 뿐이다. 이 화면의 일은 고치는 것이고, 결과
+              발표는 다음 화면이 크게 한다. */}
+          <div style={styles.summary}>
+            {maxVotes > 0 ? (
+              <>
+                최다 득표 <b style={styles.hot}>{condemnedNames}</b>
+                <span style={styles.sep}>·</span>{maxVotes}표
+                {condemned.length > 1 && <span style={styles.sep}>·</span>}
+                {condemned.length > 1 && '동률'}
+              </>
+            ) : (
+              '아직 지목이 없습니다'
+            )}
+          </div>
+
+          <button
+            onClick={() => { send?.('werewolf_vote_result_confirm', {}); onConfirm?.() }}
+            className="ww-press"
+            style={{ ...ui.dangerButton, marginTop: 2, padding: '15px 52px', letterSpacing: '0.06em' }}
+          >
+            이대로 확정
+          </button>
+        </div>
+      </div>
+    )
   }
 
+  // ── 발표 ────────────────────────────────────────────────────────────────
   return (
-    <div
-      className="ww-root"
-      onClick={editable ? undefined : onComplete}
-      style={{ ...ui.page, cursor: editable ? 'default' : 'pointer' }}
-    >
+    <div className="ww-root" onClick={onComplete} style={{ ...ui.page, cursor: 'pointer' }}>
       <WerewolfScene mood="blood" />
       <style>{CSS}</style>
 
       {/* 심판이 확정되는 화면이라 처음 한 번 붉게 번쩍인다 */}
-      {!editable && <div className="ww-verdict-flash" />}
+      <div className="ww-verdict-flash" />
 
-      <div style={{ ...ui.stage, gap: 16, ...styles.content, marginBottom: editable ? 12 : 60 }}>
-        <div style={styles.title} className="ww-anim-title">
-          {editable ? '투표 결과 맞나요?' : '투표 결과'}
-        </div>
+      <div style={{ ...ui.stage, gap: 16, ...styles.content, marginBottom: 60 }}>
+        <div style={styles.title} className="ww-anim-title">투표 결과</div>
 
         <div style={styles.condemnedCard} className="ww-panel ww-anim-pop">
           <div style={styles.avatarRing}>
@@ -145,47 +264,10 @@ export default function VoteResult({ players = [], votes = {}, onComplete, edita
           })}
         </div>
 
-        {editable && (
-          <div style={styles.correctionPanel} className="ww-panel ww-anim-in">
-            <div style={styles.correctionHeader}>
-              {selectedVoter
-                ? <span>보정할 대상을 선택하세요 — 투표자 <b style={styles.hot}>{players.find(p => p.player_id === selectedVoter)?.playername}</b></span>
-                : '오인식 수정: 투표자 이름을 누르세요'}
-            </div>
-            <div style={styles.correctionGrid}>
-              {players.map(p => {
-                const targetId = votes[p.player_id]
-                const targetName = targetId ? players.find(pp => pp.player_id === targetId)?.playername : '기권'
-                const isSelected = selectedVoter === p.player_id
-                return (
-                  <div
-                    key={p.player_id}
-                    onClick={() => handleCorrectionClick(p.player_id)}
-                    style={{
-                      ...styles.correctionRow,
-                      ...(isSelected ? styles.correctionRowSelected : null),
-                    }}
-                  >
-                    <span style={styles.correctionVoter}>{p.playername}</span>
-                    <span style={styles.correctionArrow}>→</span>
-                    <span style={styles.correctionTarget}>{targetName}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {editable ? (
-          <button onClick={handleConfirm} className="ww-press" style={{ ...ui.dangerButton, marginTop: 4, padding: '15px 52px', letterSpacing: '0.06em' }}>
-            투표 확정
-          </button>
-        ) : (
-          <div style={styles.tapHint}>
-            화면을 터치하면 계속합니다
-            {countdown > 0 && <span style={{ marginLeft: 7, opacity: 0.55 }}>({countdown})</span>}
-          </div>
-        )}
+        <div style={styles.tapHint}>
+          화면을 터치하면 계속합니다
+          {countdown > 0 && <span style={{ marginLeft: 7, opacity: 0.55 }}>({countdown})</span>}
+        </div>
       </div>
     </div>
   )
@@ -194,7 +276,7 @@ export default function VoteResult({ players = [], votes = {}, onComplete, edita
 const styles = {
   content: {
     width: '100%',
-    maxWidth: 520,
+    maxWidth: 560,
     padding: '0 24px',
     overflowY: 'auto',
     maxHeight: '92vh',
@@ -210,6 +292,133 @@ const styles = {
     textAlign: 'center',
   },
 
+  lead: {
+    fontSize: 14.5,
+    color: 'rgba(255,214,200,0.62)',
+    textAlign: 'center',
+    marginTop: -4,
+  },
+
+  // ── 보정 목록 ──────────────────────────────────────────────────────────
+  editList: {
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+
+  editRow: {
+    borderRadius: 14,
+    padding: '11px 14px',
+    background: 'rgba(10,3,2,0.46)',
+    border: '1px solid rgba(255,120,80,0.14)',
+    transition: 'background 180ms ease, border-color 180ms ease',
+  },
+
+  editRowOpen: {
+    background: 'linear-gradient(180deg, rgba(120,32,10,0.34), rgba(30,8,4,0.46))',
+    border: '1px solid rgba(255,170,110,0.55)',
+  },
+
+  editHead: { display: 'flex', alignItems: 'center', gap: 10 },
+
+  editVoter: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: '#ffe6dc',
+    minWidth: 72,
+  },
+
+  editArrow: {
+    fontSize: 12.5,
+    fontWeight: 650,
+    color: 'rgba(255,214,200,0.42)',
+    letterSpacing: '0.02em',
+  },
+
+  /** 눌러서 고치는 자리. 44px 높이는 손가락으로 빗나가지 않는 최소치다. */
+  targetPill: {
+    marginLeft: 'auto',
+    minWidth: 128,
+    height: 44,
+    padding: '0 16px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    borderRadius: 999,
+    border: '1px solid rgba(255,150,100,0.5)',
+    background: 'rgba(200,60,30,0.26)',
+    color: '#ffcbb8',
+    fontFamily: 'inherit',
+    fontSize: 15.5,
+    fontWeight: 750,
+    cursor: 'pointer',
+  },
+
+  // 카메라가 못 읽은 자리는 색이 아니라 **비어 보이는 것**으로 알린다.
+  // 붉게 칠해두면 지목이 있는 것처럼 보여 그냥 넘어가게 된다.
+  targetPillEmpty: {
+    border: '1px dashed rgba(255,214,200,0.34)',
+    background: 'transparent',
+    color: 'rgba(255,214,200,0.5)',
+  },
+
+  targetPillOpen: {
+    border: '1px solid rgba(255,200,140,0.9)',
+    background: 'rgba(255,150,70,0.3)',
+    color: '#fff0e4',
+  },
+
+  pillCaret: { fontSize: 11, opacity: 0.7, transition: 'transform 160ms ease' },
+
+  picker: {
+    marginTop: 11,
+    paddingTop: 11,
+    borderTop: '1px solid rgba(255,150,100,0.22)',
+  },
+
+  pickerHint: {
+    fontSize: 13,
+    color: 'rgba(255,224,214,0.72)',
+    marginBottom: 9,
+  },
+
+  chips: { display: 'flex', flexWrap: 'wrap', gap: 7 },
+
+  chip: {
+    height: 42,
+    padding: '0 17px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.16)',
+    background: 'rgba(0,0,0,0.28)',
+    color: '#ffe6dc',
+    fontFamily: 'inherit',
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'background 140ms ease, border-color 140ms ease',
+  },
+
+  chipOn: {
+    border: '1px solid rgba(255,190,110,0.9)',
+    background: 'rgba(255,150,70,0.32)',
+    color: '#fff4e8',
+  },
+
+  chipAbstain: { color: 'rgba(255,214,200,0.6)', fontWeight: 650 },
+
+  summary: {
+    fontSize: 13.5,
+    fontWeight: 650,
+    color: 'rgba(255,214,200,0.55)',
+    letterSpacing: '0.01em',
+  },
+
+  hot: { color: '#ff9068', fontWeight: 800 },
+  sep: { margin: '0 7px', opacity: 0.4 },
+
+  // ── 발표 ───────────────────────────────────────────────────────────────
   condemnedCard: {
     display: 'flex',
     flexDirection: 'column',
@@ -300,46 +509,6 @@ const styles = {
     flexShrink: 0,
     fontVariantNumeric: 'tabular-nums',
   },
-
-  correctionPanel: {
-    width: '100%',
-    padding: '14px 16px',
-    borderRadius: 16,
-    borderColor: 'rgba(255,120,80,0.2)',
-    animationDelay: '0.3s',
-  },
-
-  correctionHeader: {
-    fontSize: 13,
-    color: 'rgba(255,214,200,0.6)',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-
-  hot: { color: '#ff9068', fontWeight: 800 },
-
-  correctionGrid: { display: 'flex', flexDirection: 'column', gap: 6 },
-
-  correctionRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '9px 13px',
-    borderRadius: 10,
-    background: 'rgba(0,0,0,0.24)',
-    border: '1px solid rgba(255,120,80,0.10)',
-    cursor: 'pointer',
-    transition: 'background 180ms ease, border-color 180ms ease',
-  },
-
-  correctionRowSelected: {
-    background: 'rgba(255,150,70,0.2)',
-    border: '1px solid rgba(255,190,110,0.7)',
-  },
-
-  correctionVoter: { fontSize: 14, fontWeight: 750, color: '#ffe6dc', width: 62, flexShrink: 0 },
-  correctionArrow: { fontSize: 13, color: 'rgba(255,214,200,0.35)' },
-  correctionTarget: { fontSize: 13, color: '#ff9068', flex: 1 },
 
   tapHint: {
     fontSize: 12,
