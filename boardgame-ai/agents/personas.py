@@ -22,6 +22,13 @@
 말투가 겹치면 목소리만 다른 같은 사람이 된다. 새 페르소나를 넣을 때는 위
 목록과 어미가 부딪히지 않는지 먼저 본다.
 
+## 기본 진행자는 캐릭터가 '없는' 자리다
+
+위 넷은 전부 개성이 세서, 처음 보는 사람에게 규칙을 설명하거나 조용히
+진행하고 싶을 때 고를 것이 없었다. `basic`이 그 자리다 — 말투를 덮어쓰지
+않고 중립 원문 그대로 말한다. 그래서 이 하나만 style_prompt가 비어 있고
+persona_lines JSON도 없다(아래 항목 주석 참고).
+
 ## 욕설
 
 기본값은 원작 말투에 충실하게 둔다. 수위 조절은 나중에 별도 스위치로 붙인다 —
@@ -52,6 +59,43 @@ _COMMON_RULES = (
 
 
 PERSONAS: dict[str, Persona] = {
+    # 캐릭터 없는 진행자. 넷 중 누구도 고르고 싶지 않을 때의 자리다.
+    #
+    # **이 페르소나만 style_prompt가 비어 있고 persona_lines 파일이 없다.**
+    # 둘 다 의도된 것이다 — lines.LINES의 중립 원문이 이미 진행자 말투로
+    # 쓰여 있어서, 아무것도 덮어쓰지 않는 것이 곧 "기본 톤"이다. 원문을
+    # 다시 원문으로 변환하는 JSON을 만들면 LLM이 손을 대는 만큼 원문에서
+    # 멀어지기만 한다.
+    #
+    # style_prompt가 비면 llm.persona_style()도 빈 문자열을 돌려주므로,
+    # 즉석 생성 문장(전략 조언 등)도 말투 지시 없이 표준어로 나간다.
+    "basic": Persona(
+        id="basic",
+        display_name="기본 진행자",
+        description="특색 없는 표준 진행자. 규칙과 상황만 또박또박 전달합니다.",
+        # Typecast 'MC TypeCast'. 이름 그대로 진행자용으로 만들어진 목소리라
+        # 골랐는데, **아직 실제로 들어보지 못했다** — 고르던 시점에 계정
+        # 크레딧이 비어 합성이 되지 않았다. 크레딧이 차면
+        #     python tools/tts_preview.py basic --roles
+        # 로 들어보고, 아니다 싶으면 아래 후보로 바꾼다(이 한 줄만 고치면 된다).
+        #     MC Kong            tc_623145ec8d2f689cc9bad6d5   예능형 MC
+        #     Anchor Hwa         tc_5feb213228b7247f8c8eb6d9   또박또박한 앵커
+        #     Classic Narrator   tc_603fa172a669dfd23f450abd   차분한 내레이션
+        voice_name="tc_603514551860484c4dcb6acd",
+        # 캐릭터가 없다는 것은 밋밋하다는 뜻이 아니다. 진행자는 상황에 따라
+        # 속도가 변하고, 그 변화만으로도 화면이 살아 있는 것으로 들린다.
+        base=Delivery(speaking_rate=1.05),
+        by_role={
+            # 제지는 또박또박. 화를 내는 대신 속도를 늦춰 무게를 준다 —
+            # 캐릭터가 없는 진행자가 화를 내면 그냥 다른 사람이 된다.
+            AgentRole.REFEREE.value: Delivery(speaking_rate=0.95),
+            DELIVERY_EXCITED: Delivery(
+                speaking_rate=1.15, emotion="happy", emotion_intensity=1.2
+            ),
+        },
+        style_prompt="",
+        style_examples={},
+    ),
     # 숏폼 밈 톤. "여러분"으로 부르며 과장되게 절망하고 흥분한다.
     # 존댓말인데 욕이 섞이는 조합이 이 캐릭터의 핵심이다.
     "shagal": Persona(
