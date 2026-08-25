@@ -147,29 +147,53 @@ function EyeClose({ duration }) {
   )
 }
 
-// ── 야간→낮: 태양이 지평선에서 떠오르는 일출 ────────────────────────────────
+/**
+ * 야간→낮: 태양이 지평선에서 떠오르는 일출.
+ *
+ * ## 깜빡이지 않게 하는 것이 이 연출의 핵심이다
+ *
+ * 층을 다섯 겹 겹쳐 놓으면 각 층의 곡선이 아니라 **합이** 화면 밝기가 된다.
+ * 예전에는 층마다 따로 예뻐 보이는 곡선을 줬는데, 합쳐놓고 재보니 이랬다.
+ *
+ *     1326ms  밝기 0.95   ← 첫 번째 정점
+ *     1593ms  밝기 0.92   ← 지평선이 먼저 꺼지며 내려앉음
+ *     1792ms  밝기 1.09   ← 절정 번짐이 뒤늦게 터지며 두 번째 정점
+ *
+ * 밝아졌다 살짝 어두워졌다 다시 터진다. 이게 "햇빛이 깜빡인다"의 정체였다.
+ * 일출은 한 번 부풀었다 가라앉아야 한다 — 아래 곡선은 전부 **합이 단조**가
+ * 되도록 맞춰져 있다. 층 하나를 손보려면 반드시 합을 다시 재고 넣을 것.
+ *
+ * timing-function을 linear로 둔 것도 같은 이유다. ease-in-out은 키프레임
+ * *마다* 감속·가속을 넣어서, 키프레임이 넷이면 네 번 출렁인다. 모양은
+ * 키프레임 값으로 만들고 보간은 건드리지 않는다.
+ *
+ * backdrop-filter는 값을 애니메이션하지 않는다. 매 프레임 뒷화면을 새로
+ * 캡처해 다시 블러하는 일이라 태블릿에서 프레임이 통째로 튄다. 필터는 고정해
+ * 두고 그 층의 opacity만 움직이면 결과는 같고 합성은 GPU에서 끝난다.
+ */
 function Dawn({ duration }) {
   const d = `${duration}ms`
   return (
     <>
       <style>{`
         @keyframes ww-night-out {
-          0%,18% { opacity: 1; }
-          62%    { opacity: 0; }
+          0%,16% { opacity: 1; }
+          52%    { opacity: 0; }
           100%   { opacity: 0; }
         }
         @keyframes ww-sky-dawn {
           0%,10% { opacity: 0; }
-          42%    { opacity: 1; }
-          80%    { opacity: 1; }
+          34%    { opacity: 1; }
+          82%    { opacity: 1; }
           100%   { opacity: 0; }
         }
+        /* 지평선은 먼저 꺼지지 않는다. 예전에는 80%에서 0.7로 내려가 절정
+           직전에 화면을 한 번 눌렀다 — 첫 정점 뒤의 그 함몰이 깜빡임이었다. */
         @keyframes ww-horiz {
-          0%    { opacity: 0; transform: scaleX(0.5); }
-          20%   { opacity: 0.7; transform: scaleX(0.8); }
-          52%   { opacity: 1; transform: scaleX(1.15); }
-          80%   { opacity: 0.7; }
-          100%  { opacity: 0; }
+          0%    { opacity: 0;    transform: scaleX(0.55); }
+          22%   { opacity: 0.62; transform: scaleX(0.82); }
+          70%   { opacity: 1;    transform: scaleX(1.12); }
+          100%  { opacity: 0;    transform: scaleX(1.2); }
         }
         @keyframes ww-sun-up {
           0%    { opacity: 0; transform: translateY(0px) scale(0.5); }
@@ -180,41 +204,45 @@ function Dawn({ duration }) {
           100%  { opacity: 0; transform: translateY(-108px) scale(1.06); }
         }
         @keyframes ww-rays-op {
-          0%,30% { opacity: 0; }
-          55%    { opacity: 0.7; }
-          72%    { opacity: 0.75; }
-          88%    { opacity: 0.3; }
+          0%,26% { opacity: 0; }
+          62%    { opacity: 0.68; }
+          84%    { opacity: 0.6; }
           100%   { opacity: 0; }
         }
+        /* 절정 번짐을 앞으로 당겨 광선·지평선과 같은 정점에서 만난다.
+           예전에는 62%에 시작해 73%에 혼자 터졌고, 그게 두 번째 섬광이었다. */
         @keyframes ww-bloom {
-          0%,62% { opacity: 0; }
-          73%    { opacity: 0.7; }
-          82%    { opacity: 0.4; }
+          0%,34% { opacity: 0; }
+          70%    { opacity: 0.5; }
           100%   { opacity: 0; }
         }
-        /* 빛이 터질 때 뒷화면도 함께 눈부시게 — 초점이 풀렸다 돌아온다 */
+        /* 빛이 터질 때 뒷화면도 함께 눈부시게 — 초점이 풀렸다 돌아온다.
+           필터 값은 고정이고 이 층의 opacity만 움직인다. */
         @keyframes ww-dawn-blur {
-          0%,40% { backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
-          70%    { backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
-          100%   { backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+          0%,36% { opacity: 0; }
+          70%    { opacity: 1; }
+          100%   { opacity: 0; }
         }
       `}</style>
       <div style={{ ...base, overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0,
-          animation: `ww-dawn-blur ${d} ease-in-out forwards`,
+          WebkitBackdropFilter: 'blur(8px)',
+          backdropFilter: 'blur(8px)',
+          willChange: 'opacity',
+          animation: `ww-dawn-blur ${d} linear forwards`,
         }} />
         {/* 밤하늘 */}
         <div style={{
           position: 'absolute', inset: 0,
           background: 'linear-gradient(180deg, #000008 0%, #030114 45%, #090418 100%)',
-          animation: `ww-night-out ${d} ease-in-out forwards`,
+          animation: `ww-night-out ${d} linear forwards`,
         }} />
         {/* 새벽 하늘 */}
         <div style={{
           position: 'absolute', inset: 0,
           background: 'linear-gradient(180deg, #060921 0%, #180530 22%, #7a2008 50%, #e25510 74%, #f5a820 100%)',
-          animation: `ww-sky-dawn ${d} ease-in-out forwards`,
+          animation: `ww-sky-dawn ${d} linear forwards`,
         }} />
         {/* 수평선 빛 번짐 */}
         <div style={{
@@ -222,7 +250,7 @@ function Dawn({ duration }) {
           left: '-18%', width: '136%', height: '55%',
           transformOrigin: 'bottom center',
           background: 'radial-gradient(ellipse at 50% 100%, rgba(255,165,40,0.95) 0%, rgba(230,78,10,0.82) 25%, rgba(145,32,5,0.52) 55%, transparent 80%)',
-          animation: `ww-horiz ${d} ease-in-out forwards`,
+          animation: `ww-horiz ${d} linear forwards`,
         }} />
         {/* 태양 광선 — 화면보다 크게 깔고 가장자리는 마스크로 지운다.
             원래 상자(700px)의 태양 위치(아래에서 98px)는 그대로 유지한다. */}
@@ -235,7 +263,7 @@ function Dawn({ duration }) {
           WebkitMaskImage: RAY_MASK,
           maskImage: RAY_MASK,
           willChange: 'opacity',
-          animation: `ww-rays-op ${d} ease-in-out forwards`,
+          animation: `ww-rays-op ${d} linear forwards`,
         }} />
         {/* 태양 후광 + 디스크: 지평선 위치에서 시작해 위로만 이동 */}
         <div style={{
@@ -261,7 +289,7 @@ function Dawn({ duration }) {
         <div style={{
           position: 'absolute', inset: 0,
           background: 'radial-gradient(ellipse at 50% 80%, rgba(255,225,130,0.42) 0%, rgba(255,165,60,0.22) 28%, transparent 62%)',
-          animation: `ww-bloom ${d} ease-in-out forwards`,
+          animation: `ww-bloom ${d} linear forwards`,
         }} />
       </div>
     </>
