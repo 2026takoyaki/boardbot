@@ -41,7 +41,7 @@ const KOREAN_NUMBERS = [
 ]
 const toKoreanNum = (n) => KOREAN_NUMBERS[n - 1] ?? String(n)
 
-export default function RoleRegistration({ players = [], onStart, onExit, send, connected }) {
+export default function RoleRegistration({ players = [], onStart, send, connected }) {
   const [selected, setSelected] = useState([])
   const [activeTeam, setActiveTeam] = useState('전체')
 
@@ -141,6 +141,25 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
             })}
           </div>
         </div>
+
+        {/* 시작 버튼이 왼쪽 기둥 아래에 있는 이유가 둘이다.
+            하나는 자리 — 오른쪽 위는 두 게임 공용 상단바(GameTopBar)가
+            쓰므로 거기 두면 겹친다.
+            또 하나는 뜻 — 이 버튼을 누를 수 있는지는 바로 위 '필요 카드
+            n/7'이 정한다. 게이트와 문이 같은 기둥에 있어야 왜 안 눌리는지
+            찾아 헤매지 않는다. */}
+        <button
+          type="button"
+          disabled={!done}
+          onClick={() => onStart(selected)}
+          className={done ? 'ww-press ww-ready' : undefined}
+          style={{
+            ...styles.startButton,
+            ...(!done ? styles.startButtonDisabled : null),
+          }}
+        >
+          게임 시작
+        </button>
       </aside>
 
       <main style={styles.mainPanel} className="ww-panel">
@@ -148,24 +167,6 @@ export default function RoleRegistration({ players = [], onStart, onExit, send, 
           <div>
             <h2 style={styles.mainTitle}>역할 선택</h2>
             <p style={styles.mainSub}>카드를 눌러 게임에 사용할 역할을 추가하세요.</p>
-          </div>
-
-          <div style={styles.topActions}>
-            <button type="button" onClick={onExit} className="ww-hover ww-press" style={styles.exitButton}>
-              나가기
-            </button>
-            <button
-              type="button"
-              disabled={!done}
-              onClick={() => onStart(selected)}
-              className={done ? 'ww-press ww-ready' : undefined}
-              style={{
-                ...styles.startButton,
-                ...(!done ? styles.startButtonDisabled : null),
-              }}
-            >
-              게임 시작
-            </button>
           </div>
         </header>
 
@@ -405,13 +406,6 @@ const styles = {
     flexShrink: 0,
   },
 
-  topActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    flexShrink: 0,
-  },
-
   mainTitle: {
     margin: 0,
     fontSize: 27,
@@ -425,21 +419,14 @@ const styles = {
     fontSize: 13,
   },
 
+  // 왼쪽 기둥 맨 아래를 가로로 채운다. 폭을 고정하면 기둥 안에서 가운데만
+  // 뜬 것처럼 보여, 이 기둥의 결론이라는 느낌이 나지 않는다.
   startButton: {
     ...ui.primaryButton,
-    width: 176,
-    height: 50,
+    width: '100%',
+    height: 52,
     padding: 0,
     fontSize: 17,
-    flexShrink: 0,
-  },
-
-  exitButton: {
-    ...ui.ghostButton,
-    width: 104,
-    height: 50,
-    padding: 0,
-    fontSize: 15,
     flexShrink: 0,
   },
 

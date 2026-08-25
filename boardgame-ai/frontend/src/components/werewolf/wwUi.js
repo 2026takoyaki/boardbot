@@ -4,6 +4,10 @@
  * 나가기 버튼 하나가 여섯 파일에 각각 복사돼 있었고, 그래서 화면마다 모서리
  * 둥글기와 글자색이 조금씩 달랐다. 눈에 띄는 차이는 아니지만 그런 어긋남이
  * 쌓이면 "만들다 만 화면"으로 보인다. 여기 한 벌만 둔다.
+ *
+ * 그 나가기 버튼은 이제 여기에도 없다 — 두 게임이 함께 쓰는 상단바
+ * (components/common/GameTopBar.jsx)로 옮겼다. 같은 기기에서 도는 두 게임인데
+ * 요트에만 소리·전략 조작이 있는 것이 더 큰 어긋남이었다.
  */
 
 export const page = {
@@ -24,26 +28,6 @@ export const stage = {
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
-}
-
-export const exitButton = {
-  position: 'absolute',
-  top: 20,
-  right: 20,
-  zIndex: 10,
-  padding: '9px 18px',
-  border: '1px solid rgba(255,255,255,0.16)',
-  borderRadius: 12,
-  background: 'rgba(10,8,16,0.42)',
-  color: 'var(--w-ink-soft)',
-  fontFamily: 'inherit',
-  fontSize: 14,
-  fontWeight: 650,
-  letterSpacing: '-0.01em',
-  cursor: 'pointer',
-  WebkitBackdropFilter: 'blur(10px)',
-  backdropFilter: 'blur(10px)',
-  transition: 'background 140ms ease, color 140ms ease',
 }
 
 export const ghostButton = {

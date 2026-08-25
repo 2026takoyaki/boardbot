@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { audio as audioApi, useAudioPlayer } from '../hooks/useAudioPlayer'
 import DevPanel from '../components/common/DevPanel'
+import GameTopBar from '../components/common/GameTopBar'
 import RoleRegistration from '../components/werewolf/RoleRegistration'
 import CardSetupGuide from '../components/werewolf/CardSetupGuide'
 import NightStart from '../components/werewolf/NightStart'
@@ -238,6 +239,15 @@ export default function WerewolfGame({ players, onChangePlayers, onChangeGame, o
     return (
       <>
         {renderGamePhase(displayedPhase ?? phase)}
+        {/* 상단바는 페이즈 바깥에 한 번만 둔다. 전에는 화면마다 '나가기'를
+            한 개씩 들고 있어서(여섯 벌) 페이즈가 넘어갈 때마다 버튼이
+            사라졌다 다시 그려졌고, 요트에 있는 소리·전략 조작은 아예 없었다. */}
+        <GameTopBar
+          theme="werewolf"
+          send={send}
+          connected={connected}
+          onExit={handleExit}
+        />
         <DevPanel
           title={`늑대인간 · ${phase}`}
           actions={[
@@ -288,11 +298,12 @@ export default function WerewolfGame({ players, onChangePlayers, onChangeGame, o
   // 누가 어떤 카드를 받는지는 시스템이 알지 못한다.
 
   return (
+    <>
+    <GameTopBar theme="werewolf" send={send} connected={connected} onExit={onChangeGame} />
     <RoleRegistration
       players={players}
       send={send}
       connected={connected}
-      onExit={onChangeGame}
       onStart={(roles) => {
         const playerOrder = players.map(p => p.player_id)
         send('START_CARD_SETUP', {
@@ -304,5 +315,6 @@ export default function WerewolfGame({ players, onChangePlayers, onChangeGame, o
         })
       }}
     />
+    </>
   )
 }

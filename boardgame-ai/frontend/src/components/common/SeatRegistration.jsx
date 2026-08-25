@@ -3,6 +3,7 @@ import {
   IconPlus, IconCheck, IconArrowRight, IconEdit, IconTrash, IconUsers,
 } from './Icons'
 import PersonaPicker from './PersonaPicker'
+import SettingsMenu from './SettingsMenu'
 import TableVisualization from './TableVisualization'
 import HandRegistrationModal, { RANDOM_NICKNAMES } from './HandRegistrationModal'
 import { colorForPlayerId } from './seatColors'
@@ -63,8 +64,10 @@ export default function SeatRegistration({
   const canStart =
     namedPlayers.length > 0 && namedPlayers.every((p) => p.registered)
 
+  // sub는 오류일 때만 쓴다. 정상일 때의 상세("테이블 전체 인식 중")는 알아도
+  // 할 일이 없어서 상단에서 뺐다 — 그래서 여기에도 두지 않는다.
   const cameraLabel = connected
-    ? { dot: 'ok', text: '카메라 연결됨', sub: '테이블 전체 인식 중' }
+    ? { dot: 'ok', text: '카메라 연결됨', sub: null }
     : { dot: 'err', text: '카메라 오류', sub: '연결 상태를 확인해 주세요' }
 
   const startRegistration = () => send('start_registration', {})
@@ -111,13 +114,20 @@ export default function SeatRegistration({
           <span style={{ opacity: 0.5 }}>플레이</span>
         </div>
         <div className="right">
-          <div className="camera-badge">
+          {/* 알약 상자에 두 줄로 담겨 있었는데, 옆에 44px 톱니가 서면서
+              둘의 생김새가 부딪혔다. 로비 상단(`4명 플레이 | ● 카메라 정상`)은
+              이미 맨글자 한 줄이라, 그쪽에 맞춘다 — 상태 표시는 읽히기만 하면
+              되고 눌리는 물건이 아니다. */}
+          <span className="cam-stat">
             <span className={`status-dot ${cameraLabel.dot} pulse`} />
-            <div>
-              <div style={{ color: 'var(--fg)', fontWeight: 500 }}>{cameraLabel.text}</div>
-              <div style={{ fontSize: 13, color: 'var(--fg-mute)' }}>{cameraLabel.sub}</div>
-            </div>
-          </div>
+            {cameraLabel.text}
+          </span>
+          {/* 두 번째 줄은 문제가 있을 때만 남긴다. 정상일 때의 '테이블 전체
+              인식 중'은 알아도 할 일이 없지만, 오류일 때는 지시문이다. */}
+          {!connected && <span className="cam-sub">{cameraLabel.sub}</span>}
+          {/* 로비·게임 화면과 같은 자리, 같은 메뉴. 소리를 줄이는 방법이
+              화면마다 다르면 그때마다 다시 찾게 된다. */}
+          <SettingsMenu send={send} connected={connected} />
         </div>
       </div>
 
@@ -279,14 +289,12 @@ export default function SeatRegistration({
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
-        .scr-register .camera-badge {
-          display: flex; align-items: center; gap: 10px;
-          padding: 8px 16px;
-          background: var(--bg-surface);
-          border: 1px solid var(--border-soft);
-          border-radius: 999px;
-          font-size: 14px;
+        .scr-register .cam-stat {
+          display: inline-flex; align-items: center; gap: 8px;
+          color: var(--fg-soft);
+          white-space: nowrap;
         }
+        .scr-register .cam-sub { color: var(--err); }
         .reg-grid {
           flex: 1;
           display: grid;
@@ -717,12 +725,21 @@ function TurnControls({
           white-space: nowrap;
         }
         .tc-dir-btn:hover { color: var(--fg); }
+        /* 고른 쪽은 **면으로** 알린다.
+           이 화면에는 이미 테두리가 많다(패널·좌석판·알약 트랙·시작 플레이어).
+           거기에 토글까지 테두리로 강조하면 선이 한 겹 더 늘어 난잡해진다.
+           트랙(--bg-surface)보다 밝은 면을 얹으면 선을 하나도 더 그리지 않고
+           "이쪽이 눌려 있다"가 읽힌다 — 세그먼트 컨트롤의 원래 방식이다.
+
+           다만 주 버튼처럼 강조색으로 꽉 채우지는 않는다. 이건 '상태'지
+           '다음으로 가는 행동'이 아니라서, 옆의 게임 선택과 무게가 같아지면
+           어느 쪽을 눌러야 진행되는지가 흐려진다. */
         .tc-dir-btn.active {
-          background: var(--accent);
-          color: #1a1410;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+          background: var(--bg-hover);
+          color: var(--fg);
+          font-weight: 600;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
-        :root[data-mode="light"][data-accent="white"] .tc-dir-btn.active { color: #fff; }
         .tc-dir-btn svg { flex-shrink: 0; }
       `}</style>
     </div>

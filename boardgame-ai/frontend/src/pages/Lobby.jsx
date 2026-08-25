@@ -3,6 +3,7 @@ import {
   IconArrowLeft, IconUsers, IconClock, IconSparkle, IconBook, IconPlay,
 } from '../components/common/Icons'
 import { YachtDiceArt, WerewolfArt } from '../components/common/GameArt'
+import SettingsMenu from '../components/common/SettingsMenu'
 
 const GAMES = [
   {
@@ -40,6 +41,7 @@ export default function Lobby({
   connected,
   onBack,
   onSelectGame,   // (gameId, mode) => void   mode: 'play' | 'tutorial' | 'practice'
+  send,
 }) {
   const [hovered, setHovered] = useState(null)
   const playerCount = players.filter((p) => p.playername).length
@@ -67,6 +69,9 @@ export default function Lobby({
             />
             {connected ? '카메라 정상' : '카메라 오류'}
           </span>
+          {/* 게임 안에서만 소리를 줄일 수 있으면, 정작 로비 BGM이 큰 순간에
+              방법이 없다. 게임 화면과 같은 메뉴를 여기에도 둔다. */}
+          <SettingsMenu send={send} connected={connected} />
         </div>
       </div>
 
@@ -117,16 +122,20 @@ export default function Lobby({
           margin: 0 24px;
           background: var(--gs-rule);
         }
+        /* theme.css의 보조 버튼(.btn-secondary)과 같은 무게로 맞춘다.
+           예전에는 --bg-surface에 --border-soft라 배경과 거의 같은 색이었고,
+           옆의 밝은 시작 버튼과 나란히 놓이면 눌리는 물건으로 안 보였다. */
         .btn-back {
-          appearance: none; border: 1px solid var(--border-soft);
-          background: var(--bg-surface); color: var(--fg-soft);
-          padding: 8px 16px; border-radius: 8px;
-          font-size: 14px; font-weight: 500;
+          appearance: none; border: 1px solid var(--border);
+          background: var(--bg-elev); color: var(--fg);
+          padding: 9px 16px; border-radius: var(--radius-sm);
+          font-size: 14px; font-weight: 600;
           display: inline-flex; align-items: center; gap: 6px;
           font-family: inherit; cursor: pointer;
           white-space: nowrap;
+          transition: background 120ms ease, border-color 120ms ease;
         }
-        .btn-back:hover { background: var(--bg-elev); color: var(--fg); }
+        .btn-back:hover { background: var(--bg-hover); border-color: var(--fg-faint); }
 
         .gs-hd {
           padding: 16px 40px 8px;

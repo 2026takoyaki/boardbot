@@ -9,11 +9,19 @@
  * 개발 서버에서는 vite 프록시가 넘긴다.
  */
 
+import { sfxVolume } from './hooks/useAudioPlayer'
+
 // 브라우저가 자동재생을 막으면 play()가 reject된다. 소리가 없다고 게임이
 // 멈추지는 않으므로 조용히 삼킨다.
+//
+// 음량은 상단바의 효과음 슬라이더를 따른다. 이쪽은 매번 새 Audio를 만들어
+// 쓰기 때문에(겹쳐 울려야 하므로) 재생 직전에 값을 물어본다.
 export function playSfx(name) {
   if (!name) return
+  const volume = sfxVolume()
+  if (volume <= 0) return
   const audio = new Audio(`/sfx/${name}.mp3`)
+  audio.volume = volume
   audio.play().catch(() => {})
 }
 
