@@ -165,8 +165,13 @@ class WerewolfSession:
             self._fsm = None
             self._pending_setup = None
             self._player_names = {}
-            if self._audio_manager is not None and self._current_bgm is not None:
-                await self._audio_manager.stop_bgm()
+            if self._audio_manager is not None:
+                # 로비로 나가는 시점. 발화 중이거나 큐에 쌓인 안내를 그대로 두면
+                # 태블릿은 같은 웹소켓을 계속 쓰므로 로비 화면 위로 게임 멘트가
+                # 이어서 흘러나온다.
+                await self._audio_manager.interrupt_interruptible("game_exit")
+                if self._current_bgm is not None:
+                    await self._audio_manager.stop_bgm()
             self._current_bgm = None
             if self._pipeline_switcher is not None:
                 self._pipeline_switcher(None)
