@@ -104,6 +104,40 @@ def test_주사위_인식_조명은_색온도로_나간다() -> None:
     assert NEUTRAL_SCENE.kelvin is not None
 
 
+# 중립과 이만큼은 떨어져야 눈에 보인다. 색온도가 붙은 명령은 RGB를 무시하므로
+# 이보다 가까우면 color를 아무리 다르게 적어도 전구 출력이 같아진다.
+_MIN_KELVIN_GAP = 800
+
+
+def test_큐가_중립과_구분된다() -> None:
+    """중립에 붙은 큐는 전구에서 안 보인다.
+
+    NEUTRAL_KELVIN을 인식률 때문에 백색 쪽으로 올리면 upset·deflate처럼 원래
+    서늘했던 큐가 중립에 흡수된다. color 값이 달라 중복 제거는 통과하므로
+    로그에는 정상으로 찍히고, 전구만 아무 일도 하지 않는다.
+    """
+    neutral = NEUTRAL_SCENE.kelvin
+    assert neutral is not None
+    too_close = [
+        f"{name} {cue.kelvin}K (중립 {neutral}K와 {abs(cue.kelvin - neutral)}K 차이)"
+        for name, cue in YACHT_CUES.items()
+        if cue.kelvin is not None and abs(cue.kelvin - neutral) < _MIN_KELVIN_GAP
+    ]
+    assert not too_close, f"중립과 구분되지 않는 큐: {too_close}"
+
+
+def test_큐끼리도_서로_구분된다() -> None:
+    """연출의 종류가 다르면 전구에서도 달라야 한다."""
+    items = [(n, c.kelvin) for n, c in YACHT_CUES.items() if c.kelvin is not None]
+    collisions = [
+        f"{a}({ka}K) ↔ {b}({kb}K)"
+        for i, (a, ka) in enumerate(items)
+        for b, kb in items[i + 1 :]
+        if abs(ka - kb) < _MIN_KELVIN_GAP
+    ]
+    assert not collisions, f"서로 구분되지 않는 큐: {collisions}"
+
+
 # ── 전달 경로 ─────────────────────────────────────────────────────────────────
 
 

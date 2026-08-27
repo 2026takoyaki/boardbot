@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import threading
 import time
+from collections import Counter, deque
 from pathlib import Path
 
 import cv2
@@ -118,6 +119,70 @@ class _LightControl:
             asyncio.run(_restore())
 
 
+class _PipVoter:
+    """파이프라인이 실제로 보는 값을 재현한다.
+
+    DotCounter의 프레임별 원본 출력은 원래 흔들린다. 파이프라인은 그걸 그대로
+    쓰지 않고 DiceManager가 버퍼에 모아 다수결로 확정한다. 원본만 띄우면
+    "깜빡거린다"까지는 보이지만 그게 굴림 확정으로 이어지는지는 알 수 없다.
+
+    채택 조건은 DiceManager와 같다 — 1위 표수 >= max(3, 버퍼/3) 이고
+    2위보다 2표 이상 앞설 것. 두 값이 비등하면 확정하지 않는다.
+
+    주사위를 프레임 간에 잇는 방법은 가장 가까운 중심이다. 튜닝 중에는 주사위가
+    가만히 있으므로 ByteTracker까지 돌릴 이유가 없다.
+    """
+
+    def __init__(self, buffer_size: int = 11, match_radius: float = 0.05) -> None:
+        self._buffer_size = buffer_size
+        self._match_radius = match_radius
+        self._slots: list[dict] = []  # {"center", "buf", "voted", "miss"}
+
+    def update(self, readings: list[tuple[tuple[float, float], int | None]]) -> list[dict]:
+        """(중심, 원본_pip) 목록을 받아 슬롯별 상태를 돌려준다."""
+        used: set[int] = set()
+        result: list[dict] = []
+
+        for center, raw in readings:
+            slot = None
+            best = self._match_radius
+            for i, s in enumerate(self._slots):
+                if i in used:
+                    continue
+                d = ((center[0] - s["center"][0]) ** 2 + (center[1] - s["center"][1]) ** 2) ** 0.5
+                if d < best:
+                    slot, best = i, d
+            if slot is None:
+                self._slots.append(
+                    {"center": center, "buf": deque(maxlen=self._buffer_size), "voted": None}
+                )
+                slot = len(self._slots) - 1
+            used.add(slot)
+
+            s = self._slots[slot]
+            s["center"] = center
+            if raw is not None:
+                s["buf"].append(raw)
+                top = Counter(s["buf"]).most_common(2)
+                if top:
+                    candidate, votes = top[0]
+                    runner_up = top[1][1] if len(top) > 1 else 0
+                    min_votes = max(3, len(s["buf"]) // 3)
+                    if votes >= min_votes and (votes - runner_up) >= 2:
+                        s["voted"] = candidate
+
+            buf = list(s["buf"])
+            agree = buf.count(s["voted"]) / len(buf) if buf and s["voted"] is not None else 0.0
+            result.append({"raw": raw, "voted": s["voted"], "agree": agree, "buf": buf})
+
+        # 오래 안 잡힌 슬롯은 버린다 — 주사위를 옮기면 옛 자리가 남는다.
+        self._slots = [s for i, s in enumerate(self._slots) if i in used]
+        return result
+
+    def reset(self) -> None:
+        self._slots.clear()
+
+
 def _build_light(enabled: bool) -> tuple[_LightControl | None, str]:
     """조명 조절기를 만든다. 못 만들면 이유를 함께 돌려준다."""
     if not enabled:
@@ -186,8 +251,9 @@ def main() -> None:
             light.close()
         return
 
-    print("[tune] 's' 파라미터 출력   'q' 종료")
+    print("[tune] 's' 파라미터 출력   'r' 투표 초기화   'q' 종료")
 
+    voter = _PipVoter()
     brightness, kelvin = args.brightness, args.kelvin
     last_light_push = 0.0
 
@@ -222,28 +288,50 @@ def main() -> None:
         vis = frame.copy()
 
         crops: list[np.ndarray] = []
-        read_ok = 0
+        readings: list[tuple[tuple[float, float], int | None]] = []
         for det in dice_dets:
             result, crop_vis = counter.count_with_debug(frame, det.bbox)
             crops.append(cv2.resize(crop_vis, (120, 120)))
-            if result is not None:
-                read_ok += 1
+            readings.append((det.bbox.center(), result))
 
+        votes = voter.update(readings)
+        read_ok = sum(1 for v in votes if v["raw"] is not None)
+        settled = sum(1 for v in votes if v["voted"] is not None)
+
+        for det, v in zip(dice_dets, votes, strict=True):
             x1 = int(det.bbox.x1 * w)
             y1 = int(det.bbox.y1 * h)
             x2 = int(det.bbox.x2 * w)
             y2 = int(det.bbox.y2 * h)
-            color = (0, 255, 0) if result is not None else (0, 0, 255)
+            # 테두리는 **확정값** 기준이다. 원본이 깜빡여도 확정이 서 있으면
+            # 파이프라인은 그 값을 쓴다 — 그게 판단해야 할 상태다.
+            color = (0, 255, 0) if v["voted"] is not None else (0, 0, 255)
             cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
-            label = str(result) if result is not None else "?"
-            cv2.putText(vis, label, (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-        # 굴림이 확정되려면 5개가 다 잡히고 5개 다 읽혀야 한다. 그 두 숫자를
-        # 가장 크게 띄운다 — 파라미터를 만지는 목적이 결국 이것이다.
-        ok = len(dice_dets) == 5 and read_ok == 5
+            raw = str(v["raw"]) if v["raw"] is not None else "?"
+            voted = str(v["voted"]) if v["voted"] is not None else "-"
+            cv2.putText(
+                vis, voted, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2
+            )
+            # 원본과 일치율을 작게 곁들인다. 일치율이 낮으면 확정이 서 있어도
+            # 언제든 흔들릴 수 있다는 뜻이다.
+            cv2.putText(
+                vis,
+                f"raw {raw}  {v['agree']*100:.0f}%",
+                (x1, y2 + 18),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (200, 200, 200),
+                1,
+            )
+
+        # 굴림이 확정되려면 5개가 다 잡히고 5개가 다 **확정**돼야 한다.
+        # read는 이번 프레임에 읽힌 개수, settled는 다수결이 선 개수다.
+        # 둘의 차이가 곧 깜빡임의 크기다.
+        ok = len(dice_dets) == 5 and settled == 5
         cv2.putText(
             vis,
-            f"dice {len(dice_dets)}/5   read {read_ok}/5",
+            f"dice {len(dice_dets)}/5   read {read_ok}/5   settled {settled}/5",
             (10, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
             1.1,
@@ -290,6 +378,10 @@ def main() -> None:
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
             break
+        if key == ord("r"):
+            # 파라미터를 바꾸면 이전 값으로 쌓인 표가 남아 판단을 흐린다.
+            voter.reset()
+            print("[tune] 투표 버퍼 초기화")
         if key == ord("s"):
             print("\n=== DotCounterParams (vision/detectors/dot_counter.py) ===")
             print("DotCounterParams(")
