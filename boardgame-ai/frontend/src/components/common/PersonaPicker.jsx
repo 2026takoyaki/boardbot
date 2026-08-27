@@ -11,10 +11,9 @@ import { IconUser, IconVolume, IconCheck, IconChevronUp } from './Icons'
  * 없는 파일을 미리 알 방법이 없으므로 onError로 판정한다. 페르소나를
  * 추가하고 그림을 아직 안 그렸을 때 얼굴만 비고 목록은 그대로 뜬다.
  */
-// 그림이 없는 것이 정상인 페르소나. '기본 진행자'는 캐릭터가 없는 자리라
-// 얼굴도 없다 — 없는 파일을 요청해 404를 받고 폴백하는 것과 결과는 같지만,
-// 그건 매번 콘솔에 빨간 줄을 남긴다. 실루엣이 곧 이 페르소나의 그림이다.
-const NO_ART = new Set(['basic'])
+// 그림이 없는 것이 정상인 페르소나. 없는 파일을 요청해 404를 받고 폴백하는
+// 것과 결과는 같지만, 그건 매번 콘솔에 빨간 줄을 남긴다.
+const NO_ART = new Set()
 
 function PersonaFace({ id, size }) {
   const [failed, setFailed] = useState(false)
