@@ -229,12 +229,12 @@ async def test_scene_change_during_cue_wins():
 
 
 class _BrokenDriver(MockDriver):
-    async def apply(self, color, brightness, duration_ms):
+    async def apply(self, color, brightness, duration_ms, kelvin=None):
         raise RuntimeError("전구 연결 끊김")
 
 
 class _HangingDriver(MockDriver):
-    async def apply(self, color, brightness, duration_ms):
+    async def apply(self, color, brightness, duration_ms, kelvin=None):
         await asyncio.sleep(10)
 
 
@@ -339,7 +339,7 @@ async def test_aclose_restores_neutral_and_closes_driver():
 class _SlowDriver(MockDriver):
     """전구가 응답하는 데 시간이 걸리는 상황. 실제 소켓이 그렇다."""
 
-    async def apply(self, color, brightness, duration_ms):
+    async def apply(self, color, brightness, duration_ms, kelvin=None):
         await asyncio.sleep(0.12)
         await super().apply(color, brightness, duration_ms)
 

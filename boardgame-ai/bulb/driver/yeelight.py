@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from bulb.driver.base import RGB, LightDriver
+from bulb.driver.base import KELVIN_MAX, KELVIN_MIN, RGB, LightDriver
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,9 @@ class YeelightDriver(LightDriver):
             self._bulb = Bulb(self._ip, effect="smooth", duration=1000, auto_on=False)
         return self._bulb
 
-    def _apply_sync(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    def _apply_sync(
+        self, color: RGB, brightness: int, duration_ms: int, kelvin: int | None
+    ) -> None:
         bulb = self._ensure_bulb()
         # Yeelight의 전환 시간 하한이 30ms다. 그 아래는 무시되거나 거부된다.
         duration = max(30, duration_ms)
@@ -51,14 +53,25 @@ class YeelightDriver(LightDriver):
             bulb.turn_off(duration=duration)  # type: ignore[attr-defined]
             return
 
-        red, green, blue = color
         bulb.turn_on(duration=duration)  # type: ignore[attr-defined]
-        bulb.set_rgb(red, green, blue, duration=duration)  # type: ignore[attr-defined]
+        if kelvin is not None:
+            # 흰색 계열. 전용 백색 LED를 쓴다 — RGB 혼색보다 개체 편차가 작다.
+            temp = max(KELVIN_MIN, min(KELVIN_MAX, kelvin))
+            bulb.set_color_temp(temp, duration=duration)  # type: ignore[attr-defined]
+        else:
+            red, green, blue = color
+            bulb.set_rgb(red, green, blue, duration=duration)  # type: ignore[attr-defined]
         # set_brightness는 1~100만 받는다.
         bulb.set_brightness(max(1, min(100, brightness)), duration=duration)  # type: ignore[attr-defined]
 
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
-        await asyncio.to_thread(self._apply_sync, color, brightness, duration_ms)
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
+        await asyncio.to_thread(self._apply_sync, color, brightness, duration_ms, kelvin)
 
     async def close(self) -> None:
         bulb = self._bulb

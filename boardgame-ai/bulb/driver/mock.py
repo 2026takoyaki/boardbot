@@ -18,12 +18,25 @@ class MockDriver(LightDriver):
 
     def __init__(self) -> None:
         self.applied: list[tuple[RGB, int, int]] = []
+        # 색온도까지 본 기록. applied는 기존 단언들이 그대로 쓰도록 건드리지 않는다.
+        self.calls: list[tuple[RGB, int, int, int | None]] = []
         self.closed = False
 
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
         self.applied.append((color, brightness, duration_ms))
+        self.calls.append((color, brightness, duration_ms, kelvin))
         logger.debug(
-            "light mock: rgb=%s brightness=%d duration=%dms", color, brightness, duration_ms
+            "light mock: rgb=%s brightness=%d duration=%dms kelvin=%s",
+            color,
+            brightness,
+            duration_ms,
+            kelvin,
         )
 
     async def close(self) -> None:

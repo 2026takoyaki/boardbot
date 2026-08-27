@@ -58,7 +58,10 @@ class LightController:
         self._phase: str | None = None
         # 마지막으로 전구에 실제로 보낸 값. 같은 값이면 다시 보내지 않는다
         # (Yeelight 분당 명령 수 제한 회피).
-        self._last_applied: tuple[RGB, int] | None = None
+        #
+        # 색온도까지 키에 넣는다. RGB만 보면 같은 색을 RGB로 낼 때와 색온도로 낼
+        # 때가 구분되지 않아, 전달 방식만 바뀐 전환이 중복 제거에 삼켜진다.
+        self._last_applied: tuple[RGB, int, int | None] | None = None
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._cue_task: asyncio.Task[None] | None = None
@@ -122,7 +125,7 @@ class LightController:
     # ── 연출 실행 ────────────────────────────────────────────────────────────
 
     async def _apply_scene(self, scene: Scene, game: str | None) -> None:
-        await self._drive(scene.color, scene.brightness, scene.transition_ms, game)
+        await self._drive(scene.color, scene.brightness, scene.transition_ms, game, scene.kelvin)
 
     async def _play_cue(self, cue: Cue, game: str | None) -> None:
         """터뜨리고 반드시 Scene으로 돌아온다.
@@ -131,12 +134,14 @@ class LightController:
         그쪽이 곧바로 조명을 다시 몰기 때문에 어중간한 색으로 멈추지 않는다.
         세션이 끊겨 아무것도 뒤따르지 않는 경우는 reset()이 중립으로 되돌린다.
         """
-        await self._drive(cue.color, cue.brightness, cue.rise_ms, game)
+        await self._drive(cue.color, cue.brightness, cue.rise_ms, game, cue.kelvin)
         # rise는 전구가 알아서 페이드하는 시간이라 우리가 기다려줘야 한다. 안
         # 기다리면 색이 다 오르기도 전에 복귀가 시작돼 total_ms가 실제 복귀
         # 시점보다 길게 잡히고, §2.4 불변식이 근거를 잃는다.
         await asyncio.sleep((cue.rise_ms + cue.hold_ms) / 1000)
-        await self._drive(self._scene.color, self._scene.brightness, cue.fall_ms, game)
+        await self._drive(
+            self._scene.color, self._scene.brightness, cue.fall_ms, game, self._scene.kelvin
+        )
 
     async def _drive(
         self,
@@ -144,15 +149,16 @@ class LightController:
         brightness: int,
         duration_ms: int,
         game: str | None,
+        kelvin: int | None = None,
     ) -> None:
         level = self._clamp(brightness, game)
-        target = (color, level)
+        target = (color, level, kelvin)
         if target == self._last_applied:
             return
         self._last_applied = target
         try:
             await asyncio.wait_for(
-                self._driver.apply(color, level, max(0, duration_ms)),
+                self._driver.apply(color, level, max(0, duration_ms), kelvin),
                 timeout=self._config.command_timeout_s,
             )
         except asyncio.CancelledError:
@@ -240,7 +246,11 @@ class LightController:
         self._scene = NEUTRAL_SCENE
         self._last_applied = None
         await self._drive(
-            NEUTRAL_SCENE.color, NEUTRAL_SCENE.brightness, NEUTRAL_SCENE.transition_ms, None
+            NEUTRAL_SCENE.color,
+            NEUTRAL_SCENE.brightness,
+            NEUTRAL_SCENE.transition_ms,
+            None,
+            NEUTRAL_SCENE.kelvin,
         )
 
     async def aclose(self) -> None:

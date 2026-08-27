@@ -31,6 +31,7 @@ class Scene:
     color: RGB
     brightness: int
     transition_ms: int = 1200
+    kelvin: int | None = None  # 흰색 계열이면 색온도로 낸다. 아래 §색온도 참고.
 
     @property
     def is_blackout(self) -> bool:
@@ -52,6 +53,7 @@ class Cue:
     rise_ms: int
     hold_ms: int
     fall_ms: int
+    kelvin: int | None = None  # 흰색 계열이면 색온도로 낸다. 아래 §색온도 참고.
 
     @property
     def total_ms(self) -> int:
@@ -68,6 +70,28 @@ class Cue:
         return self.total_ms <= duration_ms
 
 
+# ── 색온도 ───────────────────────────────────────────────────────────────────
+#
+# 흰색에 가까운 색은 RGB가 아니라 색온도로 낸다.
+#
+# 컬러 전구는 빨강·초록·파랑 다이를 섞어 흰색을 만드는데, 다이별 광량 편차가
+# 개체마다 다르다. 채도가 낮을수록 그 편차가 그대로 드러난다 — 전구 2개에 같은
+# (255,225,190)을 보냈더니 한쪽은 분홍, 한쪽은 연두로 보였다 (실측). 채도가 높은
+# 색은 다이 하나가 지배해서 편차가 잘 안 보이므로 그대로 RGB로 둔다.
+#
+# 색온도 모드는 전용 백색 LED를 쓴다. 개체 편차가 훨씬 작고, 더 밝고, 연색성이
+# 좋다. 실물 지원 범위는 1700~6500K다 (bulb/driver/base.py).
+#
+# color 값은 지우지 않는다. 그게 여전히 "의도한 색"이고, 화면에 조명을 그리는
+# 프론트엔드 드라이버는 색온도를 그릴 방법이 없어 이 값을 쓴다.
+
+# 요트 주사위 인식 조명의 색온도.
+#
+# ⚠️ 이 값은 곧 카메라가 보는 광원이다. 바꾸면 인식률이 달라질 수 있으므로
+# benchmarks/recognition_rate.py 로 확인하고 조정해야 한다. RGB 혼색 백색보다
+# 밝고 색이 고르므로 인식에 불리할 이유는 없지만, 검증 없이 믿을 값도 아니다.
+NEUTRAL_KELVIN = 4000
+
 # 어디서 쓰든 안전한 바탕. 인식이 필요한 구간(요트 전 구간, 로비 좌석 등록)의
 # 기본값이자, 매핑에 없는 페이즈를 만났을 때의 폴백이다.
 NEUTRAL_SCENE = Scene(
@@ -75,6 +99,7 @@ NEUTRAL_SCENE = Scene(
     color=NEUTRAL_WHITE,
     brightness=100,
     transition_ms=800,
+    kelvin=NEUTRAL_KELVIN,
 )
 
 # 완전한 어둠. 늑대인간 "밤이 되었습니다" 구간처럼 비전이 유휴일 때만 쓴다.
@@ -122,6 +147,17 @@ YACHT_UPSET_COOL: RGB = (196, 226, 255)
 # 0점은 색을 거의 빼서 김이 빠지게. 밝기는 못 낮추므로 온도만 식힌다.
 YACHT_DEFLATE_GRAY: RGB = (214, 224, 238)
 
+# 위 요트 틴트들의 색온도. 애초에 "색을 갈아엎지 않고 온도만 바꾼다"가 설계
+# 의도였으므로 색온도 모드가 그 의도를 그대로 실현한다 — RGB 근사보다 정확하다.
+# 6500K는 전구 상한이다. 그 위를 보내도 전구가 6500으로 걷어낸다.
+YACHT_SWEEP_KELVIN = 2900
+YACHT_BURST_KELVIN = 2600
+YACHT_UPSET_KELVIN = 6500
+YACHT_DEFLATE_KELVIN = 5500
+
+# 늑대인간 새벽. 밤의 원색들 사이에서 유일하게 흰색에 가까워 색온도로 낸다.
+DAWN_KELVIN = 3000
+
 
 def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
     """늑대인간 페이즈 → Scene.
@@ -147,14 +183,14 @@ def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
         WerewolfPhase.NIGHT_SEER.value: Scene("ww_seer", INFO_INDIGO, night, 1200),
         WerewolfPhase.NIGHT_INSOMNIAC.value: Scene("ww_insomniac", INFO_INDIGO, night, 1200),
         WerewolfPhase.NIGHT_ROBBER.value: Scene("ww_robber", TRICK_AMBER, night, 1200),
-        WerewolfPhase.NIGHT_TROUBLEMAKER.value: Scene(
-            "ww_troublemaker", TRICK_AMBER, night, 1200
-        ),
+        WerewolfPhase.NIGHT_TROUBLEMAKER.value: Scene("ww_troublemaker", TRICK_AMBER, night, 1200),
         WerewolfPhase.NIGHT_DRUNK.value: Scene("ww_drunk", TRICK_AMBER, night, 1200),
         # ★ 이 게임의 감정적 클라이막스. 어둠에서 따뜻한 빛이 2.5초에 걸쳐
         # 차오르며 TTS가 얹힌다. 프론트 PhaseTransition의 dawn 타입
         # (duration 2500, midAt 300)과 타이밍을 맞춘다.
-        WerewolfPhase.DAY_DISCUSSION.value: Scene("ww_dawn", DAWN_WARM, 100, 2500),
+        WerewolfPhase.DAY_DISCUSSION.value: Scene(
+            "ww_dawn", DAWN_WARM, 100, 2500, kelvin=DAWN_KELVIN
+        ),
         WerewolfPhase.VOTE_COUNTDOWN.value: Scene("ww_countdown", TENSION_RED, 60, 2000),
         WerewolfPhase.VOTE.value: Scene("ww_vote", VILLAIN_RED, 55, 1000),
         # 시스템은 역할을 모르므로 승리팀 색 분기가 없다. 투표 결과를 발표하고
@@ -196,20 +232,44 @@ YACHT_SCENES: dict[str, Scene] = {
 YACHT_CUES: dict[str, Cue] = {
     # 대부분의 턴이 여기로 온다. 모달 없이 화면 안에서만 처리되므로 조명도 짧다.
     "yacht_turn_transition": Cue(
-        "turn_sweep", YACHT_SWEEP_WARM, brightness=100, rise_ms=300, hold_ms=600, fall_ms=500
+        "turn_sweep",
+        YACHT_SWEEP_WARM,
+        brightness=100,
+        rise_ms=300,
+        hold_ms=600,
+        fall_ms=500,
+        kelvin=YACHT_SWEEP_KELVIN,
     ),
     # 야찌·라지스트레이트 확정. 주사위가 멈춘 순간에 화면이 이미 크게 축하했으므로
     # (yacht_hand_achieved — 조명은 관여하지 않는다) 여기서는 짧게 못 박아준다.
     "yacht_turn_transition_highlight": Cue(
-        "score_burst", YACHT_BURST_GOLD, brightness=100, rise_ms=250, hold_ms=700, fall_ms=600
+        "score_burst",
+        YACHT_BURST_GOLD,
+        brightness=100,
+        rise_ms=250,
+        hold_ms=700,
+        fall_ms=600,
+        kelvin=YACHT_BURST_KELVIN,
     ),
     # 후반 선두 역전.
     "yacht_turn_transition_lead_change": Cue(
-        "upset_flash", YACHT_UPSET_COOL, brightness=100, rise_ms=350, hold_ms=1300, fall_ms=700
+        "upset_flash",
+        YACHT_UPSET_COOL,
+        brightness=100,
+        rise_ms=350,
+        hold_ms=1300,
+        fall_ms=700,
+        kelvin=YACHT_UPSET_KELVIN,
     ),
     # 족보를 0점으로 버렸을 때. 축하가 아니므로 짧게 끝낸다.
     "yacht_turn_transition_zero": Cue(
-        "deflate", YACHT_DEFLATE_GRAY, brightness=100, rise_ms=250, hold_ms=600, fall_ms=400
+        "deflate",
+        YACHT_DEFLATE_GRAY,
+        brightness=100,
+        rise_ms=250,
+        hold_ms=600,
+        fall_ms=400,
+        kelvin=YACHT_DEFLATE_KELVIN,
     ),
     # 게임이 끝났으니 더 굴릴 주사위가 없다. 여기서만 원색을 쓴다.
     "yacht_game_finish": Cue(

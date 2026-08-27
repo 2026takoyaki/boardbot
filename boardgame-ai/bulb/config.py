@@ -54,11 +54,23 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_ips(name: str) -> tuple[str, ...]:
+    """쉼표로 나눈 IP 목록. 전구 1개면 값 하나만 적으면 된다.
+
+    빈 항목은 버린다 — 끝에 쉼표가 붙거나 값이 통째로 비어 있어도 빈 IP로
+    드라이버를 만들지 않는다.
+    """
+    raw = os.environ.get(name, "")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 @dataclass(frozen=True)
 class LightConfig:
     enabled: bool = True
     driver: str = "mock"
-    bulb_ip: str | None = None
+    # 전구는 여러 개일 수 있다. 1개로는 테이블이 충분히 밝지 않아 실제 시연은
+    # 2개를 쓴다. 전부 같은 색·같은 밝기로 함께 움직인다 (bulb/driver/multi.py).
+    bulb_ips: tuple[str, ...] = ()
     # 명령 하나가 이 시간을 넘기면 포기한다. 전구 응답 없음이 게임을 끌면 안 된다.
     command_timeout_s: float = 1.5
     brightness_floor: dict[str, int] = field(default_factory=lambda: dict(_DEFAULT_FLOORS))
@@ -76,7 +88,9 @@ class LightConfig:
         return cls(
             enabled=_env_bool("LIGHT_ENABLED", True),
             driver=os.environ.get("LIGHT_DRIVER", "mock").strip().lower(),
-            bulb_ip=os.environ.get("LIGHT_BULB_IP") or None,
+            # LIGHT_BULB_IP=172.20.10.5           전구 1개
+            # LIGHT_BULB_IP=172.20.10.5,172.20.10.6   전구 2개
+            bulb_ips=_env_ips("LIGHT_BULB_IP"),
             command_timeout_s=_env_float("LIGHT_COMMAND_TIMEOUT", 1.5),
             brightness_floor=floors,
             fallback_floor=_env_int("LIGHT_FALLBACK_FLOOR", _FALLBACK_FLOOR),

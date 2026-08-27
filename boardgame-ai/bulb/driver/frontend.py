@@ -31,7 +31,15 @@ class FrontendDriver(LightDriver):
     def __init__(self, broadcast: BroadcastFn) -> None:
         self._broadcast = broadcast
 
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
+        # kelvin은 무시한다. 색온도는 전구의 백색 LED를 쓰기 위한 전달 방법이고,
+        # 화면에는 그릴 방법이 없다. color가 항상 의도한 색이므로 그것만 보낸다.
         result = self._broadcast(
             {
                 "msg_type": "light_state",

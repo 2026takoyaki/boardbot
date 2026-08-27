@@ -1,7 +1,12 @@
-"""전구 현장 점검. 시연 전 30초 안에 끝난다.
+"""전구 현장 점검. 시연 전 1분 안에 끝난다.
 
-    python -m tools.light_check                  # 환경변수의 IP 사용
-    python -m tools.light_check 172.20.10.5      # IP 직접 지정
+    python -m tools.light_check                          # 환경변수의 IP 사용
+    python -m tools.light_check 172.20.10.5              # 전구 1개
+    python -m tools.light_check 172.20.10.5 172.20.10.6  # 전구 2개
+
+전구가 여러 개면 먼저 하나씩 켜서 **어느 것이 안 붙는지** 알려주고, 그다음
+전부 함께 연출 시퀀스를 돌린다. 실제 운영과 같은 경로(MultiDriver)를 쓰므로
+여기서 통과하면 서버에서도 같게 움직인다.
 
 IP를 모르면 (SSDP가 폰 핫스팟에서 동작한다는 보장이 없다):
 
@@ -19,11 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 
 from bulb.config import LightConfig
 from bulb.driver.base import LightDriver
+from bulb.driver.multi import MultiDriver
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -37,15 +42,56 @@ _SEQUENCE: list[tuple[str, tuple[int, int, int], int, int]] = [
 ]
 
 
-async def _run(ip: str) -> int:
+def _make_driver(ip: str) -> LightDriver:
+    from bulb.driver.yeelight import YeelightDriver
+
+    return YeelightDriver(ip)
+
+
+async def _probe(ips: list[str]) -> list[str]:
+    """하나씩 켜서 닿는 전구만 남긴다. 어느 것이 죽었는지 이름을 말해준다."""
+    if len(ips) == 1:
+        return ips
+
+    print("전구별 연결 확인")
+    alive: list[str] = []
+    for ip in ips:
+        print(f"  {ip} …", end=" ", flush=True)
+        driver = _make_driver(ip)
+        try:
+            await asyncio.wait_for(driver.apply((255, 255, 255), 100, 300), timeout=5.0)
+        except TimeoutError:
+            print("타임아웃 — LAN 제어와 2.4GHz 연결을 확인하라")
+        except Exception as exc:
+            print(f"실패: {exc}")
+        else:
+            print("OK")
+            alive.append(ip)
+        finally:
+            await driver.close()
+    print()
+    return alive
+
+
+async def _run(ips: list[str]) -> int:
     try:
-        from bulb.driver.yeelight import YeelightDriver
+        _make_driver(ips[0])
     except ImportError:
         print("python-yeelight 미설치.  pip install yeelight")
         return 1
 
-    driver: LightDriver = YeelightDriver(ip)
-    print(f"전구 {ip} 점검 시작\n")
+    alive = await _probe(ips)
+    if not alive:
+        print("연결된 전구가 없다. LAN 제어 활성화와 2.4GHz 연결을 확인하라.")
+        return 1
+    if len(alive) < len(ips):
+        dead = [ip for ip in ips if ip not in alive]
+        print(f"경고: {', '.join(dead)} 를 빼고 진행한다.\n")
+
+    # 운영과 같은 경로. 전구 1개면 드라이버 하나, 여러 개면 MultiDriver.
+    bulbs = [_make_driver(ip) for ip in alive]
+    driver: LightDriver = bulbs[0] if len(bulbs) == 1 else MultiDriver(bulbs)
+    print(f"연출 시퀀스 — 전구 {len(alive)}개 동시 제어\n")
 
     failures = 0
     for label, color, brightness, duration in _SEQUENCE:
@@ -69,18 +115,22 @@ async def _run(ip: str) -> int:
     if failures:
         print(f"\n{failures}개 실패. LAN 제어 활성화와 2.4GHz 연결을 확인하라.")
         return 1
-    print("\n전부 통과. 조명 사용 가능.")
+
+    print(f"\n전부 통과. 조명 사용 가능 (전구 {len(alive)}개).")
+    if len(alive) > 1:
+        # 전구가 늘면 같은 밝기 값이 실제로는 더 밝다. 늑대인간 밤이 충분히
+        # 어두웠는지는 위 시퀀스를 눈으로 보고 판단해야 한다.
+        print("밤이 너무 밝았다면 LIGHT_NIGHT_BRIGHTNESS 를 낮춰서 다시 확인하라.")
     return 0
 
 
 def main() -> int:
-    ip = sys.argv[1] if len(sys.argv) > 1 else (LightConfig.from_env().bulb_ip or "")
-    if not ip:
+    ips = sys.argv[1:] or list(LightConfig.from_env().bulb_ips)
+    if not ips:
         print(__doc__)
         print("IP를 인자로 주거나 LIGHT_BULB_IP 환경변수를 설정하라.")
         return 2
-    os.environ.setdefault("LIGHT_BULB_IP", ip)
-    return asyncio.run(_run(ip))
+    return asyncio.run(_run(ips))
 
 
 if __name__ == "__main__":
