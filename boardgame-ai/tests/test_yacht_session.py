@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
+from audio.manager import AudioManager
+from audio.tts_engine import TTSEngine
 from backend.yacht_session import YachtSession
 from core.events import GameEvent
 from games.yacht import YachtEventType
@@ -17,6 +22,14 @@ class FakeWebSocket:
 
 def _latest_state(ws: FakeWebSocket) -> dict:
     return [msg for msg in ws.sent if msg["msg_type"] == "state_update"][-1]["payload"]
+
+
+def _make_audio_manager() -> AudioManager:
+    engine = MagicMock(spec=TTSEngine)
+    engine.cache_hit = MagicMock(return_value=Path("/cache/tts/static/fake.wav"))
+    engine.synthesize = AsyncMock(return_value=Path("/cache/tts/static/fake.wav"))
+    engine.is_available = MagicMock(return_value=True)
+    return AudioManager(engine)
 
 
 @pytest.mark.anyio
@@ -250,3 +263,26 @@ async def test_화면_상태줄이_narration에서_렌더된다():
     rolled = _latest_state(ws)
     assert rolled["narration"]["line_id"] == "yacht.roll_partial"
     assert rolled["last_message"] == "기회 두 번 남았습니다. 다시 굴리거나 점수 칸을 선택해주세요."
+
+
+@pytest.mark.anyio
+async def test_나가기는_재생_중이거나_대기_중인_안내를_끊는다():
+    """로비도 같은 웹소켓을 계속 쓰므로, exitGame()이 보내는 BGM_STOP이
+    TTS까지 같이 끊지 않으면 로비 화면 위로 게임 멘트가 이어서 흘러나온다."""
+    ws = FakeWebSocket()
+    audio_manager = _make_audio_manager()
+    session = YachtSession(ws, audio_manager=audio_manager)
+
+    # 첫 항목은 큐가 비어 있어 곧바로 재생 중(_current)이 된다.
+    await audio_manager.enqueue_tts("지금 재생 중인 안내.")
+    # 두 번째는 뒤에서 대기한다.
+    await audio_manager.enqueue_tts("큐에서 대기 중인 다음 안내.")
+    assert audio_manager._current is not None
+    assert audio_manager._queue
+
+    await session.handle_client_message({"input_type": "BGM_STOP", "data": {}})
+
+    assert audio_manager._current is None, "재생 중이던 안내가 끊기지 않았다"
+    assert not audio_manager._queue, "대기 중이던 안내가 큐에 남아 로비까지 흘러간다"
+    kinds = [m["msg_type"] for m in ws.sent]
+    assert "tts_interrupt" in kinds, "프론트에 인터럽트 신호가 가지 않았다"

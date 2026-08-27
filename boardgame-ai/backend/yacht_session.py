@@ -155,7 +155,11 @@ class YachtSession:
             return
 
         if input_type == "BGM_STOP":
+            # 프론트에서 이 메시지의 유일한 발신처는 게임 나가기(exitGame)다.
+            # 로비도 같은 웹소켓을 계속 쓰므로, 재생 중이거나 대기 중인 안내를
+            # 같이 끊지 않으면 로비 화면 위로 게임 멘트가 이어서 흘러나온다.
             if self._audio_manager is not None:
+                await self._audio_manager.interrupt_interruptible("game_exit")
                 await self._audio_manager.stop_bgm()
             return
 
