@@ -68,13 +68,22 @@ def test_흰색에_가까운_씬은_색온도를_가진다() -> None:
     assert not missing, f"흰색에 가까운데 RGB로 나가는 씬: {missing}"
 
 
-def test_흰색에_가까운_큐는_색온도를_가진다() -> None:
-    missing = [
-        f"{name} {cue.color}"
-        for name, cue in YACHT_CUES.items()
-        if _saturation(cue.color) < _WHITEISH_SATURATION and cue.kelvin is None
-    ]
-    assert not missing, f"흰색에 가까운데 RGB로 나가는 큐: {missing}"
+def test_흰색에_가까운_큐는_색온도를_쓰되_중립에_막히면_예외다() -> None:
+    """큐의 기준은 "흰색인가"가 아니라 "중립과 구분되는가"다.
+
+    중립이 전구 상한(6500K)에 있으면 그보다 서늘한 색온도가 없다. 그 경우
+    RGB로 내는 것이 유일한 방법이고, 모드가 다르므로 출력은 확실히 갈린다.
+    """
+    neutral = NEUTRAL_SCENE.kelvin
+    assert neutral is not None
+    bad = []
+    for name, cue in YACHT_CUES.items():
+        if _saturation(cue.color) >= _WHITEISH_SATURATION or cue.kelvin is not None:
+            continue
+        # 색온도를 안 쓰는 흰색 계열 큐는 상한에 막힌 경우만 허용한다.
+        if neutral < KELVIN_MAX:
+            bad.append(f"{name} {cue.color} — 중립이 {neutral}K라 색온도로 낼 여지가 있다")
+    assert not bad, bad
 
 
 def test_채도가_높은_색은_RGB로_둔다() -> None:
