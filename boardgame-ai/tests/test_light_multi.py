@@ -21,7 +21,13 @@ class _FailingDriver(LightDriver):
     def __init__(self) -> None:
         self.closed = False
 
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
         raise OSError("전구 응답 없음")
 
     async def close(self) -> None:
@@ -35,9 +41,15 @@ class _SlowDriver(MockDriver):
         super().__init__()
         self._delay = delay
 
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
         await asyncio.sleep(self._delay)
-        await super().apply(color, brightness, duration_ms)
+        await super().apply(color, brightness, duration_ms, kelvin)
 
 
 @pytest.mark.asyncio
@@ -48,6 +60,17 @@ async def test_같은_명령이_모든_전구에_간다() -> None:
 
     assert a.applied == [(WARM, 100, 2500)]
     assert b.applied == [(WARM, 100, 2500)]
+
+
+@pytest.mark.asyncio
+async def test_색온도도_모든_전구에_같이_간다() -> None:
+    """한 전구만 RGB로 내면 두 전구 색이 갈린다 — 애초의 증상이 그대로 재현된다."""
+    a, b = MockDriver(), MockDriver()
+
+    await MultiDriver([a, b]).apply(WARM, 100, 2500, 3000)
+
+    assert a.calls == [(WARM, 100, 2500, 3000)]
+    assert b.calls == [(WARM, 100, 2500, 3000)]
 
 
 @pytest.mark.asyncio

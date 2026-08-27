@@ -33,9 +33,15 @@ class MultiDriver(LightDriver):
     def __len__(self) -> int:
         return len(self._drivers)
 
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
         results = await asyncio.gather(
-            *(d.apply(color, brightness, duration_ms) for d in self._drivers),
+            *(d.apply(color, brightness, duration_ms, kelvin) for d in self._drivers),
             return_exceptions=True,
         )
 

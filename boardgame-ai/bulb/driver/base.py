@@ -14,6 +14,11 @@ RGB = tuple[int, int, int]
 BRIGHTNESS_OFF = 0
 BRIGHTNESS_MAX = 100
 
+# 실물 전구(Yeelight color / color4)에서 측정한 색온도 지원 범위.
+# 범위 밖 값은 전구가 조용히 걷어낸다 — 7000K를 보내면 6500K가 적용된다.
+KELVIN_MIN = 1700
+KELVIN_MAX = 6500
+
 
 class LightDriver(ABC):
     """전구 한 개를 제어하는 최소 인터페이스.
@@ -23,11 +28,23 @@ class LightDriver(ABC):
     """
 
     @abstractmethod
-    async def apply(self, color: RGB, brightness: int, duration_ms: int) -> None:
+    async def apply(
+        self,
+        color: RGB,
+        brightness: int,
+        duration_ms: int,
+        kelvin: int | None = None,
+    ) -> None:
         """색·밝기를 duration_ms에 걸쳐 부드럽게 전환.
 
         Args:
-            color: RGB 각 0~255.
+            color: RGB 각 0~255. **이 색이 항상 의도다.** kelvin이 붙어도
+                사라지지 않는다 — 화면에 조명을 그리는 드라이버는 이 값을 쓴다.
+            kelvin: 흰색에 가까운 색을 낼 때의 색온도. 실물 전구는 RGB 세 다이를
+                섞어 흰색을 만드는데, 다이별 광량 편차가 그대로 드러나 전구마다
+                색이 갈린다 (실측: 같은 (255,225,190)을 받고 한쪽은 분홍, 한쪽은
+                연두로 보였다). 색온도 모드는 전용 백색 LED를 쓰므로 개체 편차가
+                훨씬 작고 더 밝다. None이면 color를 그대로 RGB로 낸다.
             brightness: 0~100. **0은 완전 소등이다.**
                 늑대인간 밤 연출은 완전한 어둠에서 시작하므로 드라이버가
                 소등을 막아서는 안 된다. 반대로 요트는 이 전구가 곧 인식
