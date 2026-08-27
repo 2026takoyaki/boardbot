@@ -73,15 +73,7 @@ PERSONAS: dict[str, Persona] = {
         id="basic",
         display_name="기본 진행자",
         description="특색 없는 표준 진행자. 규칙과 상황만 또박또박 전달합니다.",
-        # Typecast 'MC TypeCast'. 이름 그대로 진행자용으로 만들어진 목소리라
-        # 골랐는데, **아직 실제로 들어보지 못했다** — 고르던 시점에 계정
-        # 크레딧이 비어 합성이 되지 않았다. 크레딧이 차면
-        #     python tools/tts_preview.py basic --roles
-        # 로 들어보고, 아니다 싶으면 아래 후보로 바꾼다(이 한 줄만 고치면 된다).
-        #     MC Kong            tc_623145ec8d2f689cc9bad6d5   예능형 MC
-        #     Anchor Hwa         tc_5feb213228b7247f8c8eb6d9   또박또박한 앵커
-        #     Classic Narrator   tc_603fa172a669dfd23f450abd   차분한 내레이션
-        voice_name="tc_603514551860484c4dcb6acd",
+        voice_name="tc_677628030c63239147ab40c6",
         # 캐릭터가 없다는 것은 밋밋하다는 뜻이 아니다. 진행자는 상황에 따라
         # 속도가 변하고, 그 변화만으로도 화면이 살아 있는 것으로 들린다.
         base=Delivery(speaking_rate=1.05),
