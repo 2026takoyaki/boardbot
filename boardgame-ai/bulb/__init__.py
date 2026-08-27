@@ -17,6 +17,7 @@ from bulb.controller import LightController
 from bulb.driver.base import LightDriver
 from bulb.driver.frontend import BroadcastFn, FrontendDriver
 from bulb.driver.mock import MockDriver
+from bulb.driver.multi import MultiDriver
 from bulb.scenes import (
     BLACKOUT_SCENE,
     NEUTRAL_SCENE,
@@ -35,6 +36,7 @@ __all__ = [
     "LightConfig",
     "LightController",
     "LightDriver",
+    "MultiDriver",
     "Scene",
     "build_controller",
     "build_driver",
@@ -46,17 +48,21 @@ def build_driver(config: LightConfig, broadcast: BroadcastFn | None = None) -> L
 
     전구 연결 실패가 서버 부팅을 막아서는 안 된다. yeelight → frontend → mock
     순으로 폴백하므로 어떤 환경에서도 컨트롤러는 만들어진다.
+
+    IP가 여러 개면 MultiDriver로 묶는다. 위쪽(LightController)에서 보면 전구가
+    1개일 때와 완전히 같으므로 연출 코드는 개수를 몰라도 된다.
     """
     name = config.driver
 
     if name == "yeelight":
-        if not config.bulb_ip:
+        if not config.bulb_ips:
             logger.warning("light: LIGHT_BULB_IP가 없어 yeelight 드라이버를 쓸 수 없다.")
         else:
             try:
                 from bulb.driver.yeelight import YeelightDriver
 
-                return YeelightDriver(config.bulb_ip)
+                bulbs = [YeelightDriver(ip) for ip in config.bulb_ips]
+                return bulbs[0] if len(bulbs) == 1 else MultiDriver(bulbs)
             except ImportError:
                 logger.warning("light: python-yeelight 미설치. 폴백한다.")
 
@@ -76,8 +82,9 @@ def build_controller(
     resolved = config if config is not None else LightConfig.from_env()
     driver = build_driver(resolved, broadcast)
     logger.info(
-        "light: %s 드라이버로 시작 (enabled=%s, 밤 밝기=%d)",
+        "light: %s 드라이버로 시작 (전구 %d개, enabled=%s, 밤 밝기=%d)",
         type(driver).__name__,
+        len(resolved.bulb_ips) or 1,
         resolved.enabled,
         resolved.night_brightness,
     )
