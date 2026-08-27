@@ -26,16 +26,25 @@ _CROP_PAD_RATIO = 0.05
 
 @dataclass
 class DotCounterParams:
-    """튜닝 도구에서 조정 가능한 파라미터."""
+    """튜닝 도구에서 조정 가능한 파라미터.
+
+    기본값은 실제 시연 조명(6500K, 밝기 100, 전구 2개)에서 tools/tune_dot_counter.py
+    로 맞춘 값이다. 주사위 5개가 전부 확정되고 원본 일치율이 90% 안팎으로 유지되는
+    지점이다. 조명을 바꾸면 이 값도 다시 맞춰야 한다.
+    """
 
     dp: float = 0.6
     min_dist_ratio: float = 0.06
-    canny_upper: int = 110
-    accum_thresh: int = 8
+    # 이전 110. 경계 문턱을 올려 주사위 표면의 미세한 얼룩이 원으로 잡히지 않게 한다.
+    canny_upper: int = 120
+    # 이전 8. 누산 문턱을 두 배로 올린 것이 깜빡임을 잡은 결정적 변경이다 —
+    # 낮으면 눈이 아닌 곳에서도 원이 성립해 프레임마다 다른 개수가 나온다.
+    accum_thresh: int = 16
     radius_min_ratio: float = 0.05
     radius_max_ratio: float = 0.09
-    # CLAHE
-    clahe_clip: float = 2.1
+    # CLAHE. 이전 2.1. 대비를 과하게 끌어올리면 밝은 조명에서 표면 노이즈까지
+    # 함께 살아나 원 후보가 늘어난다.
+    clahe_clip: float = 1.5
     clahe_grid: int = 4
     # Blob
     blob_min_area_ratio: float = 0.003

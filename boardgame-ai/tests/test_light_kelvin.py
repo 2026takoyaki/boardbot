@@ -68,13 +68,22 @@ def test_흰색에_가까운_씬은_색온도를_가진다() -> None:
     assert not missing, f"흰색에 가까운데 RGB로 나가는 씬: {missing}"
 
 
-def test_흰색에_가까운_큐는_색온도를_가진다() -> None:
-    missing = [
-        f"{name} {cue.color}"
-        for name, cue in YACHT_CUES.items()
-        if _saturation(cue.color) < _WHITEISH_SATURATION and cue.kelvin is None
-    ]
-    assert not missing, f"흰색에 가까운데 RGB로 나가는 큐: {missing}"
+def test_흰색에_가까운_큐는_색온도를_쓰되_중립에_막히면_예외다() -> None:
+    """큐의 기준은 "흰색인가"가 아니라 "중립과 구분되는가"다.
+
+    중립이 전구 상한(6500K)에 있으면 그보다 서늘한 색온도가 없다. 그 경우
+    RGB로 내는 것이 유일한 방법이고, 모드가 다르므로 출력은 확실히 갈린다.
+    """
+    neutral = NEUTRAL_SCENE.kelvin
+    assert neutral is not None
+    bad = []
+    for name, cue in YACHT_CUES.items():
+        if _saturation(cue.color) >= _WHITEISH_SATURATION or cue.kelvin is not None:
+            continue
+        # 색온도를 안 쓰는 흰색 계열 큐는 상한에 막힌 경우만 허용한다.
+        if neutral < KELVIN_MAX:
+            bad.append(f"{name} {cue.color} — 중립이 {neutral}K라 색온도로 낼 여지가 있다")
+    assert not bad, bad
 
 
 def test_채도가_높은_색은_RGB로_둔다() -> None:
@@ -102,6 +111,40 @@ def test_색온도가_전구_지원_범위_안이다() -> None:
 def test_주사위_인식_조명은_색온도로_나간다() -> None:
     """요트 전 구간과 로비의 바탕. RGB 혼색 백색보다 밝고 색이 고르다."""
     assert NEUTRAL_SCENE.kelvin is not None
+
+
+# 중립과 이만큼은 떨어져야 눈에 보인다. 색온도가 붙은 명령은 RGB를 무시하므로
+# 이보다 가까우면 color를 아무리 다르게 적어도 전구 출력이 같아진다.
+_MIN_KELVIN_GAP = 800
+
+
+def test_큐가_중립과_구분된다() -> None:
+    """중립에 붙은 큐는 전구에서 안 보인다.
+
+    NEUTRAL_KELVIN을 인식률 때문에 백색 쪽으로 올리면 upset·deflate처럼 원래
+    서늘했던 큐가 중립에 흡수된다. color 값이 달라 중복 제거는 통과하므로
+    로그에는 정상으로 찍히고, 전구만 아무 일도 하지 않는다.
+    """
+    neutral = NEUTRAL_SCENE.kelvin
+    assert neutral is not None
+    too_close = [
+        f"{name} {cue.kelvin}K (중립 {neutral}K와 {abs(cue.kelvin - neutral)}K 차이)"
+        for name, cue in YACHT_CUES.items()
+        if cue.kelvin is not None and abs(cue.kelvin - neutral) < _MIN_KELVIN_GAP
+    ]
+    assert not too_close, f"중립과 구분되지 않는 큐: {too_close}"
+
+
+def test_큐끼리도_서로_구분된다() -> None:
+    """연출의 종류가 다르면 전구에서도 달라야 한다."""
+    items = [(n, c.kelvin) for n, c in YACHT_CUES.items() if c.kelvin is not None]
+    collisions = [
+        f"{a}({ka}K) ↔ {b}({kb}K)"
+        for i, (a, ka) in enumerate(items)
+        for b, kb in items[i + 1 :]
+        if abs(ka - kb) < _MIN_KELVIN_GAP
+    ]
+    assert not collisions, f"서로 구분되지 않는 큐: {collisions}"
 
 
 # ── 전달 경로 ─────────────────────────────────────────────────────────────────
