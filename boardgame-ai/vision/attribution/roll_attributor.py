@@ -540,13 +540,9 @@ def _compute_change_score(
 
     절차:
       1) pip 분포(정렬된 multiset)가 다르면 → 바뀐 눈의 개수 비율을 점수로.
-      2) pip 분포가 같으면 → track_id가 매칭되는 dice의 위치 이동만 본다.
-         (눈은 같지만 위치가 크게 바뀐 "같은 눈 굴림" 일부를 살리는 보조 경로.
-          가렸다 치우기는 위치가 거의 그대로라 여기서도 0에 수렴.)
-
-    주의: 같은 눈이 그대로 나온 굴림(특히 4킵+1굴림)은 분포·위치 모두
-    구분 불가에 가까워 발화되지 않을 수 있다 — 이는 가렸다 치우기 오발화를
-    막기 위한 의도된 트레이드오프.
+      2) pip 분포가 같으면 → **좌표로 짝을 지어** 자리가 바뀐 주사위를 센다.
+         가렸다 치우기는 전부 제자리라 짝이 다 맞아 0, 같은 눈이 다시 나온
+         재굴림은 그 주사위만 짝지을 자리가 없어 이동으로 남는다.
     """
     if not current:
         return 0.0
@@ -565,26 +561,37 @@ def _compute_change_score(
         diff = _multiset_diff_count(prev_pips, cur_pips)
         return min(1.0, diff / denom)
 
-    # 2) pip 분포 동일 — track_id가 매칭되는 dice의 위치 이동만 본다.
-    #    매칭 안 되는(가림으로 재할당된) track_id는 "변화 없음"으로 취급:
-    #    위치 정보가 신뢰 불가라 변화로 카운트하지 않는다.
-    matched = 0
+    # 2) pip 분포 동일 — 자리가 바뀐 주사위를 센다.
+    #
+    #    track_id로 짝을 짓지 않는다. 굴림통에 넣었다 쏟은 주사위는 화면에서
+    #    사라졌다 나타나므로 ByteTrack이 새 track_id를 준다. 그 track_id를
+    #    "신뢰 불가"로 빼면, 4개를 킵하고 1개만 다시 굴려 같은 눈이 나왔을 때
+    #    남는 4개가 전부 제자리라 점수가 0이 되고 굴림이 통째로 사라진다.
+    #
+    #    대신 좌표로 1:1 짝을 짓는다. 가렸다 치우기는 모든 주사위가 제자리라
+    #    짝이 다 맞아 0점이고, 재굴림된 주사위만 짝지을 빈 자리가 없어 이동으로
+    #    남는다. track_id 재할당에 영향받지 않는 것이 이 방식의 핵심이다.
+    prev_centers = [center for center, _ in snapshot.items.values()]
+    taken = [False] * len(prev_centers)
     moved = 0
     for d in current:
-        prev = snapshot.items.get(d.track_id)
-        if prev is None:
-            continue
-        matched += 1
-        prev_center, _ = prev
-        size = min(d.bbox.w, d.bbox.h)
-        threshold = size * center_shift_ratio
-        dx = d.center[0] - prev_center[0]
-        dy = d.center[1] - prev_center[1]
-        if (dx * dx + dy * dy) ** 0.5 > threshold:
+        # 짝으로 인정할 최대 거리. 주사위가 그만큼도 안 움직였으면 제자리다.
+        limit = min(d.bbox.w, d.bbox.h) * center_shift_ratio
+        best: int | None = None
+        best_dist = limit
+        for i, prev_center in enumerate(prev_centers):
+            if taken[i]:
+                continue
+            dx = d.center[0] - prev_center[0]
+            dy = d.center[1] - prev_center[1]
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist <= best_dist:
+                best, best_dist = i, dist
+        if best is None:
             moved += 1
-    if matched == 0:
-        return 0.0
-    return moved / matched
+        else:
+            taken[best] = True
+    return moved / len(current)
 
 
 def _multiset_diff_count(a: list[int], b: list[int]) -> int:
