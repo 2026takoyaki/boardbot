@@ -20,7 +20,14 @@ from collections.abc import Mapping
 
 from bulb.config import LightConfig
 from bulb.driver.base import BRIGHTNESS_MAX, RGB, LightDriver
-from bulb.scenes import NEUTRAL_SCENE, Cue, Scene
+from bulb.scenes import (
+    NEUTRAL_SCENE,
+    NIGHT_DIP_DARK_MS,
+    NIGHT_DIP_FALL_MS,
+    NIGHT_DIP_RISE_MS,
+    Cue,
+    Scene,
+)
 from core.constants import MsgType
 from core.envelope import WSMessage
 
@@ -65,6 +72,10 @@ class LightController:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._cue_task: asyncio.Task[None] | None = None
+        # 진행 중인 Scene 적용. 어둠을 거쳐 들어가는 Scene은 적용에 2초 넘게
+        # 걸리므로(§밤 전환), 그 사이에 다음 페이즈가 오면 먼저 시작한 쪽이
+        # 뒤늦게 깨어나 새 색을 옛 색으로 덮어쓴다. 새 Scene이 오면 취소한다.
+        self._scene_task: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
 
     # ── 구독 진입점 ──────────────────────────────────────────────────────────
@@ -99,7 +110,8 @@ class LightController:
         self._phase = phase
         self._scene = self._resolve_scene(game, phase)
         self._cancel_cue()
-        self._spawn(self._apply_scene(self._scene, game))
+        self._cancel_scene()
+        self._scene_task = self._spawn(self._apply_scene(self._scene, game))
 
     def _on_cue(self, message: WSMessage, game: str | None) -> None:
         name = message.payload.get("cue")
@@ -125,7 +137,35 @@ class LightController:
     # ── 연출 실행 ────────────────────────────────────────────────────────────
 
     async def _apply_scene(self, scene: Scene, game: str | None) -> None:
+        if scene.enter_via_dark and not self._is_dark():
+            await self._enter_via_dark(scene, game)
+            return
         await self._drive(scene.color, scene.brightness, scene.transition_ms, game, scene.kelvin)
+
+    async def _enter_via_dark(self, scene: Scene, game: str | None) -> None:
+        """어둠을 한 번 거쳐 Scene으로 들어간다.
+
+        늑대인간 밤은 "눈을 감으세요 → 눈을 뜨세요"가 한 쌍이다. 색만 갈아끼우면
+        조명은 그 중 뒤쪽만 말한다. 소등을 거치면 앞쪽까지 조명이 말해준다.
+
+        이미 어두우면 그냥 올린다 — NIGHT_START(암전) 다음 역할처럼 방이 벌써
+        캄캄한 자리에서 한 번 더 끄면 아무 일도 안 일어난 것처럼 보인다.
+
+        소등 명령의 color/kelvin은 전구가 무시하지만(밝기 0은 소등이다) Scene의
+        값을 그대로 실어 보낸다. 화면에 조명을 그리는 프론트엔드 드라이버는 이
+        값으로 "무슨 색이 꺼져 있는가"를 그린다.
+        """
+        await self._drive(scene.color, 0, NIGHT_DIP_FALL_MS, game, scene.kelvin)
+        # 페이드가 끝나고 어둠이 유지되는 시간까지 기다린다. 안 기다리면 다 꺼지기도
+        # 전에 다음 색이 올라가 소등이 눈에 보이지 않는다.
+        await asyncio.sleep((NIGHT_DIP_FALL_MS + NIGHT_DIP_DARK_MS) / 1000)
+        await self._drive(
+            scene.color, scene.brightness, NIGHT_DIP_RISE_MS, game, scene.kelvin
+        )
+
+    def _is_dark(self) -> bool:
+        """지금 전구가 꺼져 있는가. 한 번도 안 보냈으면 알 수 없으므로 False."""
+        return self._last_applied is not None and self._last_applied[1] <= 0
 
     async def _play_cue(self, cue: Cue, game: str | None) -> None:
         """터뜨리고 반드시 Scene으로 돌아온다.
@@ -267,9 +307,15 @@ class LightController:
             self._cue_task.cancel()
         self._cue_task = None
 
+    def _cancel_scene(self) -> None:
+        if self._scene_task is not None and not self._scene_task.done():
+            self._scene_task.cancel()
+        self._scene_task = None
+
     def _cancel_pending(self) -> None:
         """Cue와 Scene 적용을 모두 취소한다. 뒤늦게 완료돼 덮어쓰는 것을 막는다."""
         self._cancel_cue()
+        self._cancel_scene()
         for task in list(self._tasks):
             if not task.done():
                 task.cancel()
