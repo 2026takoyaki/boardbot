@@ -320,13 +320,31 @@ const styles = {
     border: '1px solid rgba(255,170,110,0.55)',
   },
 
-  editHead: { display: 'flex', alignItems: 'center', gap: 10 },
+  /**
+   * 한 줄은 세 칸이다: 투표자 · "지목 →" · 대상.
+   *
+   * flex + marginLeft:auto 로 두었더니 대상만 오른쪽 끝으로 밀려, 줄마다
+   * 가운데가 텅 비고 이름 길이에 따라 화살표 위치도 제각각이었다. 눈이 왼쪽
+   * 끝과 오른쪽 끝을 왕복해야 "누가 누구를"이 읽힌다.
+   *
+   * 폭이 고정된 grid로 바꿔 세 칸을 세로로 줄 맞춘다. 투표자 칸을 120px로
+   * 못박아야 이름 길이가 달라도 화살표가 같은 자리에 선다.
+   */
+  editHead: {
+    display: 'grid',
+    gridTemplateColumns: '120px auto minmax(0, 1fr)',
+    alignItems: 'center',
+    gap: 10,
+  },
 
   editVoter: {
     fontSize: 16,
     fontWeight: 800,
     color: '#ffe6dc',
-    minWidth: 72,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
 
   editArrow: {
@@ -334,12 +352,13 @@ const styles = {
     fontWeight: 650,
     color: 'rgba(255,214,200,0.42)',
     letterSpacing: '0.02em',
+    whiteSpace: 'nowrap',
   },
 
   /** 눌러서 고치는 자리. 44px 높이는 손가락으로 빗나가지 않는 최소치다. */
   targetPill: {
-    marginLeft: 'auto',
-    minWidth: 128,
+    width: '100%',
+    maxWidth: 260,
     height: 44,
     padding: '0 16px',
     display: 'inline-flex',

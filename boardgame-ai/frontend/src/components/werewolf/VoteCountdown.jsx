@@ -62,10 +62,15 @@ export default function VoteCountdown({ players = [], votes = {}, send, countdow
     }
   }
 
-  // countdownRemaining: null=카운트다운 없음, 0="지목!", 1/2/3=숫자
+  // countdownRemaining: null=카운트다운 없음, 0=마감, 1~5=남은 초.
+  //
+  // 0은 "지금 지목하라"가 아니라 "지목은 여기까지"다. 5초 내내 겨누고 있다가
+  // 여기서 확정된다 — 예전 "지목!"은 5초를 다 기다렸다가 그제서야 손을 들라는
+  // 신호로 읽혀서, 다들 마감된 뒤에 손을 들었다.
   const showCountdown = countdownRemaining != null
   const isShout = countdownRemaining === 0
-  const countdownLabel = isShout ? '지목!' : String(countdownRemaining)
+  const countdownLabel = isShout ? '투표 종료' : String(countdownRemaining)
+  const counting = showCountdown && !isShout
 
   return (
     <div className={`ww-root${isShout ? ' ww-shake' : ''}`} style={ui.page}>
@@ -107,7 +112,11 @@ export default function VoteCountdown({ players = [], votes = {}, send, countdow
             <>
               <div style={styles.guideLine}>지목할 플레이어를 손가락으로 가리키세요.</div>
               <div style={styles.guideSub}>
-                직접 선택하려면 투표자 카드를 먼저 누르세요
+                {/* 지목이 계속 바뀔 수 있다는 것을 여기서 말해줘야 한다. 안 그러면
+                    한 번 찍힌 이름을 보고 "이미 정해졌다"고 생각해 손을 내린다. */}
+                {counting
+                  ? '카운트다운이 끝날 때 확정됩니다 · 그 전까지 몇 번이든 바꿀 수 있어요'
+                  : '직접 선택하려면 투표자 카드를 먼저 누르세요'}
                 <span style={styles.sep}>·</span>자기 자신 지목은 기권
               </div>
             </>
@@ -128,7 +137,10 @@ export default function VoteCountdown({ players = [], votes = {}, send, countdow
               />
             ))}
           </div>
-          <span style={styles.progressText}>{doneCount} / {total} 지목 완료</span>
+          {/* 카운트다운 중에는 "완료"가 아니다. 마감 전까지 계속 바뀐다. */}
+          <span style={styles.progressText}>
+            {doneCount} / {total} {counting ? '지목 중' : '지목 완료'}
+          </span>
         </div>
 
         <div style={styles.grid}>
@@ -159,7 +171,14 @@ export default function VoteCountdown({ players = [], votes = {}, send, countdow
                 {isSelected ? (
                   <div style={{ ...styles.badge, ...styles.badgeSelected }}>선택됨</div>
                 ) : done ? (
-                  <div style={{ ...styles.badge, ...styles.badgeDone }} key={targetId}>
+                  /* key에 대상을 물려 두면 지목이 바뀔 때마다 이 뱃지가 새로
+                     마운트되고, 아래 ww-badge-swap이 다시 돈다. 이름만 조용히
+                     갈리면 화면을 보고 있어도 바뀐 순간을 놓친다. */
+                  <div
+                    style={{ ...styles.badge, ...styles.badgeDone }}
+                    className="ww-badge-swap"
+                    key={targetId}
+                  >
                     <span className="ww-arrow">→</span>
                     {targetPlayer?.playername ?? '?'}
                   </div>
@@ -359,8 +378,12 @@ const CSS = `
     46%  { opacity: 1; transform: scale(0.94); filter: blur(0); }
     100% { opacity: 1; transform: scale(1); }
   }
+  /* 마감 문구는 숫자보다 글자 수가 많다. 숫자와 같은 크기로 두면 화면 밖으로
+     나간다 — 무게는 크기가 아니라 자간과 흔들림이 감당한다. */
   .ww-count-shout {
-    letter-spacing: 0.1em;
+    font-size: clamp(40px, 6.4vw, 72px);
+    letter-spacing: 0.08em;
+    white-space: nowrap;
     animation: ww-shout-in 520ms cubic-bezier(.2,.9,.25,1.35) both;
   }
   @keyframes ww-shout-in {
@@ -388,6 +411,19 @@ const CSS = `
     display: inline-block;
     margin-right: 5px;
     animation: ww-pop 320ms cubic-bezier(.2,.9,.25,1.4) both;
+  }
+
+  /* 지목이 바뀐 순간을 눈에 띄게. 카운트다운 내내 표가 오갈 수 있으므로
+     "누구를 찍었나"만이 아니라 "방금 바뀌었다"도 보여야 한다. */
+  .ww-badge-swap { animation: ww-badge-swap 460ms cubic-bezier(.2,.8,.3,1) both; }
+  @keyframes ww-badge-swap {
+    0%   { opacity: 0; transform: translateY(4px) scale(0.92); box-shadow: 0 0 0 0 rgba(255,170,110,0.55); }
+    45%  { opacity: 1; transform: translateY(0) scale(1.06); box-shadow: 0 0 0 5px rgba(255,170,110,0); }
+    100% { opacity: 1; transform: translateY(0) scale(1); box-shadow: 0 0 0 0 rgba(255,170,110,0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ww-badge-swap, .ww-arrow { animation: none; }
   }
 
   .ww-vote-card:active { transform: scale(0.98); }

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from core.events import FusionContext
-from vision.fusion.werewolf_rules import VOTE_POINT, WerewolfRules
+from vision.fusion.werewolf_rules import _POINT_MIN_HITS, VOTE_POINT, WerewolfRules
 from vision.schemas import BBox, FramePerception, HandDet
 from vision.tracking.card_tracker import CardTracker
 from vision.werewolf.schemas import TrackedCard
@@ -25,6 +25,24 @@ from vision.werewolf.schemas import TrackedCard
 
 def _frame(hands: list[HandDet] | None = None, ts: float = 100.0) -> FramePerception:
     return FramePerception(frame_id=0, ts=ts, image_hw=(1080, 1920), hands=hands or [])
+
+
+def _hold(
+    rules: WerewolfRules,
+    ctx: FusionContext,
+    hand: HandDet,
+    frames: int = _POINT_MIN_HITS,
+) -> list[tuple[str, dict, float]]:
+    """같은 손을 연속으로 먹이고 **마지막 프레임의** 후보를 돌려준다.
+
+    지목은 붙잡고 있어야 표가 된다(_POINT_MIN_HITS). 팔을 드는 동안 스쳐
+    지나간 좌석이 표가 되지 않게 하기 위한 것이라, 한 프레임만 먹이면 아무
+    후보도 나오지 않는 것이 정상이다.
+    """
+    cands: list[tuple[str, dict, float]] = []
+    for _ in range(frames):
+        cands = rules.build_candidates(ctx, _frame([hand]))
+    return cands
 
 
 def _ctx_vote(fsm_state: str) -> FusionContext:
@@ -67,7 +85,7 @@ def test_vote_point_detected_in_vote_countdown() -> None:
     """
     rules = WerewolfRules()
     hand = _pointing_hand_at(0.8, 0.5)  # p_2 좌석(0.85,0.5) 방향
-    cands = rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
+    cands = _hold(rules, _ctx_vote("vote_countdown"), hand)
     assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands)
 
 
@@ -75,8 +93,44 @@ def test_vote_point_detected_in_vote_phase() -> None:
     """레거시 'vote' 페이즈에서도 동일하게 감지된다."""
     rules = WerewolfRules()
     hand = _pointing_hand_at(0.8, 0.5)
-    cands = rules.build_candidates(_ctx_vote("vote"), _frame([hand]))
+    cands = _hold(rules, _ctx_vote("vote"), hand)
     assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands)
+
+
+def test_glancing_point_does_not_become_a_vote() -> None:
+    """팔을 드는 동안 스쳐 지나간 좌석은 표가 되지 않는다.
+
+    한 프레임만 보고 표를 매기면 겨눈 사람이 아니라 **먼저 스친 사람**이 찍힌다.
+    """
+    rules = WerewolfRules()
+    ctx = _ctx_vote("vote_countdown")
+    hand = _pointing_hand_at(0.8, 0.5)
+
+    for _ in range(_POINT_MIN_HITS - 1):
+        assert not any(c[0] == VOTE_POINT for c in rules.build_candidates(ctx, _frame([hand])))
+
+    assert any(c[0] == VOTE_POINT for c in rules.build_candidates(ctx, _frame([hand])))
+
+
+def test_vote_survives_dropped_frames() -> None:
+    """손이 프레임마다 끊겨도 겨누고 있으면 표가 쌓인다.
+
+    오버헤드 뷰에서 MediaPipe는 손을 놓쳤다 잡았다 한다(실측). 연속 프레임을
+    요구하면 그 조건에서 표가 영영 안 나오므로, 놓친 프레임은 창을 밀어내지
+    않고 그냥 건너뛴다.
+    """
+    rules = WerewolfRules()
+    ctx = _ctx_vote("vote_countdown")
+    hand = _pointing_hand_at(0.8, 0.5)
+
+    fired = []
+    # 잡힘 → 놓침 → 잡힘 → 놓침 … 을 반복한다.
+    for i in range(_POINT_MIN_HITS * 2):
+        frame = _frame([hand]) if i % 2 == 0 else _frame([])
+        fired += [c for c in rules.build_candidates(ctx, frame) if c[0] == VOTE_POINT]
+
+    assert fired, "손이 끊겼다 잡히길 반복해도 표는 나와야 한다"
+    assert fired[0][1]["target_id"] == "p_2"
 
 
 def test_vote_point_skips_self() -> None:
@@ -89,21 +143,46 @@ def test_vote_point_skips_self() -> None:
 
 
 def test_vote_point_retarget_fires_on_target_change() -> None:
-    """같은 투표자가 A→B로 대상을 바꾸면 재발화한다."""
+    """대상을 바꾸면 카운트다운 도중이라도 다시 발화한다.
+
+    투표는 카운트다운이 끝날 때 확정된다. 그 전까지 마음을 바꾸는 것은 정상이며,
+    바꾼 결과가 FSM까지 가야 화면의 지목 표시도 따라 바뀐다.
+    """
     rules = WerewolfRules()
     ctx = _ctx_vote("vote_countdown")
 
-    # 첫 지목: p_2
-    cands1 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+    # p_2 를 겨눠 첫 표
+    cands1 = _hold(rules, ctx, _pointing_hand_at(0.8, 0.5))
     assert any(c[0] == VOTE_POINT and c[1]["target_id"] == "p_2" for c in cands1)
 
-    # 같은 대상 연속: 발화 없음
-    cands2 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+    # 손을 내려 지목이 끊겼다가 다시 p_2 를 겨눠도 같은 표라 재발화 없음
+    cands2 = _hold(rules, ctx, _pointing_hand_at(0.5, 0.2))
     assert not any(c[0] == VOTE_POINT for c in cands2)
-
-    # 대상 변경: p_2 → (no valid target) — 방향 바꿔 hit 없는 경우엔 None 반환
-    cands3 = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.5, 0.2)]))
+    cands3 = _hold(rules, ctx, _pointing_hand_at(0.8, 0.5))
     assert not any(c[0] == VOTE_POINT for c in cands3)
+
+
+def test_vote_can_change_to_a_third_seat() -> None:
+    """A를 찍었다가 B로 바꾸면 B가 새로 발화한다."""
+    ctx = FusionContext(
+        fsm_state="vote_countdown",
+        game_type="werewolf",
+        active_player=None,
+        allowed_actors=["p_1", "p_2", "p_3"],
+        expected_events=[VOTE_POINT],
+        anchors={
+            "seat_p_1": {"x": 0.5, "y": 0.5},
+            "seat_p_2": {"x": 0.85, "y": 0.5},
+            "seat_p_3": {"x": 0.5, "y": 0.85},
+        },
+    )
+    rules = WerewolfRules()
+
+    first = _hold(rules, ctx, _pointing_hand_at(0.8, 0.5))
+    assert any(c[1]["target_id"] == "p_2" for c in first if c[0] == VOTE_POINT)
+
+    second = _hold(rules, ctx, _pointing_hand_at(0.5, 0.8))
+    assert any(c[1]["target_id"] == "p_3" for c in second if c[0] == VOTE_POINT)
 
 
 def test_vote_point_same_target_suppressed() -> None:
@@ -111,7 +190,7 @@ def test_vote_point_same_target_suppressed() -> None:
     rules = WerewolfRules()
     ctx = _ctx_vote("vote_countdown")
 
-    first = rules.build_candidates(ctx, _frame([_pointing_hand_at(0.8, 0.5)]))
+    first = _hold(rules, ctx, _pointing_hand_at(0.8, 0.5))
     assert any(c[0] == VOTE_POINT for c in first)
 
     for _ in range(5):
@@ -120,14 +199,14 @@ def test_vote_point_same_target_suppressed() -> None:
 
 
 def test_phase_change_clears_vote_memory() -> None:
-    """페이즈가 바뀌면 1인 1표 기억이 초기화돼 다음 판에서 다시 지목할 수 있다."""
+    """페이즈가 바뀌면 지목 기억이 초기화돼 다음 판에서 다시 지목할 수 있다."""
     rules = WerewolfRules()
     hand = _pointing_hand_at(0.8, 0.5)
 
-    assert rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
+    assert _hold(rules, _ctx_vote("vote_countdown"), hand)
     # 다른 페이즈를 거쳤다가 돌아오면 같은 대상도 다시 발화한다.
-    rules.build_candidates(_ctx_vote("day_discussion"), _frame([hand]))
-    assert rules.build_candidates(_ctx_vote("vote_countdown"), _frame([hand]))
+    _hold(rules, _ctx_vote("day_discussion"), hand)
+    assert _hold(rules, _ctx_vote("vote_countdown"), hand)
 
 
 # ── 투표 외 페이즈는 후보 없음 ─────────────────────────────────────────────────
