@@ -81,8 +81,11 @@ const ROLE_NIGHT_DATA = {
 }
 
 const PASSIVE_ROLES = new Set(['werewolf', 'minion', 'mason'])
-const PASSIVE_DURATION = 10  // 백엔드 PASSIVE_PHASE_DURATION과 일치
-const ACTIVE_DURATION = 12   // 백엔드 ACTIVE_PHASE_TIMEOUT과 일치
+// 백엔드가 state.phase_duration으로 실제 시간을 보내준다. 아래 값은 그게 아직
+// 안 왔을 때(첫 프레임)만 쓰는 자리표시자다 — 여기 숫자를 고쳐도 단계가 넘어가는
+// 시점은 바뀌지 않는다. 시간의 주인은 타이머를 가진 games/werewolf/fsm.py다.
+const FALLBACK_PASSIVE = 12
+const FALLBACK_ACTIVE = 14
 const PRACTICE_POST_TTS_SECONDS = 5  // 튜토리얼: 안내 TTS 종료 후 자동 전이까지 대기
 
 const KOREAN_NUMS = { 1: '한', 2: '두', 3: '세' }
@@ -90,10 +93,10 @@ function toKoreanTTS(text) {
   return text.replace(/([123])(명|장|개)/g, (_, n, counter) => `${KOREAN_NUMS[Number(n)]} ${counter}`)
 }
 
-export default function NightRoleAnnounce({ roleId, onComplete, isPracticeMode }) {
+export default function NightRoleAnnounce({ roleId, onComplete, isPracticeMode, durationSec }) {
   const role = ROLE_NIGHT_DATA[roleId]
   const isPassive = PASSIVE_ROLES.has(roleId)
-  const duration = isPassive ? PASSIVE_DURATION : ACTIVE_DURATION
+  const duration = durationSec ?? (isPassive ? FALLBACK_PASSIVE : FALLBACK_ACTIVE)
   const [countdown, setCountdown] = useState(duration)
   // 튜토리얼: 안내 TTS가 끝난 뒤부터 카운트다운/자동 전이를 시작한다.
   const [practiceCounting, setPracticeCounting] = useState(false)
@@ -103,8 +106,7 @@ export default function NightRoleAnnounce({ roleId, onComplete, isPracticeMode }
   useEffect(() => {
     // 일반 모드: 백엔드 타이머가 전환을 담당. 여기서는 표시용 카운트다운만 운영.
     if (!isPracticeMode) {
-      const dur = PASSIVE_ROLES.has(roleId) ? PASSIVE_DURATION : ACTIVE_DURATION
-      setCountdown(dur)
+      setCountdown(duration)
       const interval = setInterval(() => {
         setCountdown(prev => Math.max(0, prev - 1))
       }, 1000)

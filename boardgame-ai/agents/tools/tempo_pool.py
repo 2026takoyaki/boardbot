@@ -40,6 +40,16 @@ VARIANTS_PER_LINE = 3
 # 재촉은 짧아야 재촉이다. 길면 말이 끝나기 전에 상황이 지나간다.
 _MAX_LEN = 40
 
+# 야간 마감 지시는 더 짧아야 한다.
+#
+# 이건 재촉이 아니라 단계를 닫는 지시라, 단계가 끝나기 전에 **반드시** 끝까지
+# 나가야 한다. 남은 시간이 정해져 있으므로(TempoAgent.PHASE_END_WARNING_LEAD)
+# 문장이 길면 그 안에 못 들어간다. 실제로 한 페르소나가 29자짜리 변형을 갖고
+# 있었고, 그건 읽는 데만 6초라 눈을 감을 시간이 남지 않았다.
+_MAX_LEN_BY_LINE: dict[str, int] = {
+    "tempo.close_eyes_again": 16,
+}
+
 _pool: dict[str, list[str]] = {}
 _last_pick: dict[str, str] = {}
 _persona_id: str | None = None
@@ -53,6 +63,8 @@ def _prompt(persona: Persona) -> tuple[str, str]:
         f"문장을 {VARIANTS_PER_LINE}개씩 만드세요.\n"
         "- 말투와 인격은 위 지시를 그대로 따릅니다.\n"
         f"- 각 문장은 {_MAX_LEN}자 이내로 짧게. 재촉은 짧아야 재촉입니다.\n"
+        f"- 단 '{'tempo.close_eyes_again'}'만은 {max_len('tempo.close_eyes_again')}자 이내. "
+        "단계를 닫는 지시라 반드시 끝까지 나가야 합니다.\n"
         "- 중괄호, 이름, 숫자를 새로 넣지 마세요. 그대로 음성으로 읽힙니다.\n"
         '- 출력은 JSON 객체만: {"line_id": ["변형1", "변형2", ...]}'
     )
@@ -64,12 +76,17 @@ def _prompt(persona: Persona) -> tuple[str, str]:
     return system, user
 
 
-def _accept(text: Any) -> str | None:
+def max_len(line_id: str) -> int:
+    """이 멘트의 길이 상한. 야간 마감 지시만 더 짧다."""
+    return _MAX_LEN_BY_LINE.get(line_id, _MAX_LEN)
+
+
+def _accept(text: Any, line_id: str) -> str | None:
     """읽을 수 있는 문장만 통과시킨다. 슬롯이 남아 있으면 채워줄 사람이 없다."""
     if not isinstance(text, str):
         return None
     cleaned = llm.sanitize_for_tts(text)
-    if not cleaned or "{" in cleaned or len(cleaned) > _MAX_LEN:
+    if not cleaned or "{" in cleaned or len(cleaned) > max_len(line_id):
         return None
     return cleaned
 
@@ -109,7 +126,7 @@ async def regenerate(persona: Persona, *, timeout: float | None = 20.0) -> list[
     for line_id in POOL_LINE_IDS:
         bucket = _pool.setdefault(line_id, [])
         for candidate in raw.get(line_id, []) if isinstance(raw, dict) else []:
-            text = _accept(candidate)
+            text = _accept(candidate, line_id)
             if text and text not in bucket:
                 bucket.append(text)
                 added += 1

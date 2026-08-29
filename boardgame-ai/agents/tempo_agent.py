@@ -31,6 +31,17 @@ _MILESTONES: list[tuple[float, str]] = [
     (0.95, "tempo.almost"),
 ]
 
+# 야간 마감 지시("눈을 다시 감아주세요")를 시작할 시점 — 단계 종료 몇 초 전인가.
+#
+# 이 시간 안에 두 가지가 들어가야 한다: 지시를 끝까지 읽는 시간과, 듣고 실제로
+# 눈을 감을 시간. 지시는 16자 이내로 묶여 있으므로(tempo_pool의 _MAX_LEN_BY_LINE)
+# 읽는 데 3초 남짓, 나머지 2초가 눈을 감는 시간이다.
+#
+# 야간 단계 길이(games/werewolf/fsm.py)는 이 값을 빼고 나서 안내와 조언이
+# 들어갈 수 있게 잡혀 있다. 여기를 늘리면 그쪽도 같이 늘려야 한다 —
+# tests/test_werewolf_fsm.py 가 그 관계를 검사한다.
+PHASE_END_WARNING_LEAD = 5.0
+
 
 class TempoAgent:
     """우선순위 2 (HIGH). 턴 타이머 경과를 음성으로 알린다."""
@@ -66,16 +77,20 @@ class TempoAgent:
     ) -> None:
         if self._tts_cb is None:
             return
-        if end_warning_line and timeout > 4:
-            # 페이즈 종료 4초 전 경고 (야간 페이즈용). 비율 마일스톤 대신 사용.
-            fire_at = start_time + timeout - 4
+        if end_warning_line and timeout > PHASE_END_WARNING_LEAD:
+            # 페이즈 종료 직전 마감 지시 (야간 페이즈용). 비율 마일스톤 대신 사용.
+            fire_at = start_time + timeout - PHASE_END_WARNING_LEAD
             wait = fire_at - time.time()
             if wait > 0:
                 try:
                     await asyncio.sleep(wait)
                 except asyncio.CancelledError:
                     return
-            await self._say(end_warning_line)
+            # 이 한 줄은 재촉이 아니라 **진행에 필요한 지시**다. 밀리면 다음
+            # 단계가 시작되며 통째로 버려지고, 그러면 눈을 감으라는 말을 아무도
+            # 못 듣는다(실제로 전략 조언이 재생 중이면 항상 그렇게 됐다).
+            # 그래서 재생 중인 것을 끊고 나간다.
+            await self._say(end_warning_line, preempt=True)
         else:
             for ratio, line_id in _MILESTONES:
                 fire_at = start_time + timeout * ratio
@@ -87,12 +102,18 @@ class TempoAgent:
                         return
                 await self._say(line_id)
 
-    async def _say(self, line_id: str) -> None:
-        """미리 만들어 둔 변형 중 하나로 말한다. 없으면 고정 멘트 그대로."""
+    async def _say(self, line_id: str, preempt: bool = False) -> None:
+        """미리 만들어 둔 변형 중 하나로 말한다. 없으면 고정 멘트 그대로.
+
+        preempt=True면 재생 중인 발화를 끊고 나간다. 비율 마일스톤("절반이
+        지났습니다")은 놓쳐도 그만이라 기다리지만, 야간 마감 지시는 그 단계가
+        끝나기 전에 반드시 들려야 해서 기다릴 수 없다.
+        """
         text = tempo_pool.pick(line_id) or lines.get(line_id)
         if not text or self._tts_cb is None:
             return
+        priority = AudioPriority.CRITICAL if preempt else AudioPriority.HIGH
         try:
-            await self._tts_cb(text, AudioPriority.HIGH)
+            await self._tts_cb(text, priority)
         except Exception:
             logger.exception("[TempoAgent] TTS 발화 실패")

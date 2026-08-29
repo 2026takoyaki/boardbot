@@ -135,6 +135,9 @@ export default function WerewolfGame({ players, onChangePlayers, onChangeGame, o
       return (
         <NightRoleAnnounce
           roleId={NIGHT_PHASE_ROLES[ph]}
+          // 몇 초 뒤에 넘어가는지는 타이머를 가진 백엔드가 알려준다. 여기서
+          // 숫자를 따로 갖고 있으면 백엔드만 바꿨을 때 조용히 어긋난다.
+          durationSec={wwState?.phase_duration}
           onComplete={() => send('start_now', {})}
           onExit={handleExit}
           isPracticeMode={isPracticeMode}

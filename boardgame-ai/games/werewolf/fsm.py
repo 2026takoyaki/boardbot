@@ -27,11 +27,45 @@ from games.werewolf.ontology import (
 from games.werewolf.state import WerewolfGameState, WerewolfPlayerState
 
 VOTE_COUNTDOWN_SECONDS = 5   # "5,4,3,2,1" 카운트다운 시작값
-VOTE_LOCK_GRACE = 0.5        # 카운트다운 0 도달 후 지목 유예 시간(초)
+# 카운트다운 0 도달 후 지목 유예 시간(초).
+#
+# 비전이 지목을 표로 인정하려면 같은 사람을 몇 프레임 붙잡고 있어야 한다
+# (vision/fusion/werewolf_rules.py의 _POINT_HOLD_FRAMES). MediaPipe가 CPU에서
+# 10fps 근처로 돌면 그 판정에만 0.4초가 든다. 유예가 그보다 짧으면 마지막에
+# 손을 든 사람의 표가 판정 도중에 잘린다 — 실제로 마지막 투표가 자주 빠졌다.
+VOTE_LOCK_GRACE = 1.0
 
 
-PASSIVE_PHASE_DURATION = 10  # 패시브 역할 안내 화면 표시 시간(초)
-ACTIVE_PHASE_TIMEOUT = 12    # 액티브 역할 OK 사인 대기 타임아웃(초). 제스처 유실 시 폴백.
+# 밤 단계 시간. 각 단계는 조명이 소등을 거쳐 다음 역할 색으로 올라오는 것으로
+# 시작한다(bulb/scenes.py의 NIGHT_DIP_*, 약 2.3초). 그 시간은 플레이어가 아직
+# 아무것도 할 수 없는 구간이므로, 실제로 행동할 시간은 아래 값에서 그만큼 뺀
+# 나머지다. 조명 연출을 넣으면서 그 길이만큼 함께 늘렸다 — 안 늘리면 조명이
+# 다 오르기도 전에 다음 단계로 넘어간다.
+# ── 야간 단계 길이 ───────────────────────────────────────────────────────────
+#
+# 한 단계 안에서 이 순서가 전부 끝나야 한다:
+#
+#     안내 → (조언) → [플레이어가 행동] → "눈을 다시 감아주세요"
+#
+# **마지막 지시는 빼먹을 수 없다.** 그게 빠지면 눈을 언제 감아야 하는지 아무도
+# 모르고, 다음 역할이 호명될 때 이전 역할이 아직 눈을 뜨고 있게 된다.
+#
+# 그래서 시간을 감으로 잡지 않고 **문장 길이에서 거꾸로** 잡는다:
+#
+#     필요한 시간 = (안내 + 조언) / 초당글자수 + 행동시간 + 마감 리드
+#
+# 초당 글자 수는 5.0으로 보수적으로(느리게 읽는 쪽) 잡았고, 문장 길이는
+# 페르소나 넷을 포함한 최댓값을 쓴다 — 한 페르소나만 길어도 그 사람 판에서만
+# 지시가 잘리기 때문이다. 마감 리드는 agents/tempo_agent.PHASE_END_WARNING_LEAD.
+#
+# 아래 값은 그 계산의 결과다 (최악: 주정뱅이 81자 → 25.2초, 하수인 38자 → 15.6초).
+# 문장을 고치면 이 값도 다시 잡아야 하며, tests/test_werewolf_fsm.py 가 그
+# 관계를 검사해 부족하면 실패한다.
+#
+# 늘리는 대가는 거의 없다 — 둘 다 타임아웃이고, 정상 플레이에서는 OK 사인이
+# 먼저 들어와 그 자리에서 끝난다. 제스처를 놓쳤을 때만 이 시간이 다 쓰인다.
+PASSIVE_PHASE_DURATION = 16  # 패시브 역할 (조언 없음)
+ACTIVE_PHASE_TIMEOUT = 26    # 액티브 역할 (조언 붙음)
 NIGHT_START_DURATION = 5     # "밤이 되었습니다" 안내 화면 표시 시간(초)
 
 ACTIVE_NIGHT_PHASES = frozenset({
@@ -206,11 +240,33 @@ class WerewolfFSM(BaseFSM):
         return role.value in self.state.deck_roles
 
     def _make_state_update(self) -> WSMessage:
+        payload = self.state.to_dict()
+        # 이 페이즈가 몇 초 뒤에 저절로 넘어가는지 함께 보낸다.
+        #
+        # 화면의 카운트다운이 이 숫자를 자기 파일에 복사해 갖고 있었는데, 백엔드
+        # 시간만 바꾸고 화면 쪽을 못 바꾸면 숫자가 0이 되어도 단계가 안 넘어가거나
+        # 그 반대가 된다. 실제로 어긋난 적이 있다. 숫자의 주인은 타이머를 가진
+        # 쪽이므로 여기서 실어 보낸다.
+        payload["phase_duration"] = self._phase_duration()
         return WSMessage(
             msg_type=MsgType.STATE_UPDATE.value,
-            payload=self.state.to_dict(),
+            payload=payload,
             state_version=self.state.state_version,
         )
+
+    def _phase_duration(self) -> int | None:
+        """현재 페이즈의 자동 전이까지 걸리는 초. 타이머가 없으면 None."""
+        phase = WerewolfPhase(self.state.phase)
+        if self._practice_mode:
+            # 튜토리얼은 안내 TTS가 끝난 뒤 화면이 전이를 주도한다. 고정 시간이 없다.
+            return None
+        if phase == WerewolfPhase.NIGHT_START:
+            return NIGHT_START_DURATION
+        if phase in ACTIVE_NIGHT_PHASES:
+            return ACTIVE_PHASE_TIMEOUT
+        if phase in NIGHT_PHASES:
+            return PASSIVE_PHASE_DURATION
+        return None
 
     def _advance_to_next_phase(self) -> list[WSMessage]:
         """현재 페이즈에서 다음 페이즈로 전이한다."""

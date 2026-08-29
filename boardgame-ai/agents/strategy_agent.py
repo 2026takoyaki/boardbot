@@ -28,6 +28,14 @@ _WEREWOLF_STRATEGY_PHASES = werewolf_coach.STRATEGY_PHASES
 
 _LLM_MAX_TOKENS = 120
 
+# 야간 조언은 여기서 따로 자른다.
+#
+# 요트의 조언은 플레이어가 점수판을 보며 고민하는 동안 나가므로 길어도 된다.
+# 늑대인간 야간은 단계가 몇 초짜리라 사정이 다르다 — 안내가 5초, 마지막
+# "눈을 다시 감아주세요"에 4초를 쓰고 나면 조언에 남는 것은 5초 남짓이다.
+# 프롬프트로 "짧게"라고 부탁하는 것만으로는 지켜지지 않으므로 상한으로 막는다.
+_WEREWOLF_NIGHT_MAX_TOKENS = 40
+
 
 class StrategyAgent(BaseAgent):
     """우선순위 4 (LOW). 활성화 시 의사결정 시점에 전략 추천을 안내한다.
@@ -217,10 +225,12 @@ class StrategyAgent(BaseAgent):
         result = await llm.get_client().complete(
             llm.persona_style()
             + "당신은 한밤의 늑대인간 진행자입니다. "
-            "지금 깨어난 역할이 밤에 무엇을 하면 좋을지 한두 문장으로 짧게 말하세요. "
+            "지금 깨어난 역할이 무엇을 노리면 좋을지 **25자 이내 한 문장**으로 말하세요. "
+            "역할이 무엇을 할 수 있는지는 방금 안내가 이미 말했습니다. "
+            "그 설명을 되풀이하지 말고 조언만 하세요. "
             "특정 플레이어를 지목하지 마세요 — 시스템은 누가 어떤 역할인지 모릅니다.",
             f"지금 깨어난 역할: {werewolf_coach.phase_name(ctx.fsm_state)}",
-            max_tokens=_LLM_MAX_TOKENS,
+            max_tokens=_WEREWOLF_NIGHT_MAX_TOKENS,
             tag="strategy.werewolf",
         )
         return result.text
