@@ -273,7 +273,10 @@ PERSONAS: dict[str, Persona] = {
     ),
 }
 
-DEFAULT_PERSONA_ID = "shagal"
+# 아무도 고르지 않았을 때 나오는 목소리. 캐릭터가 강한 페르소나를 기본으로
+# 두면 처음 켠 사람이 "이게 이 시스템의 말투"라고 받아들인다. 기본은 중립이어야
+# 하고, 캐릭터는 고르는 사람이 고른다.
+DEFAULT_PERSONA_ID = "basic"
 
 
 def get_persona(persona_id: str | None = None) -> Persona:
