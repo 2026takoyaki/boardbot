@@ -202,11 +202,13 @@ async function playMessage(msg) {
     } catch (_) {}
   }
 
-  if (msg.msg_type === 'tts_play') {
-    // TTS 중 BGM 더킹
-    player.duckGainDb = -12
-    applyBgmGain()
-  }
+  // TTS가 시작될 때 BGM을 자동으로 낮추지 않는다.
+  //
+  // 늑대인간 밤은 배경음이 곧 분위기라, 진행자가 말할 때마다 음악이 꺼졌다
+  // 켜지면 장면이 매번 끊긴다. 오르내리는 것 자체도 거슬린다. BGM은 애초에
+  // 말소리를 덮지 않는 음량으로 깔아두고, 정말 낮춰야 하는 순간에는 백엔드가
+  // bgm_duck을 명시적으로 보낸다(handleBgmDuck) — 그건 연출의 선택이지
+  // 발화의 부작용이 아니다.
 
   const onEnded = (status) => {
     // 멱등성: 이미 인터럽트로 정리됐으면 무시
@@ -214,10 +216,9 @@ async function playMessage(msg) {
     if (player.current.fadeTimer) {
       clearInterval(player.current.fadeTimer)
     }
-    if (player.current.type === 'tts_play') {
-      player.duckGainDb = 0
-      applyBgmGain()
-    }
+    // 발화가 끝났다고 BGM 음량을 되돌리지 않는다. 이제 더킹의 주인은
+    // bgm_duck 하나뿐이라(위 playMessage 주석), 여기서 0으로 되돌리면
+    // 백엔드가 일부러 걸어둔 더킹이 다음 발화가 끝날 때 조용히 풀린다.
     if (window._bench) {
       const endedAt = performance.now()
       try { window._bench.log('audio_play_end', msg.msg_type, playback_id, status, endedAt, endedAt - playStartAt) } catch (_) {}
@@ -296,10 +297,7 @@ function fadeOutInterrupt(playback_id) {
       // 다음 재생이 playMessage에서 다시 맞추지만, 그 사이에 0으로 남아
       // 있으면 unlock 무음 재생 등이 소리 없이 지나간다.
       el.volume = player.ttsVolume
-      if (cur.type === 'tts_play') {
-        player.duckGainDb = 0
-        applyBgmGain()
-      }
+      // 인터럽트로 끊긴 경우도 마찬가지 — 더킹은 bgm_duck만 건드린다.
       if (window._bench) {
         const endedAt = performance.now()
         try { window._bench.log('audio_play_end', cur.type, cur.playback_id, 'interrupted', endedAt, endedAt - (cur.playStartAt ?? startTime)) } catch (_) {}

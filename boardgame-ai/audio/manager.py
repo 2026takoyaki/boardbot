@@ -130,6 +130,9 @@ class AudioManager:
         # 큐: priority 오름차순(1=CRITICAL이 최우선), 동순위는 seq_arrival 오름차순.
         self._queue: list[_QueueItem] = []
         self._arrival_counter = itertools.count()
+        # 지금까지 본 가장 최근 진행 단계. 이보다 옛 단계의 멘트가 뒤늦게 도착하면
+        # 받지 않는다 (_is_stale_arrival).
+        self._latest_state_version = 0
 
         # 현재 재생 중인 항목 (frontend가 ack 보내기 전까지 유지).
         self._current: _QueueItem | None = None
@@ -228,6 +231,9 @@ class AudioManager:
         # 이전 세션의 _current/_queue가 남아 있으면 새 세션 TTS가 막히므로 초기화.
         self._current = None
         self._queue.clear()
+        # 진행 단계는 세션마다 1부터 다시 센다. 이전 세션에서 올라간 값을 들고
+        # 있으면 새 세션의 멘트가 전부 "지나간 단계"로 걸려 통째로 묵음이 된다.
+        self._latest_state_version = 0
         logger.info("AudioManager broadcast attached (session_id=%s)", session_id)
 
     def set_fallback_broadcast(self, broadcast: BroadcastFn | None) -> None:
@@ -248,6 +254,7 @@ class AudioManager:
         self._active_session_id = None
         self._current = None
         self._queue.clear()
+        self._latest_state_version = 0
         logger.info("AudioManager broadcast detached + queue cleared")
 
     def detach_broadcast_if(self, broadcast: BroadcastFn) -> None:
@@ -398,7 +405,23 @@ class AudioManager:
 
         새 state_version의 항목이 들어오면 큐의 옛 interruptible 항목은 자동 폐기.
         사용자가 게임 흐름을 빠르게 진행시킬 때 옛 안내가 쌓이지 않게 함.
+
+        **이미 지나간 단계의 멘트는 아예 받지 않는다.** 큐를 청소하는 것만으로는
+        부족하다 — 청소는 새 항목이 들어올 때만 도는데, 늦게 도착한 옛 멘트는
+        그 뒤에 아무것도 안 오면 청소될 기회 없이 그냥 재생된다. 전략 조언이
+        대표적이다. LLM 응답에 2~3초가 걸려서, 그 사이에 플레이어가 점수를
+        고르면 "어디에 넣으세요"가 이미 넣은 뒤에 흘러나온다.
         """
+        if self._is_stale_arrival(item):
+            logger.info(
+                "queue: dropped late arrival (v=%d < latest %d, agent priority=%d)",
+                item.state_version, self._latest_state_version, item.priority,
+            )
+            return
+
+        if item.state_version > self._latest_state_version:
+            self._latest_state_version = item.state_version
+
         self._queue.append(item)
         self._queue.sort(key=lambda q: (q.priority, q.seq_arrival))
 
@@ -429,6 +452,20 @@ class AudioManager:
             self._drop_interruptible_from_queue()
 
         await self._maybe_push_next()
+
+    def _is_stale_arrival(self, item: _QueueItem) -> bool:
+        """이미 지나간 진행 단계의 멘트인가.
+
+        버릴 수 있는 것만 버린다:
+          - state_version이 0이면 진행 단계와 무관한 발화다 (효과음, 수동 요청).
+          - CRITICAL은 규칙 제지처럼 반드시 들려야 하는 말이라 늦어도 낸다.
+          - interruptible=False는 끊으면 안 된다고 선언한 것이라 존중한다.
+        """
+        if item.state_version <= 0:
+            return False
+        if item.priority == AudioPriority.CRITICAL or not item.interruptible:
+            return False
+        return item.state_version < self._latest_state_version
 
     def _drop_stale_versions(self, current_version: int) -> None:
         """현재보다 오래된 state_version의 interruptible 항목을 큐에서 제거."""
@@ -663,7 +700,9 @@ class AudioManager:
     ) -> None:
         """BGM 트랙 시작 (또는 교체). 큐 외부, 항상 즉시 broadcast.
 
-        TTS와 동시 재생되며 TTS 시작 시 자동으로 ducking됨.
+        TTS와 동시 재생된다. **발화에 맞춰 자동으로 낮아지지 않는다** — 말할
+        때마다 음악이 꺼졌다 켜지면 늑대인간 밤처럼 배경음이 곧 분위기인
+        장면이 매번 끊긴다. 낮춰야 하면 bgm_duck을 따로 보낸다.
         """
         from audio.catalog import BGM_REGISTRY
 
