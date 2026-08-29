@@ -33,6 +33,17 @@ from vision.yacht.schemas import DiceState, YachtFramePerception
 # 기본 INFO/WARNING 환경에선 조용히 동작.
 _log = logging.getLogger(__name__)
 
+# 손이 빠진 뒤 주사위가 다 보이고 멈추기를 기다리는 최대 프레임 (30fps 기준 1.5초).
+#
+# 쏟은 직후에는 몇 프레임 동안 일부가 안 잡힌다 — 공중에 있거나 서로 겹친다.
+# 그래서 개수가 모자라면 기다린다. 그런데 무한정 기다리면, 킵존처럼 주사위를
+# 트레이 밖으로 빼놓는 순간 개수가 영영 안 맞아 HAND_IN_TRAY에 갇힌다. 기준을
+# 새로 잡는 코드는 WAITING에서만 도는데 거기로 돌아갈 길이 없어져서, 그 판은
+# 끝까지 굴림이 한 번도 안 잡혔다 (실측).
+#
+# 상한을 두고, 넘으면 WAITING으로 돌아가 지금 보이는 것으로 기준을 다시 잡는다.
+_SETTLE_TIMEOUT_FRAMES = 45
+
 
 class RollState(Enum):
     WAITING = auto()
@@ -127,6 +138,8 @@ class RollAttributor:
         # 겹쳐 있었고, 혼자만 손에 의존해 전체를 볼모로 잡고 있었다.
         self._hand_seen_in_tray: bool = False
         self._shaking_seen: bool = False
+        # 손이 빠진 뒤 주사위가 다 보이길 기다린 프레임 수 (_SETTLE_TIMEOUT_FRAMES 참고).
+        self._settle_wait: int = 0
 
         # nearest player 누적 — fallback actor 산정용 (state 무관, 매 프레임)
         self._fallback_buf: deque[str | None] = deque(maxlen=grab_fallback_window_frames)
@@ -299,14 +312,23 @@ class RollAttributor:
 
         # 손이 빠짐 — 굴림 종료 조건 체크
         target_dice = self._dice_outside_keep(perception)
-        n_kept = self._n_kept(perception)
-        need = self._expected_dice - n_kept
-        # 1) 모든 굴림 대상 dice가 보여야 함 (개수 일치)
+        need = self._required_dice_count()
+        # 1) 굴리기 직전에 있던 만큼 다시 보여야 함
         if len(target_dice) < need:
+            self._settle_wait += 1
+            if self._settle_wait <= _SETTLE_TIMEOUT_FRAMES:
+                _log.debug(
+                    f"[roll] hand_out: dice 부족 — got={len(target_dice)} need={need} "
+                    f"({self._settle_wait}/{_SETTLE_TIMEOUT_FRAMES} 대기)"
+                )
+                return None
+            # 기다릴 만큼 기다렸다. 주사위가 트레이 밖으로 나간 것으로 보고
+            # 기준을 다시 잡는다 — 안 그러면 이 상태에 영영 갇힌다.
             _log.debug(
-                f"[roll] hand_out: dice 부족 — got={len(target_dice)} need={need} "
-                f"kept={n_kept} (state 유지)"
+                f"[roll] hand_out: dice {len(target_dice)}개로 안정 — "
+                f"기준을 {need}개에서 다시 잡는다 (킵존 이동 등)"
             )
+            self._reset_to_waiting()
             return None
         # 2) 모두 stable
         unstable = [
@@ -315,6 +337,11 @@ class RollAttributor:
             if d.stable_frames < self._stab_frames
         ]
         if unstable:
+            self._settle_wait += 1
+            if self._settle_wait > _SETTLE_TIMEOUT_FRAMES:
+                _log.debug(f"[roll] hand_out: dice가 계속 불안정 — {unstable} → WAITING")
+                self._reset_to_waiting()
+                return None
             _log.debug(f"[roll] hand_out: dice 불안정 — {unstable} (state 유지)")
             return None
         # 3) snapshot 대비 변화 점수
@@ -363,6 +390,7 @@ class RollAttributor:
         # 미확정 손도 인정해 finalize 데드락 방지).
         self._hand_seen_in_tray = self._is_any_hand_in_tray(perception, active_player=None)
         self._shaking_seen = self._is_roll_tray_shaking(perception)
+        self._settle_wait = 0
         # 손이 들어온 직후의 흐트러진 dice 좌표 대신,
         # 손 들어가기 직전 마지막 stable snapshot을 비교 기준으로 사용.
         if self._last_stable_snapshot is not None:
@@ -394,6 +422,7 @@ class RollAttributor:
         self._roll_actor_buf.clear()
         self._hand_seen_in_tray = False
         self._shaking_seen = False
+        self._settle_wait = 0
 
     # ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
@@ -484,6 +513,19 @@ class RollAttributor:
         # YOLO bbox 미세 흔들림(노이즈) 정도로는 못 넘는 임계.
         threshold = min(rt.w, rt.h) * 0.3
         return path >= threshold
+
+    def _required_dice_count(self) -> int:
+        """굴림이 끝났다고 보려면 트레이에 몇 개가 다시 보여야 하는가.
+
+        **굴리기 직전에 트레이에 있던 개수**다. 5개로 못박으면 킵존에 빼둔
+        주사위가 하나라도 있는 순간 개수가 영영 안 맞아 굴림이 확정되지 않는다 —
+        "두세 개만 다시 굴리기"가 통째로 죽는다.
+
+        스냅샷이 없으면(점유 시작 시 주사위 미감지) 기본값으로 떨어진다.
+        """
+        if self._snapshot is not None and self._snapshot.items:
+            return len(self._snapshot.items)
+        return self._expected_dice
 
     def _dice_outside_keep(self, perception: YachtFramePerception) -> list[DiceState]:
         """굴림 대상 dice — 현재는 tray_inner를 무시하고 모든 dice를 굴림 대상으로 본다.
