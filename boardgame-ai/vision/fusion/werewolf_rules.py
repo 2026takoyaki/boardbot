@@ -18,6 +18,7 @@ GESTURE_CONFIRMED(OK 사인)로 처리한다 — 그쪽은 FusionEngine이 직�
 from __future__ import annotations
 
 import math
+from collections import Counter, deque
 
 from core.events import FusionContext
 from vision.schemas import FramePerception, HandDet
@@ -39,6 +40,28 @@ _RAY_MAX_T = 1.5              # ray cast 최대 거리 (정규화)
 # 좌석 중 가장 가까운(ray 진행방향 t>0) 좌석을 지목 대상으로 본다.
 _SEAT_POINT_PERP_DIST = 0.18
 
+# 지목이 잡힌 최근 프레임을 이만큼 모아 두고, 그 안에서 같은 사람이
+# _POINT_MIN_HITS 번 나오면 한 표로 친다.
+#
+# 왜 "연속 N프레임"이 아니라 창(window)인가:
+#   팔을 드는 동안 손가락은 여러 좌석을 훑고 지나간다. 한 프레임만 보고 표를
+#   매기면 스쳐 지나간 첫 좌석이 표가 되므로 얼마간 붙잡는 것을 요구해야 한다.
+#   그런데 **연속**을 요구하면 이번엔 실제 시연에서 표가 아예 안 나온다 —
+#   오버헤드 뷰에서 MediaPipe가 손을 프레임마다 놓쳤다 잡았다 하기 때문에
+#   (실측 로그: 손이 30프레임 간격 샘플에서 나타났다 사라지길 반복) 연속 4프레임이
+#   좀처럼 성립하지 않는다.
+#
+#   그래서 **지목이 잡힌 프레임만** 창에 넣는다. 손을 놓친 프레임은 창을 밀어내지
+#   않으므로, 띄엄띄엄 잡혀도 겨누고 있는 한 표가 쌓인다. 스쳐 지나간 좌석은
+#   한 번씩만 들어와 기준을 못 넘는다.
+#
+# 이 판정을 FusionEngine의 안정화 카운터에 맡길 수 없다. 아래 _votes_cast가
+# 같은 대상의 후보 생성을 막기 때문에 카운터가 2 이상으로 오르지 못한다
+# (그래서 FSM이 pointing_stabilization_frames를 1로 내려 쓰고 있다).
+# 억제와 안정화가 같은 곳에 있어야 서로 어긋나지 않으므로 여기서 함께 센다.
+_POINT_WINDOW = 8
+_POINT_MIN_HITS = 3
+
 
 class WerewolfRules:
     """늑대인간 비전 이벤트 후보 생성기.
@@ -50,8 +73,14 @@ class WerewolfRules:
 
     def __init__(self) -> None:
         self._last_phase: str = ""
-        # VOTE_POINT: voter_id → 이미 투표한 target_id (1인 1표)
+        # VOTE_POINT: voter_id → 마지막으로 발화한 target_id.
+        # 같은 대상을 계속 가리키는 동안 매 프레임 재발화하지 않기 위한 것이지
+        # "1인 1표"를 못박는 것이 아니다 — 카운트다운이 끝날 때까지 대상을 바꾸면
+        # 몇 번이든 다시 발화한다. 최종 확정은 FSM의 votes_locked가 한다.
         self._votes_cast: dict[str, str] = {}
+        # voter_id → 최근에 겨눈 좌석들. 지목이 잡힌 프레임만 들어간다.
+        # 스쳐 지나간 좌석과 붙잡고 겨눈 좌석을 가른다.
+        self._point_window: dict[str, deque[str]] = {}
 
     def build_candidates(
         self,
@@ -70,6 +99,7 @@ class WerewolfRules:
         if phase != self._last_phase:
             self._last_phase = phase
             self._votes_cast.clear()
+            self._point_window.clear()
 
         if phase not in (_PHASE_VOTE, _PHASE_VOTE_COUNTDOWN):
             return []
@@ -90,13 +120,17 @@ class WerewolfRules:
     ) -> tuple[str, dict, float] | None:
         """손목[0]→검지끝[8] ray 가 가장 잘 향하는 좌석(player)을 지목 → VOTE_POINT.
 
-        ctx.anchors 의 seat_{pid} 좌표로 사람을 가리킨다. 1인 1표.
+        ctx.anchors 의 seat_{pid} 좌표로 사람을 가리킨다.
+
+        카운트다운이 끝날 때까지 지목은 몇 번이든 바뀔 수 있다. 대상을 바꿔
+        _POINT_HOLD_FRAMES 만큼 붙잡으면 그때마다 새 VOTE_POINT가 나가고, FSM이
+        그 값으로 덮어쓴다. 확정은 카운트다운이 끝나며 votes_locked가 한다.
         """
         voter_id = hand.player_id
         if not voter_id:
             return None
         if not hand.landmarks_21 or len(hand.landmarks_21) < 9:
-            return None
+            return self._break_streak(voter_id)
 
         wrist = hand.landmarks_21[0]      # landmark 0
         index_tip = hand.landmarks_21[8]  # landmark 8
@@ -106,7 +140,7 @@ class WerewolfRules:
         length = math.hypot(dx, dy)
 
         if length < _MIN_POINT_LENGTH:
-            return None  # 검지가 접혀 있음
+            return self._break_streak(voter_id)  # 검지가 접혀 있음
 
         nx, ny = dx / length, dy / length
 
@@ -136,9 +170,24 @@ class WerewolfRules:
                 best_target = target_id
 
         if best_target is None:
+            return self._break_streak(voter_id)
+
+        # 최근에 겨눈 좌석들에 이번 프레임을 더한다. 팔을 드는 동안 스쳐 지나간
+        # 좌석은 한 번씩만 들어와 기준을 못 넘는다.
+        window = self._point_window.setdefault(voter_id, deque(maxlen=_POINT_WINDOW))
+        window.append(best_target)
+        counts = Counter(window)
+        hits = counts[best_target]
+        if hits < _POINT_MIN_HITS:
+            return None
+        # 창 안에서 지금 겨누는 쪽보다 더 많이 나온 좌석이 있으면 아직 그쪽이
+        # 우세하다 — 마음을 바꾸는 중일 수 있으니 기다린다. 동률이면 지금
+        # 겨누는 쪽이 이긴다: 같은 횟수라면 더 최근에 겨눈 쪽이 그 사람의 뜻이다.
+        if any(t != best_target and c > hits for t, c in counts.items()):
             return None
 
-        # 동일 대상 매 프레임 재발화 억제. 대상이 바뀐 경우만 발화.
+        # 이미 이 대상으로 발화해 뒀으면 다시 보낼 것이 없다. 대상을 바꿔 그쪽이
+        # 창에서 기준을 넘기면 그때 새로 나간다.
         if best_target == self._votes_cast.get(voter_id):
             return None
 
@@ -149,3 +198,17 @@ class WerewolfRules:
             "_key": (voter_id, best_target),
         }
         return VOTE_POINT, data, 0.85
+
+    def _break_streak(self, voter_id: str) -> None:
+        """지목이 안 잡힌 프레임.
+
+        **창을 비우지 않는다.** 비우면 손을 한 번 놓칠 때마다 처음부터 세게 되고,
+        오버헤드 뷰에서 손이 프레임마다 끊기는 실제 조건에서는 표가 영영 안 쌓인다.
+        놓친 프레임은 그냥 아무것도 안 넣는 것으로 충분하다 — 겨누고 있는 한
+        다음에 잡히는 프레임이 이어서 쌓인다.
+
+        이미 발화한 표(_votes_cast)도 지우지 않는다. 손을 내렸다고 표가 사라지면
+        카운트다운이 끝나는 순간 손을 들고 있던 사람만 투표한 것이 된다.
+        """
+        _ = voter_id
+        return None

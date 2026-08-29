@@ -14,7 +14,10 @@ class AudioType(StrEnum):
 
 
 class AudioPriority(IntEnum):
-    CRITICAL = 1  # 규칙 위반. 현재 재생 즉시 인터럽트(fade-out), 큐의 interruptible 항목 제거.
+    # 지금 반드시 들려야 하는 말. 현재 재생 즉시 인터럽트(fade-out) + 큐의
+    # interruptible 항목 제거. 규칙 위반 제지와, 야간 단계 마감 지시
+    # ("눈을 다시 감아주세요")가 여기 온다 — 둘 다 밀리면 뜻을 잃는다.
+    CRITICAL = 1
     HIGH = 2  # 템포
     NORMAL = 3  # 일반 멘트
     LOW = 4  # BGM

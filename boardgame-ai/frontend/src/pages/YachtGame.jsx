@@ -105,26 +105,32 @@ const s = {
    * 게다가 점수판에서 금색은 "지금 누를 만한 칸"에 쓰기로 했으므로, 채움까지
    * 금색이면 왼쪽의 안내와 오른쪽의 선택지가 같은 무게로 보인다.
    *
-   * 존재감은 채도가 아니라 크기와 굵기로 가져간다. 색은 점 하나만 남긴다.
+   * 존재감은 채도가 아니라 크기와 굵기로 가져간다.
+   *
+   * 금색 점도 뺐다. 바로 아래 굴림 횟수가 같은 금색 원 세 개라, 나란히 두면
+   * 둘이 같은 종류의 표시로 보인다 — 하나는 "누구 차례"고 하나는 "몇 번 굴렸나"라
+   * 뜻이 전혀 다른데도 그렇다. 세는 것은 아래 셋뿐이어야 헷갈리지 않는다.
+   *
+   * 테두리도 뺐다. 윤곽선이 있으면 눌러야 할 것처럼 보이는데 이건 안내지
+   * 버튼이 아니다. 대신 **배경 하나로 확실히 떼어낸다.**
+   *
+   * 밝기를 0.43으로 잡은 이유: 뒤의 펠트가 oklch 0.185~0.335 그라디언트라
+   * 그 범위 안의 값을 쓰면(0.30을 썼다가 이렇게 됐다) 판이 배경에 통째로
+   * 묻혀 글자만 떠 있는 것처럼 보인다. 투명도는 쓰지 않는다 — 뒤가 비치면
+   * 자리에 따라 대비가 달라져 어떤 자리에서는 또 흐려진다.
+   *
+   * 색상은 초록 펠트와 갈리게 따뜻한 쪽(76)으로 둔다. 밝기와 색상 둘 다
+   * 다르면 테두리 없이도 경계가 읽힌다.
    */
   turnBadge: {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 11,
-    background: 'color-mix(in oklch, var(--y-gold) 10%, oklch(0.26 0.028 168))',
-    border: '1px solid color-mix(in oklch, var(--y-gold) 30%, transparent)',
+    background: 'oklch(0.43 0.030 76)',
     color: 'var(--y-text)',
     borderRadius: 999,
-    padding: '10px 21px',
+    padding: '10px 24px',
     fontSize: 25,
     fontWeight: 850,
-  },
-  turnDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    background: 'var(--y-gold)',
-    flexShrink: 0,
   },
   roundText: {
     fontSize: 20,
@@ -576,6 +582,11 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const startedRef = useRef(false)
   const previousRollRef = useRef(null)
   const momentSeqRef = useRef(0)
+  // 득점 연출이 도는 동안 붙들어 둘 "차례 정보". null이면 지금 상태 그대로.
+  // 점수는 붙들지 않는다 — 아래 board 계산 부분에 이유가 있다.
+  const [heldTurn, setHeldTurn] = useState(null)
+  const seenStateRef = useRef(null)
+  const prevStateRef = useRef(null)
   // 한 판 동안 이미 보여준 조작 안내. 플레이어가 바뀌어도 다시 뜨지 않는다.
 
   // 득점 순간을 diff로 추론하지 않고 백엔드가 보낸 cue를 그대로 받는다.
@@ -664,6 +675,23 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     const variant = payload.variant || 'normal'
     const isFinish = payload.cue === 'yacht_game_finish'
 
+    // 연출이 끝날 때까지 점수판을 이 사람 칸에 묶어둔다. 점수는 안 묶는다 —
+    // 방금 넣은 점수가 그 칸에 차오르는 것을 보여주려는 것이 목적이다.
+    //
+    // 직전 state가 정말 그 사람 차례였을 때만 묶는다. 아니라면 두 메시지 사이에
+    // 다른 state_update가 끼어든 것이라 근거가 없다 — 그럴 땐 지금까지처럼
+    // 즉시 갱신하는 편이 낫다. 엉뚱한 차례를 붙잡아 보여주는 것보다는 낫다.
+    const before = prevStateRef.current
+    const turnToHold =
+      before && before.current_player_id === payload.scorer_id
+        ? {
+            current_player_id: before.current_player_id,
+            available_categories: before.available_categories,
+            dice_values: before.dice_values,
+            roll_count: before.roll_count,
+          }
+        : null
+
     setTurnPulseKey(key => key + 1)
     setRecentScore({
       seq: momentSeqRef.current++,
@@ -688,7 +716,13 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     // 상단 숫자든 족보든 "+n점"은 똑같이 뜬다. 어떤 칸이냐에 따라 반응이
     // 달라지면 플레이어는 규칙을 하나 더 외워야 한다.
     // 게임 종료만 예외 — 전용 결과 화면이 따로 있어 겹치지 않는다.
-    if (!isFinish) enqueueMoment(payload)
+    //
+    // 차례를 붙드는 것과 연출을 띄우는 것은 반드시 같이 간다. 연출이 없으면
+    // 풀어줄 사람이 없어 점수판이 그 자리에 얼어붙는다.
+    if (!isFinish) {
+      enqueueMoment(payload)
+      if (turnToHold) setHeldTurn(turnToHold)
+    }
   }, [enqueueMoment, cancelDiceSfx, scheduleLeadChangeSfx])
 
   // 에이전트가 화면에 띄우라고 보낸 발언. 코치와 규칙 제지가 같은 통로로 온다.
@@ -762,6 +796,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     if (state?.phase !== GAME_END_PHASE && !state?.tutorial_complete) return
     setMomentQueue([])
     setRecentScore(null)
+    setHeldTurn(null)
   }, [state?.phase, state?.tutorial_complete])
 
   const isTutorial = Boolean(state?.tutorial_mode)
@@ -782,9 +817,48 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     return () => window.clearTimeout(timer)
   }, [isTutorial, introOpen, coach])
 
+  /**
+   * 화면 뒤에 그릴 판.
+   *
+   * 득점 한 번에 백엔드는 [state_update, cue] 순서로 보낸다(games/yacht/fsm.py).
+   * 그래서 큐가 도착한 시점의 state에는 이미 점수가 반영되고 차례도 다음
+   * 사람으로 넘어가 있다. 그대로 그리면 "OO님 +32점"이 화면 가운데서 도는 동안
+   * 뒤의 점수판은 벌써 다음 사람 것이라, 방금 넣은 점수가 어디에 올라갔는지
+   * 볼 수가 없다.
+   *
+   * **붙드는 것은 차례이지 점수가 아니다.** players는 지금 값을 그대로 쓴다 —
+   * 방금 넣은 점수가 점수판에 실시간으로 차오르는 것이 이 연출의 요점이고,
+   * 그걸 보여주려고 그 사람 칸을 붙잡아 두는 것이다. 연출이 끝나면 붙잡은
+   * 차례를 놓아 다음 사람 판으로 넘어간다.
+   *
+   * available_categories·dice_values·roll_count까지 함께 붙드는 이유: 이 셋은
+   * 전부 "지금 차례인 사람" 기준이라, 차례만 되돌리고 이것들을 지금 값으로
+   * 두면 남의 남은 칸으로 그 사람의 예상 점수를 계산하게 된다.
+   */
+  if (state !== seenStateRef.current) {
+    prevStateRef.current = seenStateRef.current
+    seenStateRef.current = state
+  }
+  // 판이 끝나면 붙들지 않는다. 결과 화면은 최종 순위를 보여주는 자리라,
+  // 한 박자 늦은 차례로 우승자를 뽑으면 그건 연출이 아니라 오답이다.
+  const holding = state?.phase === GAME_END_PHASE ? null : heldTurn
+  // useMemo로 감싸는 이유: 매 렌더 새 객체를 만들면 아래 ranked·ranks가 board를
+  // 의존성으로 갖고도 매번 다시 계산돼 memo가 아무 일도 안 하게 된다.
+  const board = useMemo(
+    () => (holding && state ? { ...state, ...holding } : state),
+    [state, holding],
+  )
+  const momentActive = momentQueue.length > 0
+
+  // 연출 대기열이 비면 붙들었던 차례를 놓는다. 득점 뒤에 상단 보너스가 이어질
+  // 수 있으므로 마지막 하나가 끝날 때까지 유지된다.
+  useEffect(() => {
+    if (momentQueue.length === 0) setHeldTurn(null)
+  }, [momentQueue.length])
+
   const currentPlayer = useMemo(
-    () => state?.players?.find(p => p.player_id === state.current_player_id),
-    [state],
+    () => board?.players?.find(p => p.player_id === board.current_player_id),
+    [board],
   )
   // 점수판을 다 채우면 filled+1이 13이 되어 "13 / 12"로 넘어간다. 마지막에서 멈춘다.
   const round = Math.min(
@@ -792,17 +866,17 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     (currentPlayer?.scores ? Object.keys(currentPlayer.scores).length : 0) + 1,
   )
   const ranked = useMemo(
-    () => [...(state?.players || [])].sort((a, b) => b.total - a.total),
-    [state],
+    () => [...(board?.players || [])].sort((a, b) => b.total - a.total),
+    [board],
   )
   // 동점은 같은 순위를 나눠 갖는다. 백엔드 _ranking과 같은 규칙이라 역전 연출이
   // 보여주는 순위와 전체 점수판의 순위가 어긋나지 않는다.
   const ranks = useMemo(() => {
-    const players = state?.players || []
+    const players = board?.players || []
     const totals = [...new Set(players.map(p => p.total))].sort((a, b) => b - a)
     const rankOfTotal = new Map(totals.map((total, index) => [total, index + 1]))
     return new Map(players.map(p => [p.player_id, rankOfTotal.get(p.total)]))
-  }, [state])
+  }, [board])
   const statusMessage = useMemo(() => {
     const latestError = messages.find(m => m.msg_type === 'error')
     return latestError?.payload?.message || state?.last_message
@@ -837,6 +911,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   const resetForNewGame = () => {
     setMomentQueue([])
     setRecentScore(null)
+    setHeldTurn(null)
     setCoach(null)
   }
 
@@ -947,7 +1022,9 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
     )
   }
 
-  const diceValues = state.dice_values?.length ? state.dice_values : [null, null, null, null, null]
+  // 주사위도 연출과 함께 넘어간다. 방금 그 눈으로 점수를 낸 것이라, 축하가
+  // 도는 동안 뒤에서 빈 트레이로 리셋되면 무엇을 축하하는지가 사라진다.
+  const diceValues = board.dice_values?.length ? board.dice_values : [null, null, null, null, null]
 
   return (
     <div style={s.page} className="yacht-root">
@@ -1019,7 +1096,6 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
               className={turnPulseKey ? 'yacht-turn-pulse' : undefined}
               style={s.turnBadge}
             >
-              <span style={s.turnDot} />
               {currentPlayer?.playername || '-'} 님 차례
             </div>
             <div
@@ -1032,7 +1108,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
 
           <div style={s.rollRow}>
             <span style={s.rollLabel}>굴림</span>
-            {[0, 1, 2].map(i => <span key={i} style={s.clip(i < state.roll_count)} />)}
+            {[0, 1, 2].map(i => <span key={i} style={s.clip(i < board.roll_count)} />)}
           </div>
 
           <div style={s.tray}>
@@ -1142,9 +1218,12 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
           </div>
           <div style={s.sheetWrap} className="scroll">
             <ScoreTable
-              state={state}
+              state={board}
               player={currentPlayer}
               recentScore={recentScore}
+              // 연출이 도는 동안 보이는 판은 이미 지나간 차례의 것이다. 그 위의
+              // 칸을 누를 수 있게 두면 FSM이 거부할 입력을 유도하게 된다.
+              interactive={!momentActive}
               onScore={(category) => scoreCategory(category, state, send)}
             />
           </div>
@@ -1168,14 +1247,14 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
             <div
               style={{
                 ...s.boardGrid,
-                gridTemplateColumns: `repeat(${state.players.length}, minmax(0, 1fr))`,
+                gridTemplateColumns: `repeat(${board.players.length}, minmax(0, 1fr))`,
               }}
               className="scroll"
             >
-              {state.players.map((player, index) => (
+              {board.players.map((player, index) => (
                 <div
                   key={player.player_id}
-                  style={s.boardColumn(index < state.players.length - 1)}
+                  style={s.boardColumn(index < board.players.length - 1)}
                 >
                   {/* 합계는 각 열 맨 아래에 이미 있다. 이름 옆에 또 쓰는 대신
                       혼자서는 알 수 없는 것 — 몇 등인지 — 을 보여준다. */}
@@ -1185,7 +1264,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
                     </span>
                     {player.playername}
                   </div>
-                  <ScoreTable state={state} player={player} compact recentScore={recentScore} />
+                  <ScoreTable state={board} player={player} compact recentScore={recentScore} />
                 </div>
               ))}
             </div>
@@ -1201,7 +1280,7 @@ export default function YachtGame({ players, tutorialMode = false, onExit, onCha
   )
 }
 
-function ScoreTable({ state, player, compact = false, recentScore, onScore }) {
+function ScoreTable({ state, player, compact = false, recentScore, onScore, interactive = true }) {
   const isCurrent = player?.player_id === state.current_player_id
   const tdName = s.tdName
   const tdScore = s.tdScore
@@ -1259,7 +1338,8 @@ function ScoreTable({ state, player, compact = false, recentScore, onScore }) {
           const score = player?.scores?.[key]
           const hasScore = score != null
           const open = compact ? false : state.available_categories?.includes(key)
-          const canScore = !compact && isCurrent && open && Boolean(state.dice_values?.length)
+          const canScore =
+            interactive && !compact && isCurrent && open && Boolean(state.dice_values?.length)
           const displayScore = hasScore
             ? score
             : (compact ? '—' : predictedScore(key, state))

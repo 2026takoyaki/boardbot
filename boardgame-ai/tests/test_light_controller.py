@@ -28,6 +28,18 @@ _SCENES = {
     },
 }
 
+# 어둠을 거쳐 들어가는 Scene이 섞인 표. 밤 전환 테스트만 이걸 쓴다 — 위 _SCENES를
+# 통째로 바꾸면 나머지 테스트가 전부 페이드를 기다려야 해서 느려진다.
+_DIP_SCENES = {
+    "werewolf": {
+        **_SCENES["werewolf"],
+        "night_seer": Scene(
+            "ww_seer", (70, 90, 230), brightness=15, transition_ms=1200, enter_via_dark=True
+        ),
+    },
+    "yacht": _SCENES["yacht"],
+}
+
 _CUES = {
     "yacht_turn_transition": Cue(
         "turn_sweep", GOLD, brightness=100, rise_ms=200, hold_ms=400, fall_ms=200
@@ -41,8 +53,13 @@ def _config(**overrides) -> LightConfig:
     return LightConfig(**base)
 
 
-def _controller(driver: MockDriver, **cfg) -> LightController:
-    return LightController(driver, _config(**cfg), scene_map=_SCENES, cue_map=_CUES)
+def _controller(driver: MockDriver, scene_map=None, **cfg) -> LightController:
+    return LightController(
+        driver,
+        _config(**cfg),
+        scene_map=scene_map if scene_map is not None else _SCENES,
+        cue_map=_CUES,
+    )
 
 
 def _state(phase: str) -> WSMessage:
@@ -105,6 +122,76 @@ async def test_same_phase_repeated_sends_nothing_new():
         await _settle()
 
     assert len(driver.applied) == 1
+
+
+# ── 밤 전환 (어둠을 거쳐 들어가기) ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_night_role_change_dips_through_darkness():
+    """역할이 바뀔 때 색만 갈아끼우지 않고 소등을 한 번 거친다.
+
+    "눈을 감으세요 / 눈을 뜨세요"가 한 쌍인데 조명이 한 번만 움직이면 조명은
+    그 중 뒤쪽만 말한다. 소등이 앞쪽을 맡는다.
+    """
+    driver = MockDriver()
+    controller = _controller(driver, scene_map=_DIP_SCENES)
+
+    # 먼저 방을 밝혀 둔다 — 이미 어두우면 소등할 것이 없다.
+    controller.on_message(_state("day_discussion"), game="werewolf")
+    await _settle()
+    driver.applied.clear()
+
+    controller.on_message(_state("night_seer"), game="werewolf")
+    await asyncio.sleep(2.0)  # fall + dark 를 넘긴 뒤
+
+    brightnesses = [b for _c, b, _d in driver.applied]
+    assert brightnesses[0] == 0, "먼저 꺼져야 한다"
+    assert brightnesses[-1] == 15, "그 다음 역할 색으로 올라와야 한다"
+    assert driver.applied[-1][0] == (70, 90, 230)
+
+
+@pytest.mark.asyncio
+async def test_next_phase_during_a_dip_wins():
+    """소등을 거치는 중에 다음 페이즈가 오면 새 쪽이 이긴다.
+
+    어둠을 거치는 경로는 2초 넘게 걸린다. 먼저 시작한 쪽을 세워두지 않으면
+    그쪽이 뒤늦게 깨어나 새로 올라온 색을 옛 색으로 덮어쓴다.
+    """
+    driver = MockDriver()
+    controller = _controller(driver, scene_map=_DIP_SCENES)
+
+    controller.on_message(_state("day_discussion"), game="werewolf")
+    await _settle()
+
+    controller.on_message(_state("night_seer"), game="werewolf")
+    await asyncio.sleep(0.2)  # 아직 어둠 구간에 있다
+    controller.on_message(_state("night_werewolf"), game="werewolf")
+    await asyncio.sleep(2.5)
+
+    color, brightness, _duration = driver.last
+    assert color == RED, "마지막에 도착한 페이즈의 색으로 끝나야 한다"
+    assert brightness == 15
+
+
+@pytest.mark.asyncio
+async def test_already_dark_room_does_not_dip_again():
+    """암전에서 첫 역할로 갈 때는 그냥 올린다.
+
+    이미 캄캄한 방을 한 번 더 끄면 아무 일도 안 일어난 것처럼 보인다.
+    """
+    driver = MockDriver()
+    controller = _controller(driver, scene_map=_DIP_SCENES)
+
+    controller.on_message(_state("night_start"), game="werewolf")
+    await _settle()
+    assert driver.last[1] == 0
+    driver.applied.clear()
+
+    controller.on_message(_state("night_seer"), game="werewolf")
+    await _settle()
+
+    assert [b for _c, b, _d in driver.applied] == [15], "소등을 거치지 않고 바로 올라와야 한다"
 
 
 # ── 밝기 하한 ────────────────────────────────────────────────────────────────

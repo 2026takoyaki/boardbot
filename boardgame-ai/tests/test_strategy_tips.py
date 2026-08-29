@@ -58,6 +58,45 @@ def test_전략_문장이_lines에_있다() -> None:
     assert lines.get("strategy.yacht_none")
 
 
+# 야간 조언 한 줄의 글자 수 상한.
+#
+# 야간 단계는 짧다. 안내가 5초, 마지막 "눈을 다시 감아주세요"에 4초를 쓰고 나면
+# 조언에 남는 것은 5초 남짓이고, 한국어 TTS는 초당 5~6자를 읽는다. 이 상한을
+# 넘으면 조언이 끝나기 전에 단계가 넘어가 마감 지시가 통째로 잘린다.
+_NIGHT_TIP_MAX_CHARS = 25
+
+
+def test_야간_훈수는_한_단계_안에_들어갈_길이다() -> None:
+    """기본 문구와 출고된 페르소나 문구 전부를 검사한다.
+
+    한쪽만 줄이면 그 페르소나에서만 다시 잘린다 — 실제로 기본 문구를 줄이기
+    전에는 여섯 줄이 55~75자였고, 앞 절반은 진행 안내가 방금 한 말이었다.
+    """
+    import json
+    from pathlib import Path
+
+    too_long: list[str] = []
+
+    for line_id in werewolf_coach.PHASE_TIPS.values():
+        text = lines.get(line_id)
+        if len(text) > _NIGHT_TIP_MAX_CHARS:
+            too_long.append(f"기본/{line_id} {len(text)}자")
+
+    tip_ids = set(werewolf_coach.PHASE_TIPS.values())
+    persona_dir = Path(__file__).resolve().parent.parent / "agents" / "tools" / "persona_lines"
+    for path in sorted(persona_dir.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        catalog = data.get("lines", data)
+        for line_id, text in catalog.items():
+            if line_id in tip_ids and len(text) > _NIGHT_TIP_MAX_CHARS:
+                too_long.append(f"{path.stem}/{line_id} {len(text)}자")
+
+    assert not too_long, (
+        f"야간 훈수가 {_NIGHT_TIP_MAX_CHARS}자를 넘는다 — "
+        f"단계 안에 안 들어가 마감 지시가 잘린다: {too_long}"
+    )
+
+
 def test_늑대인간_훈수가_lines에서_나온다() -> None:
     agent = _enabled()
     result = agent.on_state_change(_ctx("werewolf", "night_seer"))

@@ -12,9 +12,16 @@ from unittest.mock import patch
 
 import pytest
 
+from agents.tempo_agent import PHASE_END_WARNING_LEAD
+from agents.tools import lines, tempo_pool, werewolf_coach
 from core.constants import CommonEventType
 from core.events import GameEvent
-from games.werewolf.fsm import VOTE_COUNTDOWN_SECONDS, WerewolfFSM
+from games.werewolf.fsm import (
+    ACTIVE_PHASE_TIMEOUT,
+    PASSIVE_PHASE_DURATION,
+    VOTE_COUNTDOWN_SECONDS,
+    WerewolfFSM,
+)
 from games.werewolf.ontology import (
     PHASE_TO_ROLE,
     WerewolfEventType,
@@ -56,6 +63,98 @@ def _gesture(actor_id: str = "p_0") -> GameEvent:
         frame_id=1,
         data={"gesture": "ok_sign"},
     )
+
+
+# ── 야간 발화 예산 ────────────────────────────────────────────────────────────
+#
+# "눈을 다시 감아주세요"가 못 나오면 눈을 언제 감을지 아무도 모른다. 그 지시가
+# 단계 안에 반드시 들어가도록 시간을 문장 길이에서 거꾸로 잡았는데, 문장은
+# 나중에 얼마든지 길어질 수 있다. 그때 조용히 잘리는 대신 여기서 실패한다.
+
+_CHARS_PER_SEC = 5.0  # 보수적(느리게 읽는 쪽) 추정. fsm.py의 주석과 같은 값.
+_ACT_ACTIVE = 4.0  # 카드를 실제로 다루는 시간
+_ACT_PASSIVE = 3.0  # 서로 확인하는 시간
+
+
+def _longest_across_personas(line_id: str) -> int:
+    """기본 문구와 출고된 페르소나 문구 중 가장 긴 것의 글자 수.
+
+    한 페르소나만 길어도 그 사람 판에서만 지시가 잘린다. 최댓값으로 잡아야
+    누구를 골라도 안전하다.
+    """
+    import json
+    from pathlib import Path
+
+    longest = len(lines.get(line_id) or "")
+    persona_dir = Path(__file__).resolve().parent.parent / "agents" / "tools" / "persona_lines"
+    for path in sorted(persona_dir.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        catalog = data.get("lines", data)
+        longest = max(longest, len(catalog.get(line_id) or ""))
+    return longest
+
+
+def test_야간_단계에_마감_지시까지_들어갈_시간이_있다() -> None:
+    short: list[str] = []
+
+    for phase, tip_id in werewolf_coach.PHASE_TIPS.items():
+        chars = _longest_across_personas(f"werewolf.{phase}") + _longest_across_personas(tip_id)
+        need = chars / _CHARS_PER_SEC + _ACT_ACTIVE + PHASE_END_WARNING_LEAD
+        if need > ACTIVE_PHASE_TIMEOUT:
+            short.append(f"{phase} {need:.1f}초 필요 > {ACTIVE_PHASE_TIMEOUT}초")
+
+    for phase in ("night_werewolf", "night_minion", "night_mason"):
+        chars = _longest_across_personas(f"werewolf.{phase}")
+        need = chars / _CHARS_PER_SEC + _ACT_PASSIVE + PHASE_END_WARNING_LEAD
+        if need > PASSIVE_PHASE_DURATION:
+            short.append(f"{phase} {need:.1f}초 필요 > {PASSIVE_PHASE_DURATION}초")
+
+    assert not short, (
+        "야간 단계가 짧아 '눈을 다시 감아주세요'가 잘린다. "
+        f"멘트를 줄이거나 단계 시간을 늘려라: {short}"
+    )
+
+
+def test_마감_지시는_리드_시간_안에_읽힌다() -> None:
+    """지시를 읽는 시간 + 눈을 감을 시간이 리드 안에 들어가야 한다."""
+    cap = tempo_pool.max_len("tempo.close_eyes_again")
+    speaking = cap / _CHARS_PER_SEC
+    assert (
+        speaking < PHASE_END_WARNING_LEAD
+    ), f"마감 지시 상한 {cap}자({speaking:.1f}초)가 리드 {PHASE_END_WARNING_LEAD}초를 채운다"
+    # 출고된 문구가 상한을 지키는지도 함께 본다 — 상한만 있고 안 지키면 소용없다.
+    actual = _longest_across_personas("tempo.close_eyes_again")
+    assert actual <= cap, f"출고된 마감 지시가 {actual}자로 상한 {cap}자를 넘는다"
+
+
+# ── 페이즈 시간 전달 ──────────────────────────────────────────────────────────
+
+
+def test_state_update_carries_phase_duration() -> None:
+    """화면의 카운트다운이 쓸 시간을 상태에 실어 보낸다.
+
+    예전에는 화면이 이 숫자를 자기 파일에 복사해 갖고 있어서, 백엔드 시간만
+    바꾸면 숫자가 0이 되어도 단계가 안 넘어가는 상태가 됐다. 숫자의 주인은
+    타이머를 가진 FSM이다.
+    """
+    fsm = _make_fsm()
+
+    fsm.state.phase = WerewolfPhase.NIGHT_WEREWOLF.value  # 패시브
+    assert fsm._make_state_update().payload["phase_duration"] == PASSIVE_PHASE_DURATION
+
+    fsm.state.phase = WerewolfPhase.NIGHT_SEER.value  # 액티브
+    assert fsm._make_state_update().payload["phase_duration"] == ACTIVE_PHASE_TIMEOUT
+
+    # 타이머가 없는 페이즈는 None — 화면이 가짜 카운트다운을 돌리지 않게 한다.
+    fsm.state.phase = WerewolfPhase.DAY_DISCUSSION.value
+    assert fsm._make_state_update().payload["phase_duration"] is None
+
+
+def test_practice_mode_has_no_fixed_phase_duration() -> None:
+    """튜토리얼은 안내 TTS가 끝난 뒤 화면이 전이를 주도한다. 고정 시간이 없다."""
+    fsm = _make_fsm(practice_mode=True)
+    fsm.state.phase = WerewolfPhase.NIGHT_SEER.value
+    assert fsm._make_state_update().payload["phase_duration"] is None
 
 
 # ── 패시브 타이머 ─────────────────────────────────────────────────────────────

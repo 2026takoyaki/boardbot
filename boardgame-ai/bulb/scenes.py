@@ -32,6 +32,8 @@ class Scene:
     brightness: int
     transition_ms: int = 1200
     kelvin: int | None = None  # 흰색 계열이면 색온도로 낸다. 아래 §색온도 참고.
+    # 이 Scene으로 들어갈 때 어둠을 한 번 거친다. 아래 §밤 전환 참고.
+    enter_via_dark: bool = False
 
     @property
     def is_blackout(self) -> bool:
@@ -137,7 +139,6 @@ SPECIAL_PURPLE: RGB = (150, 60, 220)
 VILLAGE_GREEN: RGB = (40, 200, 90)
 INFO_INDIGO: RGB = (70, 90, 230)
 TRICK_AMBER: RGB = (255, 150, 30)
-TENSION_RED: RGB = (255, 110, 70)
 DAWN_WARM: RGB = (255, 225, 190)
 CELEBRATION_GOLD: RGB = (255, 200, 90)
 
@@ -187,6 +188,44 @@ YACHT_DEFLATE_KELVIN = 4300
 # 늑대인간 새벽. 밤의 원색들 사이에서 유일하게 흰색에 가까워 색온도로 낸다.
 DAWN_KELVIN = 3000
 
+# 늑대인간 투표. **이 구간은 인식 구간이다** — 손가락 지목을 MediaPipe가 읽어야
+# 투표가 성립한다. 그런데 원색 빨강(255,20,20) 밝기 55로 두었더니 카메라가 받는
+# 그림에서 G·B 채널이 거의 비어, 손과 배경이 같은 붉은 덩어리로 뭉갠다.
+# MediaPipe는 RGB 세 채널을 다 보고 학습됐으므로 여기서 손을 놓친다.
+#
+# 그래서 요트와 같은 원칙을 적용한다: 인식이 걸린 구간은 인식이 우선이다.
+# 색온도 모드로 바꾸면 전용 백색 LED(광대역)를 쓰므로 세 채널에 모두 신호가
+# 남고, 같은 밝기에서 더 밝다. 붉은 기는 색온도를 전구 하한 가까이 내려 얻는다
+# — 원색 빨강만큼 강렬하진 않지만 어두운 방에서 충분히 붉게 읽힌다.
+VOTE_KELVIN = 2000
+# 지목하는 동안의 밝기. 밤의 어둠과 대비되어야 하고, 손이 보여야 한다.
+VOTE_BRIGHTNESS = 80
+# 화면(LightStrip)이 그릴 색. 전구는 색온도로 나가므로 이 값은 인상만 담당한다.
+VOTE_WARM_RED: RGB = (255, 196, 170)
+
+
+# ── 밤 전환 ──────────────────────────────────────────────────────────────────
+#
+# 역할이 넘어갈 때 색만 갈아끼우면, 조명은 "장면이 바뀌었다"까지만 말하고
+# **눈을 감았다 뜬다는 규칙 자체는 말하지 않는다.** 진행자는 "늑대인간은 눈을
+# 감으세요 / 예언자는 눈을 뜨세요"라고 두 번 말하는데 조명은 한 번만 움직인다.
+#
+# 그래서 어둠을 한 번 거쳐 간다.
+#
+#   이전 역할 색 ──fall──▶ 소등 ──dark 유지──▶ 다음 역할 색 ──rise──▶
+#                        "눈을 감으세요"      "눈을 뜨세요"
+#
+# 소등 구간이 있어야 눈을 감는 사람이 감았는지 확인할 필요 없이 방이 어둡고,
+# 다시 밝아지는 순간이 곧 다음 역할의 신호가 된다.
+#
+# 이 길이만큼 밤 단계 시간도 늘려야 한다 (games/werewolf/fsm.py의
+# PASSIVE_PHASE_DURATION / ACTIVE_PHASE_TIMEOUT). 안 늘리면 조명이 다 오르기
+# 전에 다음 단계로 넘어간다.
+NIGHT_DIP_FALL_MS = 600   # 이전 역할 색 → 소등
+NIGHT_DIP_DARK_MS = 900   # 완전한 어둠 유지
+NIGHT_DIP_RISE_MS = 800   # 소등 → 다음 역할 색
+NIGHT_DIP_TOTAL_MS = NIGHT_DIP_FALL_MS + NIGHT_DIP_DARK_MS + NIGHT_DIP_RISE_MS
+
 
 def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
     """늑대인간 페이즈 → Scene.
@@ -199,29 +238,49 @@ def build_werewolf_scenes(night_brightness: int) -> dict[str, Scene]:
     실물로만 찾을 수 있다 (§7.2-8). 현장에서 LIGHT_NIGHT_BRIGHTNESS 로 조정한다.
     """
     night = night_brightness
+
+    def role(name: str, color: RGB) -> Scene:
+        """밤 역할 Scene. 전부 어둠을 거쳐 들어간다 (§밤 전환).
+
+        transition_ms는 쓰이지 않는다 — 어둠을 거치는 경로가 자기 페이드 시간을
+        따로 갖기 때문이다. 그래도 값을 남겨두는 이유는 enter_via_dark를 끄면
+        곧바로 예전 동작(직접 크로스페이드)으로 돌아갈 수 있게 하기 위해서다.
+        """
+        return Scene(name, color, night, 1200, enter_via_dark=True)
+
     return {
         # "밤이 되었습니다" — 완전한 암전에서 시작한다. 여기서 각 역할의 색이
         # 스며들어야 장면이 산다. 밤에는 비전이 할 일이 없어 소등해도 잃을 게 없다.
         WerewolfPhase.NIGHT_START.value: BLACKOUT_SCENE,
-        WerewolfPhase.NIGHT_DOPPELGANGER.value: Scene(
-            "ww_doppelganger", SPECIAL_PURPLE, night, 1200
-        ),
-        WerewolfPhase.NIGHT_WEREWOLF.value: Scene("ww_werewolf", VILLAIN_RED, night, 1200),
-        WerewolfPhase.NIGHT_MINION.value: Scene("ww_minion", VILLAIN_RED_WEAK, night, 1200),
-        WerewolfPhase.NIGHT_MASON.value: Scene("ww_mason", VILLAGE_GREEN, night, 1200),
-        WerewolfPhase.NIGHT_SEER.value: Scene("ww_seer", INFO_INDIGO, night, 1200),
-        WerewolfPhase.NIGHT_INSOMNIAC.value: Scene("ww_insomniac", INFO_INDIGO, night, 1200),
-        WerewolfPhase.NIGHT_ROBBER.value: Scene("ww_robber", TRICK_AMBER, night, 1200),
-        WerewolfPhase.NIGHT_TROUBLEMAKER.value: Scene("ww_troublemaker", TRICK_AMBER, night, 1200),
-        WerewolfPhase.NIGHT_DRUNK.value: Scene("ww_drunk", TRICK_AMBER, night, 1200),
+        WerewolfPhase.NIGHT_DOPPELGANGER.value: role("ww_doppelganger", SPECIAL_PURPLE),
+        WerewolfPhase.NIGHT_WEREWOLF.value: role("ww_werewolf", VILLAIN_RED),
+        WerewolfPhase.NIGHT_MINION.value: role("ww_minion", VILLAIN_RED_WEAK),
+        WerewolfPhase.NIGHT_MASON.value: role("ww_mason", VILLAGE_GREEN),
+        WerewolfPhase.NIGHT_SEER.value: role("ww_seer", INFO_INDIGO),
+        WerewolfPhase.NIGHT_INSOMNIAC.value: role("ww_insomniac", INFO_INDIGO),
+        WerewolfPhase.NIGHT_ROBBER.value: role("ww_robber", TRICK_AMBER),
+        WerewolfPhase.NIGHT_TROUBLEMAKER.value: role("ww_troublemaker", TRICK_AMBER),
+        WerewolfPhase.NIGHT_DRUNK.value: role("ww_drunk", TRICK_AMBER),
         # ★ 이 게임의 감정적 클라이막스. 어둠에서 따뜻한 빛이 2.5초에 걸쳐
         # 차오르며 TTS가 얹힌다. 프론트 PhaseTransition의 dawn 타입
         # (duration 2500, midAt 300)과 타이밍을 맞춘다.
         WerewolfPhase.DAY_DISCUSSION.value: Scene(
             "ww_dawn", DAWN_WARM, 100, 2500, kelvin=DAWN_KELVIN
         ),
-        WerewolfPhase.VOTE_COUNTDOWN.value: Scene("ww_countdown", TENSION_RED, 60, 2000),
-        WerewolfPhase.VOTE.value: Scene("ww_vote", VILLAIN_RED, 55, 1000),
+        # 투표 두 페이즈는 인식 구간이다 — 위 VOTE_KELVIN 주석 참고.
+        # 밤에서 올라오는 자리라 여기도 어둠을 한 번 거친다: 토론이 끝나고
+        # 방이 한 번 잠긴 뒤 붉게 밝아지는 편이 카운트다운의 시작을 분명히 한다.
+        WerewolfPhase.VOTE_COUNTDOWN.value: Scene(
+            "ww_countdown",
+            VOTE_WARM_RED,
+            VOTE_BRIGHTNESS,
+            2000,
+            kelvin=VOTE_KELVIN,
+            enter_via_dark=True,
+        ),
+        WerewolfPhase.VOTE.value: Scene(
+            "ww_vote", VOTE_WARM_RED, VOTE_BRIGHTNESS, 1000, kelvin=VOTE_KELVIN
+        ),
         # 시스템은 역할을 모르므로 승리팀 색 분기가 없다. 투표 결과를 발표하고
         # 플레이어들이 직접 카드를 공개하는 구간이라 밝게 유지한다.
         WerewolfPhase.RESULT.value: Scene("ww_result", CELEBRATION_GOLD, 100, 1500),

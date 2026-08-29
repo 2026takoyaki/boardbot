@@ -187,6 +187,69 @@ def test_partial_change_above_threshold_fires() -> None:
     assert result == "p_a"
 
 
+def test_four_kept_one_rerolled_same_pip_fires() -> None:
+    """4개 킵 + 1개 재굴림에서 **같은 눈이 다시 나와도** 발화한다.
+
+    눈 분포만 보면 이 굴림은 "아무 일도 없었음"과 구분되지 않는다. 구분되는
+    것은 자리다 — 재굴림된 주사위만 원래 있던 자리를 비우고 다른 곳에 앉는다.
+
+    굴림통에 넣었다 쏟은 주사위는 화면에서 사라졌다 나타나므로 ByteTrack이
+    새 track_id를 준다. track_id로 짝을 지으면 이 주사위가 비교에서 통째로
+    빠지고, 남는 4개는 전부 제자리라 점수가 0이 되어 굴림이 사라졌다.
+    """
+    attr = RollAttributor(
+        stabilization_frames=3,
+        enter_debounce_frames=1,
+        exit_debounce_frames=1,
+        roll_tray_in_tray_required=1,
+    )
+
+    initial = [
+        _dice(0, (0.30, 0.40), pip=1),
+        _dice(1, (0.40, 0.40), pip=2),
+        _dice(2, (0.50, 0.40), pip=3),
+        _dice(3, (0.55, 0.40), pip=4),
+        _dice(4, (0.60, 0.40), pip=5),  # 이 주사위를 다시 굴린다
+    ]
+
+    attr.update(_frame(0, [], initial))
+    attr.update(_frame(1, [_hand("p_a", (0.4, 0.5))], initial))
+    assert attr.state == RollState.HAND_IN_TRAY
+
+    rolled = [
+        _dice(0, (0.30, 0.40), pip=1),  # 킵 — 제자리
+        _dice(1, (0.40, 0.40), pip=2),  # 킵 — 제자리
+        _dice(2, (0.50, 0.40), pip=3),  # 킵 — 제자리
+        _dice(3, (0.55, 0.40), pip=4),  # 킵 — 제자리
+        # 재굴림: 눈은 5 그대로지만 자리가 바뀌고 track_id가 새로 붙었다
+        _dice(97, (0.38, 0.62), pip=5),
+    ]
+    assert attr.update(_frame(2, [], rolled)) == "p_a"
+
+
+def test_cover_and_uncover_with_new_track_ids_no_fire() -> None:
+    """가림으로 track_id가 전부 새로 붙어도, 자리가 그대로면 발화하지 않는다.
+
+    위 테스트의 반대편 경계다. track_id를 버리고 좌표로 짝을 짓기로 한 이상,
+    "track_id가 바뀌었다"가 더는 변화의 근거가 아님을 여기서 못박는다.
+    """
+    attr = RollAttributor(
+        stabilization_frames=3,
+        enter_debounce_frames=1,
+        exit_debounce_frames=1,
+        roll_tray_in_tray_required=1,
+    )
+
+    initial = [_dice(i, (0.30 + 0.06 * i, 0.40), pip=i + 1) for i in range(5)]
+    attr.update(_frame(0, [], initial))
+    attr.update(_frame(1, [_hand("p_a", (0.4, 0.5))], initial))
+    assert attr.state == RollState.HAND_IN_TRAY
+
+    # 굴림통이 지나가며 가렸다 치웠다 — 눈도 자리도 그대로, track_id만 재할당.
+    same_place = [_dice(100 + i, (0.30 + 0.06 * i, 0.40), pip=i + 1) for i in range(5)]
+    assert attr.update(_frame(2, [], same_place)) is None
+
+
 def test_finger_in_tray_triggers_occupation() -> None:
     """wrist는 밖이지만 손가락 끝이 tray 안이어도 점유로 인정."""
     attr = RollAttributor(
