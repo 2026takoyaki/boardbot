@@ -1,0 +1,19 @@
+{
+  "lines": [
+    "coach.reroll_mechanic",
+    "coach.hand_small_straight_chase"
+  ],
+  "persona": "chungcheong",
+  "source": "cache-assembled",
+  "text": "남길 주사위는 트레이 한쪽 킵 존으로 옮겨두고, 나머지만 다시 굴리면 되는 겨. 남은 한 개를 다시 굴려서 다섯 개를 잇는 라지 스트레이트 30점을 노려볼 수도 있슈.",
+  "voice": {
+    "emotion": null,
+    "emotion_intensity": null,
+    "language_code": "ko-KR",
+    "model": null,
+    "name": "tc_6059dad0b83880769a50502f",
+    "pitch": 0.0,
+    "provider": "typecast",
+    "speaking_rate": 0.9
+  }
+}

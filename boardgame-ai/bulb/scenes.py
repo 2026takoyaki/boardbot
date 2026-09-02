@@ -474,6 +474,69 @@ def build_control_cue_map() -> dict[str, ControlCue]:
     return dict(CONTROL_CUES)
 
 
+# ── 발표 연출 ────────────────────────────────────────────────────────────────
+#
+# 관리자 콘솔의 버튼 하나가 방을 어떻게 움직이는지. 조명 정의를 새로 만들지
+# 않고 위의 게임 정의를 조립만 한다 — 재현하려는 것이 실제 게임의 그 순간이라,
+# 여기서 따로 만들면 게임 쪽 값을 고쳤을 때 발표용만 옛 색으로 남는다.
+
+
+# 발표 콘솔의 바탕. 로비와 같은 백색이다 — 관리자 화면에 들어갔다는 이유로
+# 방 조명이 달라지면, 발표자는 아무것도 안 했는데 무대가 먼저 바뀐다.
+#
+# NEUTRAL_SCENE과 색·밝기가 같고 페이드만 길다. 여기로 돌아오는 자리가 대부분
+# 밤 색(밝기 15)이라, 게임용 800ms로 백색 100%까지 올리면 눈이 부시다.
+SHOW_REST_SCENE = Scene(
+    name="show_rest",
+    color=NEUTRAL_WHITE,
+    brightness=100,
+    transition_ms=1500,
+    kelvin=NEUTRAL_KELVIN,
+)
+
+# 발표 연출의 암전 페이드. 게임의 밤 전환과 같은 값을 쓴다(NIGHT_DIP_FALL_MS).
+SHOW_DARK_FALL_MS = NIGHT_DIP_FALL_MS
+
+
+@dataclass(frozen=True)
+class ShowLight:
+    """발표 버튼 하나의 조명 계획.
+
+        방을 재우고(dark_ms) → scene 을 올리고 → cue 를 터뜨리고
+        → 목소리가 끝나면 rest 로 물러난다.
+
+    **dark_ms가 필요한 이유.** 늑대인간 밤은 "눈을 감으세요 / 뜨세요"가 한
+    쌍이다. 밝은 방에서 곧바로 붉은색으로 갈아끼우면 조명이 뒤쪽만 말한다.
+    한 번 재웠다 올려야 앞쪽까지 조명이 말해준다. 게임의 밤 전환과 같은
+    구조인데(Scene.enter_via_dark), 여기서는 어둠의 길이와 목소리가 들어오는
+    시점을 맞춰야 해서 직접 잡는다.
+
+    **rest가 None이면 scene에 머문다.** 요트 큐처럼 스스로 제자리로 돌아오는
+    연출이 그렇다. 밤 색은 스스로 돌아올 데가 없어서 rest를 준다 — 목소리가
+    끝났는데 방이 계속 붉으면 그때부터는 연출이 아니라 그냥 붉은 방이다.
+    물러나는 시점을 여기서 숫자로 잡지 않는 이유는, 그게 **목소리가 끝나는
+    때**라서다. 목소리 길이는 음원 파일이 알고 있다(backend/show_acts.py).
+    """
+
+    scene: Scene
+    cue: Cue | None = None
+    dark_ms: int = 0
+    rest: Scene | None = None
+
+    @property
+    def enter_ms(self) -> int:
+        """버튼을 누르고 색이 오르기 시작할 때까지. 소리도 이때 들어온다."""
+        return SHOW_DARK_FALL_MS + self.dark_ms if self.dark_ms > 0 else 0
+
+    @property
+    def total_ms(self) -> int:
+        """색이 제자리에 설 때까지. rest는 목소리가 정하므로 빠진다."""
+        total = self.enter_ms + self.scene.transition_ms
+        if self.cue is not None:
+            total += self.cue.total_ms
+        return total
+
+
 def build_scene_map(night_brightness: int) -> dict[str, dict[str, Scene]]:
     return {
         "werewolf": build_werewolf_scenes(night_brightness),

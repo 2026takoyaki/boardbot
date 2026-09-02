@@ -1,0 +1,14 @@
+{
+  "persona": "basic",
+  "text": "늑대인간은 일어나세요. 서로를 확인하고 다시 눈을 감으세요.",
+  "voice": {
+    "emotion": null,
+    "emotion_intensity": null,
+    "language_code": "ko-KR",
+    "model": null,
+    "name": "tc_677628030c63239147ab40c6",
+    "pitch": 0.0,
+    "provider": "typecast",
+    "speaking_rate": 1.05
+  }
+}

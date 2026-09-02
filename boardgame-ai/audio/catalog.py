@@ -103,6 +103,10 @@ SFX_REGISTRY: dict[str, str] = {
     "control_applause": "/sfx/control_applause.mp3",  # 박수
     "control_fart": "/sfx/control_fart.mp3",  # 방구
     "control_party": "/sfx/control_party.mp3",  # 파티 — 10초 안팎의 댄스 음악
+    # ── 발표 연출 ──
+    # 관리자 콘솔의 버튼이 쓴다(backend/show_acts.py). 나머지 셋은 실제 게임이
+    # 쓰는 소리를 그대로 가져다 쓰는데, 예언자 차례에 해당하는 소리만 없다.
+    "seer_chime": "/sfx/seer_chime.mp3",  # 예언자 기상 — 맑은 종소리
 }
 
 # BGM 레지스트리. 자산 파일: audio/assets/bgm/<filename>. 서버 /bgm/<filename>.

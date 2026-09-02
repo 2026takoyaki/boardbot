@@ -35,6 +35,7 @@ from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
 from backend.persona_control import PREVIEW_LINE_ID, apply_persona, persona_options
 from backend.routes.players import router as players_router
+from backend.show_acts import build_show_acts
 from backend.werewolf_runner import WerewolfRunner
 from backend.werewolf_session import WerewolfSession
 from backend.ws.tablet import manager as ws_manager
@@ -174,6 +175,9 @@ async def lifespan(app: FastAPI):
     app.state.bench_session = bench_session
     app.state.light_controller = light_controller
     app.state.dev_mode = dev_mode
+    # 발표 연출. 야간 밝기를 조명 설정에서 그대로 가져와야 늑대인간 밤 재현이
+    # 실제 게임과 같은 어둠으로 나온다 (LIGHT_NIGHT_BRIGHTNESS로 현장 조정).
+    app.state.show_acts = build_show_acts(light_config.night_brightness)
 
     yield
 
@@ -436,6 +440,10 @@ async def yacht_socket(websocket: WebSocket) -> None:
 async def control_socket(websocket: WebSocket) -> None:
     """컨트롤 세션 — 조명·소리를 진행자가 직접 다룬다.
 
+    컨트롤 화면과 관리자 콘솔(발표 연출)이 **같은 이 소켓**을 쓴다. 둘 다
+    조명과 소리를 직접 부리고, 특히 나갈 때 조명을 되돌리는 경로가 같아서다
+    (backend/control_session.py 머리말 참고).
+
     게임이 아니라서 FSM도 비전도 에이전트도 붙지 않는다. 다만 카메라는 꺼둔다
     (pipeline_switcher("control")) — 여기서는 아무것도 인식할 것이 없는데
     파이프라인이 돌면 CPU만 먹는다.
@@ -446,6 +454,7 @@ async def control_socket(websocket: WebSocket) -> None:
         websocket=websocket,
         audio_manager=app.state.audio_manager,
         light_controller=app.state.light_controller,
+        show_acts=app.state.show_acts,
     )
     app.state.pipeline_switcher("control")
     try:

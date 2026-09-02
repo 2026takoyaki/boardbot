@@ -25,9 +25,11 @@ from bulb.scenes import (
     NIGHT_DIP_DARK_MS,
     NIGHT_DIP_FALL_MS,
     NIGHT_DIP_RISE_MS,
+    SHOW_DARK_FALL_MS,
     ControlCue,
     Cue,
     Scene,
+    ShowLight,
 )
 from core.constants import MsgType
 from core.envelope import WSMessage
@@ -341,6 +343,50 @@ class LightController:
         """색 여러 개를 순서대로 밟고 현재 Scene으로 돌아온다. 즉시 반환한다."""
         self._cancel_cue()
         self._cue_task = self._spawn(self._run_control_cue(cue, game))
+
+    def play_show(self, plan: ShowLight, game: str | None = None) -> None:
+        """발표 연출 하나. 계획대로 방을 몰고 간다 (bulb/scenes.py의 ShowLight).
+
+        연출 버튼인데 **Scene까지 바꾸는** 이유: 재현하려는 것이 순간이 아니라
+        장면이기 때문이다. 늑대인간 밤은 붉은 조명이 그 단계 내내 유지되는
+        것이 그 장면이고, 3초 뒤에 원래 색으로 돌아가면 재현이 아니다.
+
+        요트 쪽은 반대로 Scene이 중립이고 Cue가 얹힌다 — 실제 게임에서도
+        그렇다. 둘의 차이를 여기서 만들지 않고 게임 정의를 그대로 가져다 쓴다
+        (backend/show_acts.py).
+
+        전부 한 태스크에서 순서대로 돈다. Cue를 Scene과 나란히 쏘면, 어둠을
+        거쳐 들어가는 Scene이 2.3초 뒤에 깨어나 Cue의 복귀 페이드를 덮어쓴다.
+        """
+        self._cancel_cue()
+        self._cancel_scene()
+        self._scene = plan.scene
+        self._scene_task = self._spawn(self._run_show(plan, game))
+
+    async def _run_show(self, plan: ShowLight, game: str | None) -> None:
+        if plan.dark_ms > 0:
+            # 소등 명령의 색은 전구가 무시하지만(밝기 0은 소등이다) Scene의 값을
+            # 실어 보낸다. 화면에 조명을 그리는 드라이버가 "무슨 색이 꺼져
+            # 있는가"를 이 값으로 그린다.
+            await self._drive(plan.scene.color, 0, SHOW_DARK_FALL_MS, game, plan.scene.kelvin)
+            # 페이드가 끝나고 어둠이 유지되는 시간까지 기다린다. 안 기다리면
+            # 다 꺼지기도 전에 다음 색이 올라가 암전이 눈에 보이지 않는다.
+            await asyncio.sleep(plan.enter_ms / 1000)
+        await self._apply_scene(plan.scene, game)
+        if plan.cue is not None:
+            await self._play_cue(plan.cue, game)
+
+    def settle(self, scene: Scene, game: str | None = None) -> None:
+        """연출이 끝났으니 이 Scene으로 물러난다. 즉시 반환한다.
+
+        apply_manual과 나누는 이유는 색온도다. 저쪽은 사용자가 슬라이더로 고른
+        RGB를 그대로 싣느라 색온도를 버리는데, 여기로 돌아오는 자리는 백색이라
+        색온도가 빠지면 전구 2개의 흰색이 서로 다르게 보인다(§색온도).
+        """
+        self._cancel_cue()
+        self._cancel_scene()
+        self._scene = scene
+        self._scene_task = self._spawn(self._apply_scene(scene, game))
 
     async def _run_control_cue(self, cue: ControlCue, game: str | None) -> None:
         for color, hold_ms in cue.steps:

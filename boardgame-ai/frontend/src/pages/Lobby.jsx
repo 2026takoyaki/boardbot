@@ -4,6 +4,7 @@ import {
 } from '../components/common/Icons'
 import { YachtDiceArt, WerewolfArt, ControlArt } from '../components/common/GameArt'
 import SettingsMenu from '../components/common/SettingsMenu'
+import AdminGate from '../components/common/AdminGate'
 
 const GAMES = [
   {
@@ -58,9 +59,13 @@ export default function Lobby({
   connected,
   onBack,
   onSelectGame,   // (gameId, mode) => void   mode: 'play' | 'tutorial' | 'practice'
+  onAdmin,        // 비밀번호를 통과했을 때만 불린다
   send,
 }) {
   const [hovered, setHovered] = useState(null)
+  // 관리자 콘솔은 게임 카드로 두지 않는다. 발표용이라 게임과 같은 급으로
+  // 늘어놓으면 시연 중에 손님이 눌러볼 자리가 된다.
+  const [askAdmin, setAskAdmin] = useState(false)
   const playerCount = players.filter((p) => p.playername).length
 
   return (
@@ -88,9 +93,20 @@ export default function Lobby({
           </span>
           {/* 게임 안에서만 소리를 줄일 수 있으면, 정작 로비 BGM이 큰 순간에
               방법이 없다. 게임 화면과 같은 메뉴를 여기에도 둔다. */}
-          <SettingsMenu send={send} connected={connected} />
+          <SettingsMenu
+            send={send}
+            connected={connected}
+            onAdmin={onAdmin ? () => setAskAdmin(true) : undefined}
+          />
         </div>
       </div>
+
+      {askAdmin && (
+        <AdminGate
+          onPass={() => { setAskAdmin(false); onAdmin() }}
+          onCancel={() => setAskAdmin(false)}
+        />
+      )}
 
       <div className="gs-divider-top" />
       <div className="gs-hd">
