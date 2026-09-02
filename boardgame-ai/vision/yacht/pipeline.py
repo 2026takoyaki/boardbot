@@ -203,9 +203,16 @@ class VisionPipeline:
         if frame_id % 30 == 0 and self._has_context:
             hand_info = [(h.handedness, h.player_id, h.gesture) for h in hands]
             dice_info = [(d.track_id, d.pip_count, d.stable_frames) for d in dice_states]
+            # roll_tray와 굴림 상태를 함께 찍는다.
+            #
+            # 굴림이 발화하지 않을 때 어느 게이트에 걸렸는지 이 줄만 보고 알 수
+            # 있어야 한다. 예전에는 tray/dice/hands만 찍어서, 굴림통이 안 잡힌
+            # 건지 손이 안 잡힌 건지 상태가 안 넘어간 건지 구분할 수 없었다.
             print(
                 f"[yacht f{frame_id}] "
-                f"tray={'O' if tray else 'X'}  "
+                f"tray={'O' if tray else 'X'} "
+                f"cup={'O' if roll_tray else 'X'}  "
+                f"roll={self._roll_attributor.state.name}  "
                 f"dice={dice_info}  "
                 f"hands={hand_info}"
             )

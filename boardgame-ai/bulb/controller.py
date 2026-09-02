@@ -33,6 +33,12 @@ from core.envelope import WSMessage
 
 logger = logging.getLogger(__name__)
 
+# Scene 적용이 실패했을 때 재시도 간격(초). 마지막 값 뒤에 한 번 더 시도하고 포기한다.
+#
+# 짧게 시작해 늘린다 — 순간적인 끊김이면 첫 재시도에서 붙고, 전구가 아예 없으면
+# 몇 초 안에 조용해진다. 게임 진행을 막지 않도록 전부 백그라운드에서 돈다.
+_SCENE_RETRY_DELAYS = (0.5, 2.0, 5.0)
+
 SceneMap = Mapping[str, Mapping[str, Scene]]
 CueMap = Mapping[str, Cue]
 
@@ -137,12 +143,37 @@ class LightController:
     # ── 연출 실행 ────────────────────────────────────────────────────────────
 
     async def _apply_scene(self, scene: Scene, game: str | None) -> None:
-        if scene.enter_via_dark and not self._is_dark():
-            await self._enter_via_dark(scene, game)
-            return
-        await self._drive(scene.color, scene.brightness, scene.transition_ms, game, scene.kelvin)
+        """Scene을 적용한다. 실패하면 몇 번 더 시도한다.
 
-    async def _enter_via_dark(self, scene: Scene, game: str | None) -> None:
+        재시도가 필요한 이유: Scene은 페이즈가 바뀔 때 한 번만 나간다. 그 한 번이
+        실패하면 전구는 **이전 페이즈의 색을 문 채 그대로 남고**, 다음 페이즈가
+        올 때까지 아무도 다시 보내지 않는다. 실제로 밤에 핸드폰 핫스팟이 잠깐
+        끊긴 판에서 예언자의 파란색이 낮 토론과 투표까지 그대로 남았다.
+
+        Cue와 달리 Scene은 "지금 방이 무슨 색이어야 하는가"라서, 늦게라도
+        도착하는 편이 낫다.
+        """
+        for attempt, delay in enumerate(_SCENE_RETRY_DELAYS):
+            if await self._apply_scene_once(scene, game):
+                return
+            # 취소되면(다음 페이즈가 왔다) 여기까지 오지 않는다 — CancelledError가
+            # 그대로 올라가 이 루프를 끝낸다.
+            logger.info(
+                "light: '%s' 적용 실패 — %.1f초 뒤 재시도 (%d/%d)",
+                scene.name, delay, attempt + 1, len(_SCENE_RETRY_DELAYS),
+            )
+            await asyncio.sleep(delay)
+        if not await self._apply_scene_once(scene, game):
+            logger.warning("light: '%s' 적용을 포기한다. 전구가 응답하지 않는다.", scene.name)
+
+    async def _apply_scene_once(self, scene: Scene, game: str | None) -> bool:
+        if scene.enter_via_dark and not self._is_dark():
+            return await self._enter_via_dark(scene, game)
+        return await self._drive(
+            scene.color, scene.brightness, scene.transition_ms, game, scene.kelvin
+        )
+
+    async def _enter_via_dark(self, scene: Scene, game: str | None) -> bool:
         """어둠을 한 번 거쳐 Scene으로 들어간다.
 
         늑대인간 밤은 "눈을 감으세요 → 눈을 뜨세요"가 한 쌍이다. 색만 갈아끼우면
@@ -159,7 +190,10 @@ class LightController:
         # 페이드가 끝나고 어둠이 유지되는 시간까지 기다린다. 안 기다리면 다 꺼지기도
         # 전에 다음 색이 올라가 소등이 눈에 보이지 않는다.
         await asyncio.sleep((NIGHT_DIP_FALL_MS + NIGHT_DIP_DARK_MS) / 1000)
-        await self._drive(
+        # 성공 여부는 **색이 올라갔는가**로만 판단한다. 소등이 실패했어도 방이
+        # 맞는 색이면 된 것이고, 소등만 성공하고 색이 안 올라가면 방이 캄캄한
+        # 채로 남아 반드시 재시도해야 한다.
+        return await self._drive(
             scene.color, scene.brightness, NIGHT_DIP_RISE_MS, game, scene.kelvin
         )
 
@@ -190,17 +224,23 @@ class LightController:
         duration_ms: int,
         game: str | None,
         kelvin: int | None = None,
-    ) -> None:
+    ) -> bool:
+        """전구에 실제로 보낸다. 성공하면 True.
+
+        성공/실패를 돌려주는 이유는 Scene 적용이 실패했을 때 재시도해야 하기
+        때문이다 — 아래 _apply_scene 참고.
+        """
         level = self._clamp(brightness, game)
         target = (color, level, kelvin)
         if target == self._last_applied:
-            return
+            return True
         self._last_applied = target
         try:
             await asyncio.wait_for(
                 self._driver.apply(color, level, max(0, duration_ms), kelvin),
                 timeout=self._config.command_timeout_s,
             )
+            return True
         except asyncio.CancelledError:
             # 취소 시점에 명령이 전구까지 갔는지 알 수 없다. "보냈다"고 캐시해두면
             # 뒤이은 중립 복귀가 중복 제거로 삼켜져 조명이 색을 문 채 멈춘다.
@@ -214,7 +254,10 @@ class LightController:
             logger.warning("light: 명령 타임아웃 (rgb=%s brightness=%d)", color, level)
         except Exception:
             self._last_applied = None
-            logger.warning("light: 명령 실패 (rgb=%s brightness=%d)", color, level, exc_info=True)
+            # 전구가 안 붙어 있으면 매 전환마다 같은 트레이스백이 쌓인다.
+            # 원인은 한 줄이면 충분하다.
+            logger.warning("light: 명령 실패 (rgb=%s brightness=%d)", color, level)
+        return False
 
     def _clamp(self, brightness: int, game: str | None) -> int:
         """게임별 밝기 하한 적용.

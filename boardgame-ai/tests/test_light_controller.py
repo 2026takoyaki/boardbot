@@ -124,6 +124,61 @@ async def test_same_phase_repeated_sends_nothing_new():
     assert len(driver.applied) == 1
 
 
+# ── 실패한 Scene 재시도 ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_failed_scene_is_retried_until_it_lands():
+    """Scene 적용이 실패하면 다시 보낸다.
+
+    Scene은 페이즈가 바뀔 때 한 번만 나간다. 그 한 번이 실패하면 전구는 이전
+    페이즈 색을 문 채 남고 다음 페이즈까지 아무도 다시 보내지 않는다 — 실제로
+    핫스팟이 잠깐 끊긴 판에서 예언자의 파란색이 낮 투표까지 그대로 남았다.
+    """
+
+    class _FlakyDriver(MockDriver):
+        """처음 두 번은 실패하고 세 번째에 성공한다."""
+
+        def __init__(self):
+            super().__init__()
+            self.attempts = 0
+
+        async def apply(self, color, brightness, duration_ms, kelvin=None):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise RuntimeError("전구 응답 없음")
+            await super().apply(color, brightness, duration_ms, kelvin)
+
+    driver = _FlakyDriver()
+    controller = _controller(driver)
+
+    controller.on_message(_state("day_discussion"), game="werewolf")
+    await asyncio.sleep(3.0)  # 재시도 간격(0.5 + 2.0)을 넘긴다
+
+    assert driver.attempts >= 3, "실패하고 끝냈다"
+    assert driver.applied, "결국 한 번도 도착하지 못했다"
+    assert driver.last[0] == (255, 230, 200)
+
+
+@pytest.mark.asyncio
+async def test_retry_stops_when_a_new_phase_arrives():
+    """재시도 중 다음 페이즈가 오면 옛 Scene은 포기한다."""
+
+    class _DeadDriver(MockDriver):
+        async def apply(self, color, brightness, duration_ms, kelvin=None):
+            raise RuntimeError("전구 응답 없음")
+
+    driver = _DeadDriver()
+    controller = _controller(driver)
+
+    controller.on_message(_state("night_werewolf"), game="werewolf")
+    await asyncio.sleep(0.2)
+    controller.on_message(_state("day_discussion"), game="werewolf")
+    await _settle()
+
+    assert controller._scene.name == "ww_day", "새 페이즈의 Scene을 들고 있어야 한다"
+
+
 # ── 밤 전환 (어둠을 거쳐 들어가기) ───────────────────────────────────────────
 
 

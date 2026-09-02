@@ -91,8 +91,22 @@ class WerewolfSession:
     async def send_hello(self) -> None:
         # 멘트 카탈로그를 접속 시 통째로 준다. 프론트도 같은 문장을 화면에 그려야
         # 하는데(타이핑 애니메이션 등) 발화마다 왕복하면 타이밍이 흔들린다.
+        #
+        # in_progress는 "이 연결에 진행 중인 판이 있는가"다.
+        #
+        # 세션은 접속마다 새로 만들어지므로 재접속하면 백엔드의 판이 통째로
+        # 사라진다. 그런데 화면은 자기 상태를 그대로 들고 있어서, 끊기기 전
+        # 페이즈(예: 밤)를 계속 그린다 — 백엔드에는 그 판이 없는데 화면만 밤에
+        # 가 있고, 안내 단계는 지나간 것으로 보인다. 접속할 때 사실대로 알려
+        # 화면이 처음부터 다시 시작하게 한다.
         await self.send(
-            WSMessage.make_hello({"game_type": "werewolf", "lines": lines.catalog()})
+            WSMessage.make_hello(
+                {
+                    "game_type": "werewolf",
+                    "lines": lines.catalog(),
+                    "in_progress": self._fsm is not None,
+                }
+            )
         )
         # 게임 선택 즉시 파이프라인이 동작하도록 초기 FusionContext 전송
         self._state_version += 1

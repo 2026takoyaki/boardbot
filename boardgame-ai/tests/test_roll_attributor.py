@@ -250,6 +250,100 @@ def test_cover_and_uncover_with_new_track_ids_no_fire() -> None:
     assert attr.update(_frame(2, [], same_place)) is None
 
 
+def _shaking_frames(
+    attr: RollAttributor,
+    dice: list[DiceState],
+    count: int,
+    start: int,
+    shake: bool = True,
+) -> int:
+    """손 없이 굴림통만 tray 위에서 흔드는 프레임을 먹인다. 다음 frame_id를 돌려준다."""
+    import math
+
+    for i in range(count):
+        f = start + i
+        cx = 0.5 + (0.05 * math.sin(f) if shake else 0.0)
+        attr.update(
+            YachtFramePerception(
+                frame_id=f,
+                ts=f / 30.0,
+                image_hw=(1080, 1920),
+                tray=_tray(),
+                roll_tray=BBox(cx - 0.07, 0.43, cx + 0.07, 0.57, 0.9, "roll_tray"),
+                dice=dice,
+                hands=[],
+            )
+        )
+    return start + count
+
+
+def test_roll_fires_when_no_hand_is_ever_detected() -> None:
+    """손이 한 번도 안 잡혀도 굴림통이 흔들렸으면 굴림으로 인정한다.
+
+    오버헤드 뷰에서 MediaPipe는 손을 자주 놓친다 — 실측 로그에서 주사위는
+    또렷이 잡히는데 손은 50번 중 2번만 잡혔고, 손을 요구하는 가드 때문에 그
+    판에서는 아무리 굴려도 처리되지 않았다.
+    """
+    attr = RollAttributor(
+        stabilization_frames=3,
+        enter_debounce_frames=1,
+        exit_debounce_frames=1,
+        roll_tray_in_tray_required=1,
+    )
+
+    f = _shaking_frames(attr, _initial_dice(), 5, start=0, shake=False)
+    f = _shaking_frames(attr, _initial_dice(), 10, start=f)  # 굴림통을 흔든다
+    assert attr.state == RollState.HAND_IN_TRAY
+
+    # 쏟았다 — 굴림통을 tray 밖으로 치우고 주사위가 새 눈으로 돌아온다.
+    rolled = _rolled_dice()
+    fired = False
+    for i in range(15):
+        attr.update(_frame(f + i, [], rolled, roll_tray_in=False))
+        if attr.just_finalized:
+            fired = True
+            break
+    assert fired, "손을 못 봤다고 굴림이 사라지면 안 된다"
+
+
+def test_loading_dice_into_the_cup_does_not_fire() -> None:
+    """굴림통에 주사위를 담는 동안은 발화하지 않는다.
+
+    손 가드를 흔들림으로도 만족시키게 바꾼 뒤에도 이게 지켜져야 한다. 담는
+    동안에는 주사위가 굴림통 안에 있어 화면에 5개가 안 잡히고, 개수 게이트가
+    막는다 — 손 가드와 겹쳐 있던 방어선이다.
+    """
+    attr = RollAttributor(
+        stabilization_frames=3,
+        enter_debounce_frames=1,
+        exit_debounce_frames=1,
+        roll_tray_in_tray_required=1,
+    )
+
+    all_dice = _initial_dice()
+    f = _shaking_frames(attr, all_dice, 5, start=0, shake=False)
+
+    # 5개 → 0개로 하나씩 담는다. 굴림통은 내내 흔들린다.
+    for remaining in range(5, -1, -1):
+        f = _shaking_frames(attr, all_dice[:remaining], 8, start=f)
+        assert not attr.just_finalized, f"{remaining}개 남았을 때 발화했다"
+
+
+def test_cup_resting_in_tray_does_not_fire() -> None:
+    """굴림통이 그냥 놓여만 있으면 흔들림 신호가 서지 않는다."""
+    attr = RollAttributor(
+        stabilization_frames=3,
+        enter_debounce_frames=1,
+        exit_debounce_frames=1,
+        roll_tray_in_tray_required=1,
+    )
+
+    f = _shaking_frames(attr, _initial_dice(), 10, start=0, shake=False)
+    for i in range(10):
+        attr.update(_frame(f + i, [], _rolled_dice(), roll_tray_in=False))
+        assert not attr.just_finalized, "움직이지 않은 굴림통으로 발화했다"
+
+
 def test_finger_in_tray_triggers_occupation() -> None:
     """wrist는 밖이지만 손가락 끝이 tray 안이어도 점유로 인정."""
     attr = RollAttributor(

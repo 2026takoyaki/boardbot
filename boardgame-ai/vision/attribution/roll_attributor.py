@@ -33,6 +33,17 @@ from vision.yacht.schemas import DiceState, YachtFramePerception
 # 기본 INFO/WARNING 환경에선 조용히 동작.
 _log = logging.getLogger(__name__)
 
+# 손이 빠진 뒤 주사위가 다 보이고 멈추기를 기다리는 최대 프레임 (30fps 기준 1.5초).
+#
+# 쏟은 직후에는 몇 프레임 동안 일부가 안 잡힌다 — 공중에 있거나 서로 겹친다.
+# 그래서 개수가 모자라면 기다린다. 그런데 무한정 기다리면, 킵존처럼 주사위를
+# 트레이 밖으로 빼놓는 순간 개수가 영영 안 맞아 HAND_IN_TRAY에 갇힌다. 기준을
+# 새로 잡는 코드는 WAITING에서만 도는데 거기로 돌아갈 길이 없어져서, 그 판은
+# 끝까지 굴림이 한 번도 안 잡혔다 (실측).
+#
+# 상한을 두고, 넘으면 WAITING으로 돌아가 지금 보이는 것으로 기준을 다시 잡는다.
+_SETTLE_TIMEOUT_FRAMES = 45
+
 
 class RollState(Enum):
     WAITING = auto()
@@ -107,12 +118,28 @@ class RollAttributor:
         # 이 누적이 임계 이상일 때만 ROLL_CONFIRMED 발화. "굴림통이 실제로 사용됨"의 신호.
         self._roll_tray_in_tray_streak: int = 0
 
-        # HAND_IN_TRAY 동안 손이 실제로 tray 안에 한 번이라도 잡혔는지.
-        # shaking 신호만으로 진입한 경우(예: dice를 굴림통에 담느라 굴림통만
-        # tray 위에서 흔드는 동작) finalize를 차단하기 위한 가드.
-        # 가장자리 굴림 자세에서도 손가락 끝/MCP 중 어느 하나는 보통 tray bbox에
-        # 떨어지므로 진짜 굴림은 통과한다.
+        # 점유 중 "사람이 실제로 무언가 했다"는 신호. 둘 중 하나면 된다.
+        #
+        #   _hand_seen_in_tray  — 손이 tray 안에 한 번이라도 잡혔다
+        #   _shaking_seen       — 굴림통이 tray 위에서 실제로 흔들렸다
+        #
+        # 원래는 손만 인정했다. 그런데 오버헤드 뷰에서 MediaPipe가 손을 놓치면
+        # (어두운 방, 굴림통에 손이 가려지는 자세) 굴림이 **구조적으로** 발화하지
+        # 못했다 — 실측 로그에서 주사위는 또렷이 잡히는데 손은 50번 중 2번만
+        # 잡혔고, 그 판에서는 아무리 굴려도 처리되지 않았다.
+        #
+        # 손을 못 봐도 굴림통이 흔들렸다면 사람이 들고 흔든 것이다. 정적으로
+        # 놓인 굴림통은 이동량이 0이라 이 신호가 서지 않는다.
+        #
+        # 이 가드를 느슨하게 해도 안전한 이유: 원래 막으려던 "굴림통에 dice를
+        # 담는 동작"은 그 동안 dice가 굴림통 안에 있어 화면에서 5개가 안 잡히고,
+        # 아래 개수 게이트가 이미 막는다. 빈 굴림통을 흔들기만 한 경우도 dice가
+        # 그대로라 변화 점수가 0이라 막힌다. 즉 이 가드는 다른 두 게이트와
+        # 겹쳐 있었고, 혼자만 손에 의존해 전체를 볼모로 잡고 있었다.
         self._hand_seen_in_tray: bool = False
+        self._shaking_seen: bool = False
+        # 손이 빠진 뒤 주사위가 다 보이길 기다린 프레임 수 (_SETTLE_TIMEOUT_FRAMES 참고).
+        self._settle_wait: int = 0
 
         # nearest player 누적 — fallback actor 산정용 (state 무관, 매 프레임)
         self._fallback_buf: deque[str | None] = deque(maxlen=grab_fallback_window_frames)
@@ -185,8 +212,11 @@ class RollAttributor:
         # 붙어 있어, 필터를 켜면 정상 굴림인데도 가드가 영원히 안 풀려 finalize가
         # 막히는 데드락이 생긴다. 이 가드의 목적은 "손이 한 번도 tray 안에 안
         # 들어온 shaking 단독(담기) 동작" 차단이므로 무필터로 충분하다.
-        if self._state == RollState.HAND_IN_TRAY and hand_in_any:
-            self._hand_seen_in_tray = True
+        if self._state == RollState.HAND_IN_TRAY:
+            if hand_in_any:
+                self._hand_seen_in_tray = True
+            if roll_tray_shaking:
+                self._shaking_seen = True
 
         if self._state == RollState.WAITING:
             return self._step_waiting(perception)
@@ -270,27 +300,35 @@ class RollAttributor:
             self._reset_to_waiting()
             return None
 
-        # shaking 신호만으로 진입했고 손은 한 번도 tray 안에 안 잡힌 경우 finalize 차단.
-        # 굴림통에 dice를 담는 동작(굴림통만 tray 위에서 흔들리고 손은 굴림통 밖에서
-        # dice를 집어넣는 자세)이 가짜 ROLL_CONFIRMED로 발화되는 것을 막는다.
-        if not self._hand_seen_in_tray:
+        # 점유 중 사람이 실제로 무언가 한 흔적이 있어야 한다 — 손이 tray 안에
+        # 들어왔거나, 굴림통이 흔들렸거나. 둘 다 없으면 굴림통이 그냥 tray 위에
+        # 놓여 있었을 뿐이다.
+        if not (self._hand_seen_in_tray or self._shaking_seen):
             _log.debug(
-                "[roll] hand_out: 점유 중 손 미진입 (shaking 단독) → "
-                "WAITING (담기 동작 가능성, 굴림 아님)"
+                "[roll] hand_out: 점유 중 손도 흔들림도 없음 → WAITING (굴림 아님)"
             )
             self._reset_to_waiting()
             return None
 
         # 손이 빠짐 — 굴림 종료 조건 체크
         target_dice = self._dice_outside_keep(perception)
-        n_kept = self._n_kept(perception)
-        need = self._expected_dice - n_kept
-        # 1) 모든 굴림 대상 dice가 보여야 함 (개수 일치)
+        need = self._required_dice_count()
+        # 1) 굴리기 직전에 있던 만큼 다시 보여야 함
         if len(target_dice) < need:
+            self._settle_wait += 1
+            if self._settle_wait <= _SETTLE_TIMEOUT_FRAMES:
+                _log.debug(
+                    f"[roll] hand_out: dice 부족 — got={len(target_dice)} need={need} "
+                    f"({self._settle_wait}/{_SETTLE_TIMEOUT_FRAMES} 대기)"
+                )
+                return None
+            # 기다릴 만큼 기다렸다. 주사위가 트레이 밖으로 나간 것으로 보고
+            # 기준을 다시 잡는다 — 안 그러면 이 상태에 영영 갇힌다.
             _log.debug(
-                f"[roll] hand_out: dice 부족 — got={len(target_dice)} need={need} "
-                f"kept={n_kept} (state 유지)"
+                f"[roll] hand_out: dice {len(target_dice)}개로 안정 — "
+                f"기준을 {need}개에서 다시 잡는다 (킵존 이동 등)"
             )
+            self._reset_to_waiting()
             return None
         # 2) 모두 stable
         unstable = [
@@ -299,6 +337,11 @@ class RollAttributor:
             if d.stable_frames < self._stab_frames
         ]
         if unstable:
+            self._settle_wait += 1
+            if self._settle_wait > _SETTLE_TIMEOUT_FRAMES:
+                _log.debug(f"[roll] hand_out: dice가 계속 불안정 — {unstable} → WAITING")
+                self._reset_to_waiting()
+                return None
             _log.debug(f"[roll] hand_out: dice 불안정 — {unstable} (state 유지)")
             return None
         # 3) snapshot 대비 변화 점수
@@ -346,6 +389,8 @@ class RollAttributor:
         # 점유 판정과 동일하게 active_player 필터는 적용하지 않는다 (player_id
         # 미확정 손도 인정해 finalize 데드락 방지).
         self._hand_seen_in_tray = self._is_any_hand_in_tray(perception, active_player=None)
+        self._shaking_seen = self._is_roll_tray_shaking(perception)
+        self._settle_wait = 0
         # 손이 들어온 직후의 흐트러진 dice 좌표 대신,
         # 손 들어가기 직전 마지막 stable snapshot을 비교 기준으로 사용.
         if self._last_stable_snapshot is not None:
@@ -376,6 +421,8 @@ class RollAttributor:
         self._roll_tray_in_tray_streak = 0
         self._roll_actor_buf.clear()
         self._hand_seen_in_tray = False
+        self._shaking_seen = False
+        self._settle_wait = 0
 
     # ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
@@ -466,6 +513,19 @@ class RollAttributor:
         # YOLO bbox 미세 흔들림(노이즈) 정도로는 못 넘는 임계.
         threshold = min(rt.w, rt.h) * 0.3
         return path >= threshold
+
+    def _required_dice_count(self) -> int:
+        """굴림이 끝났다고 보려면 트레이에 몇 개가 다시 보여야 하는가.
+
+        **굴리기 직전에 트레이에 있던 개수**다. 5개로 못박으면 킵존에 빼둔
+        주사위가 하나라도 있는 순간 개수가 영영 안 맞아 굴림이 확정되지 않는다 —
+        "두세 개만 다시 굴리기"가 통째로 죽는다.
+
+        스냅샷이 없으면(점유 시작 시 주사위 미감지) 기본값으로 떨어진다.
+        """
+        if self._snapshot is not None and self._snapshot.items:
+            return len(self._snapshot.items)
+        return self._expected_dice
 
     def _dice_outside_keep(self, perception: YachtFramePerception) -> list[DiceState]:
         """굴림 대상 dice — 현재는 tray_inner를 무시하고 모든 dice를 굴림 대상으로 본다.

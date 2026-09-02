@@ -59,9 +59,22 @@ function getTransitionType(from, to) {
 
 // wsState: /ws/tablet 상태 (gesture_confirmed 등 로비 이벤트용)
 export default function WerewolfGame({ players, onChangePlayers, onChangeGame, onRestart, wsState, isPracticeMode }) {
-  const { state: wwState, send, connected } = useWebSocket('/ws/werewolf', {
+  const { state: wwState, send, connected, messages } = useWebSocket('/ws/werewolf', {
     onAudioMessage: audioApi.enqueue,
   })
+
+  // 재접속했는데 백엔드에 진행 중인 판이 없으면 게임 선택 화면으로 돌아간다.
+  //
+  // 세션은 접속마다 새로 만들어지므로 끊겼다 붙으면 백엔드의 판이 사라진다.
+  // 그런데 이 컴포넌트는 리마운트되지 않아 wwState를 그대로 들고 있고, 끊기기
+  // 전 페이즈(예: 밤)를 계속 그린다 — 화면만 밤에 가 있고 입력은 아무 데도
+  // 닿지 않는다. 안내 단계가 통째로 지나간 것처럼 보이는 것도 이것 때문이다.
+  //
+  // 되살릴 수 있는 상태가 아니므로(백엔드에 판이 없다) 조용히 처음으로 돌린다.
+  const helloNoGame = messages.find(m => m.msg_type === 'hello')?.payload?.in_progress === false
+  useEffect(() => {
+    if (helloNoGame && wwState) onChangeGame?.()
+  }, [helloNoGame]) // eslint-disable-line react-hooks/exhaustive-deps
   // /ws/werewolf 채널로도 audio_ack가 흐르도록 등록.
   useAudioPlayer(send)
   const [showVoteResult, setShowVoteResult] = useState(false)
