@@ -23,6 +23,9 @@ export default defineConfig({
       '/cache/tts': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/sfx': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/bgm': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      // 발표용으로 미리 만들어 둔 목소리(관리자 콘솔). 합성 캐시가 아니라
+      // 저장소에 함께 들어가는 자산이라 /cache/tts 와 경로가 다르다.
+      '/show': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       // 기존 HTTP 라우트
       '/players': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/health': { target: 'http://127.0.0.1:8000', changeOrigin: true },

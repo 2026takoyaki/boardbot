@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agents.orchestrator import AgentOrchestrator
 from agents.personas import get_persona
-from audio.catalog import BGM_DIR, SFX_DIR, TTS_CACHE_DIR
+from audio.catalog import BGM_DIR, SFX_DIR, SHOW_DIR, TTS_CACHE_DIR
 from audio.manager import AudioManager
 from audio.tts_engine import TTSEngine
 from backend.control_session import ControlSession
@@ -204,9 +204,12 @@ app.include_router(players_router)
 TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SFX_DIR.mkdir(parents=True, exist_ok=True)
 BGM_DIR.mkdir(parents=True, exist_ok=True)
+SHOW_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/cache/tts", StaticFiles(directory=str(TTS_CACHE_DIR)), name="tts_cache")
 app.mount("/sfx", StaticFiles(directory=str(SFX_DIR)), name="sfx")
 app.mount("/bgm", StaticFiles(directory=str(BGM_DIR)), name="bgm")
+# 발표용으로 미리 만들어 둔 목소리. 합성을 거치지 않고 여기서 바로 받아간다.
+app.mount("/show", StaticFiles(directory=str(SHOW_DIR)), name="show")
 
 
 @app.get("/health")

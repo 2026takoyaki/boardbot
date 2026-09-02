@@ -25,11 +25,29 @@ ASSETS_DIR = _BASE_DIR / "assets"
 TTS_CACHE_DIR = ASSETS_DIR / "tts_cache"
 SFX_DIR = ASSETS_DIR / "sfx"
 BGM_DIR = ASSETS_DIR / "bgm"
+# 발표용으로 미리 만들어 둔 목소리. **캐시가 아니라 자산이다** — tts_cache는
+# .gitignore에 있고 지워도 다시 만들어지지만, 이쪽은 지우면 발표장에서
+# 되살릴 방법이 없다(합성하려면 키와 인터넷이 필요하다). 그래서 저장소에
+# 함께 들어간다. 만드는 법은 tools/generate_show_voices.py.
+SHOW_DIR = ASSETS_DIR / "show"
 
 # 캐시 계층별 디렉토리
 STATIC_CACHE_DIR = TTS_CACHE_DIR / "static"
 SESSION_CACHE_DIR = TTS_CACHE_DIR / "session"
 DYNAMIC_CACHE_DIR = TTS_CACHE_DIR / "dynamic"
+
+# 발표용 음원의 확장자. Typecast가 wav를 내보낸다(audio/tts/typecast.py의
+# audio_ext). 엔진을 바꾸면 여기와 파일을 같이 바꿔야 한다.
+SHOW_VOICE_EXT = "wav"
+
+
+def show_voice_url(act_id: str) -> str:
+    """브라우저가 받아갈 경로. 서버가 /show/ 로 이 디렉토리를 서빙한다."""
+    return f"/show/{act_id}.{SHOW_VOICE_EXT}"
+
+
+def show_voice_path(act_id: str) -> Path:
+    return SHOW_DIR / f"{act_id}.{SHOW_VOICE_EXT}"
 
 
 # 목소리는 여기가 아니라 페르소나가 소유한다(core/persona.py).
