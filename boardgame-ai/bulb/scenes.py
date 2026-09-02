@@ -369,6 +369,111 @@ YACHT_CUES: dict[str, Cue] = {
 IN_PLAY_YACHT_CUES = tuple(name for name in YACHT_CUES if name != "yacht_game_finish")
 
 
+# ── 컨트롤 세션 ──────────────────────────────────────────────────────────────
+#
+# 게임이 아니라 조명 자체를 다루는 자리다. 진행자가 버튼을 눌러 방 분위기를
+# 바꾼다 — 축하, 약올리기, 박수, 방구, 파티.
+#
+# 요트·늑대인간 Cue와 형태가 다른 이유: 파티는 색이 **여러 번** 바뀌어야 한다.
+# 한 색으로 터지고 마는 Cue로는 표현할 수 없어서, 색 여러 개를 순서대로 밟는
+# 형태로 정의한다. 색이 하나뿐인 큐는 단계가 하나인 특수한 경우일 뿐이다.
+#
+# 끝나면 반드시 직전 Scene으로 돌아온다 — 컨트롤 세션에서는 그 Scene이
+# 사용자가 슬라이더로 맞춰 둔 색이다.
+
+
+@dataclass(frozen=True)
+class ControlCue:
+    """색 여러 개를 순서대로 밟고 Scene으로 돌아오는 연출.
+
+    steps  : (색, 그 색을 유지할 ms) 목록. 하나면 단색 연출.
+    sfx    : 함께 재생할 효과음 이름 (audio/catalog.py의 SFX_REGISTRY 키).
+    """
+
+    name: str
+    label: str
+    steps: tuple[tuple[RGB, int], ...]
+    brightness: int
+    sfx: str
+    fall_ms: int = 600
+
+    @property
+    def total_ms(self) -> int:
+        return sum(hold for _color, hold in self.steps) + self.fall_ms
+
+
+# 파티 색 순환. 색상환을 고르게 돌아 "막 바뀐다"가 읽히게 한다.
+_PARTY_COLORS: tuple[RGB, ...] = (
+    (255, 40, 90),
+    (255, 170, 30),
+    (250, 240, 60),
+    (60, 220, 120),
+    (40, 190, 255),
+    (150, 80, 255),
+)
+
+CONTROL_CUES: dict[str, ControlCue] = {
+    "celebrate": ControlCue(
+        name="celebrate",
+        label="축하",
+        steps=(
+            (CELEBRATION_GOLD, 420),
+            ((255, 235, 170), 320),
+            (CELEBRATION_GOLD, 420),
+        ),
+        brightness=100,
+        sfx="control_celebrate",
+        fall_ms=700,
+    ),
+    # 약올리기 — 짓궂은 자주색이 깜빡인다. 축하와 반대 방향의 색이라 헷갈리지 않는다.
+    "tease": ControlCue(
+        name="tease",
+        label="약올리기",
+        steps=(
+            ((255, 60, 200), 240),
+            ((90, 20, 120), 200),
+            ((255, 60, 200), 240),
+            ((90, 20, 120), 200),
+            ((255, 60, 200), 300),
+        ),
+        brightness=85,
+        sfx="control_tease",
+        fall_ms=500,
+    ),
+    # 박수 — 노란 조명. 색은 사용자가 지정했다.
+    "applause": ControlCue(
+        name="applause",
+        label="박수",
+        steps=(((255, 214, 70), 1500),),
+        brightness=100,
+        sfx="control_applause",
+        fall_ms=700,
+    ),
+    # 방구 — 탁한 연두. 밝기를 낮춰 "가라앉는" 느낌을 준다.
+    "fart": ControlCue(
+        name="fart",
+        label="방구",
+        steps=(((150, 190, 60), 900), ((110, 150, 50), 700)),
+        brightness=55,
+        sfx="control_fart",
+        fall_ms=900,
+    ),
+    # 파티 — 색상환을 두 바퀴 돈다. 다른 것들보다 확실히 길다(약 9초).
+    "party": ControlCue(
+        name="party",
+        label="파티",
+        steps=tuple((c, 380) for c in _PARTY_COLORS * 4),
+        brightness=100,
+        sfx="control_party",
+        fall_ms=1000,
+    ),
+}
+
+
+def build_control_cue_map() -> dict[str, ControlCue]:
+    return dict(CONTROL_CUES)
+
+
 def build_scene_map(night_brightness: int) -> dict[str, dict[str, Scene]]:
     return {
         "werewolf": build_werewolf_scenes(night_brightness),

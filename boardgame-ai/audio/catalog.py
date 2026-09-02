@@ -73,6 +73,18 @@ SFX_REGISTRY: dict[str, str] = {
     "game_end": "/sfx/game_end.mp3",                  # 결과 발표 징글
     # ── 늑대인간 ──
     "wolf_sound": "/sfx/wolf_sound.mp3",              # 늑대 울음. 밤 시작 분위기
+    # ── 컨트롤 세션 ──
+    # 진행자가 버튼으로 직접 트는 소리. 조명 큐와 짝을 이룬다(bulb/scenes.py).
+    #
+    # 파일이 아직 없어도 등록해 둔다. 없는 이름을 넘기면 AudioManager가 경고만
+    # 찍고 아무것도 안 보내서 조명까지 같이 죽은 것처럼 보인다. 등록해 두면
+    # 브라우저가 404를 조용히 무시하고 조명은 정상으로 도므로, 파일을 넣는
+    # 순간 소리만 붙는다.
+    "control_celebrate": "/sfx/control_celebrate.mp3",  # 축하
+    "control_tease": "/sfx/control_tease.mp3",  # 약올리기
+    "control_applause": "/sfx/control_applause.mp3",  # 박수
+    "control_fart": "/sfx/control_fart.mp3",  # 방구
+    "control_party": "/sfx/control_party.mp3",  # 파티 — 10초 안팎의 댄스 음악
 }
 
 # BGM 레지스트리. 자산 파일: audio/assets/bgm/<filename>. 서버 /bgm/<filename>.

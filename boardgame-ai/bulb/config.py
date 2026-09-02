@@ -16,10 +16,14 @@ from dataclasses import dataclass, field
 #   werewolf — 밤에는 비전이 할 일이 없다 (카드 인식 제거·손 투표 보류, §3.5).
 #            완전 소등이 허용되고, 실제로 "밤이 되었습니다"는 암전에서 시작한다.
 #   lobby  — 좌석 등록이 비전으로 돌아가는 구간이라 밝아야 한다 (§3.5).
+#   control — 사람이 슬라이더로 직접 고른 값이다. 여기서 걷어올리면 고른 값과
+#            실제 방이 어긋나고, 왜 안 어두워지는지 알 방법이 없다. 하한은
+#            컨트롤 세션이 직접 갖는다(backend/control_session.py의 최소 5%).
 _DEFAULT_FLOORS: dict[str, int] = {
     "yacht": 60,
     "werewolf": 0,
     "lobby": 60,
+    "control": 0,
 }
 
 # 모르는 컨텍스트는 밝게 간다. 비전이 돌고 있을지 모르는데 어둡게 만드는 것보다

@@ -29,6 +29,7 @@ from agents.personas import get_persona
 from audio.catalog import BGM_DIR, SFX_DIR, TTS_CACHE_DIR
 from audio.manager import AudioManager
 from audio.tts_engine import TTSEngine
+from backend.control_session import ControlSession
 from backend.dev import DEV_ENV_VAR, is_dev_mode, seat_registration_events
 from backend.lobby_runner import LobbyRunner
 from backend.orchestrator import Orchestrator
@@ -425,6 +426,38 @@ async def yacht_socket(websocket: WebSocket) -> None:
         agent_orchestrator.stop()
         # 오디오 큐 정리 — 끊긴 세션이 ack 못 보내므로 _current가 stuck되는 것 방지.
         # detach_broadcast_if: 이미 새 세션이 attach된 경우 race condition으로 덮어쓰지 않음.
+        app.state.audio_manager.detach_broadcast_if(session._send_raw_bound)
+
+
+@app.websocket("/ws/control")
+async def control_socket(websocket: WebSocket) -> None:
+    """컨트롤 세션 — 조명·소리를 진행자가 직접 다룬다.
+
+    게임이 아니라서 FSM도 비전도 에이전트도 붙지 않는다. 다만 카메라는 꺼둔다
+    (pipeline_switcher("control")) — 여기서는 아무것도 인식할 것이 없는데
+    파이프라인이 돌면 CPU만 먹는다.
+    """
+    await websocket.accept()
+    _bench_ws_log("attach", "/ws/control")
+    session = ControlSession(
+        websocket=websocket,
+        audio_manager=app.state.audio_manager,
+        light_controller=app.state.light_controller,
+    )
+    app.state.pipeline_switcher("control")
+    try:
+        await session.send_hello()
+        while True:
+            data = await websocket.receive_json()
+            await session.handle_client_message(data)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _bench_ws_log("disconnect", "/ws/control")
+        # 나가기를 눌렀든 탭을 닫았든 네트워크가 끊겼든, 조명은 원래대로.
+        # 나가기 버튼에만 걸어두면 탭을 닫은 순간 방이 파티 색으로 남는다.
+        await session.restore_light()
+        app.state.pipeline_switcher(None)
         app.state.audio_manager.detach_broadcast_if(session._send_raw_bound)
 
 

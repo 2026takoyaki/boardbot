@@ -27,6 +27,9 @@ class MsgType(StrEnum):
     BGM_PLAY = "bgm_play"
     BGM_DUCK = "bgm_duck"
     GAME_RESULT = "game_result"
+    # 지금 조명이 무슨 색인가. 화면 가장자리 색 띠가 이걸 그린다.
+    # bulb/driver/frontend.py가 보내고, 컨트롤 세션도 같은 형식을 쓴다.
+    LIGHT_STATE = "light_state"
     HELLO = "hello"
     # 페르소나가 바뀌어 화면 문구가 통째로 달라졌음을 알린다. hello로 다시
     # 보내면 프론트가 새 접속으로 착각해 게임을 다시 시작한다.

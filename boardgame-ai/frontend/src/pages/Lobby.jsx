@@ -2,7 +2,7 @@ import { useState } from 'react'
 import {
   IconArrowLeft, IconUsers, IconClock, IconSparkle, IconBook, IconPlay,
 } from '../components/common/Icons'
-import { YachtDiceArt, WerewolfArt } from '../components/common/GameArt'
+import { YachtDiceArt, WerewolfArt, ControlArt } from '../components/common/GameArt'
 import SettingsMenu from '../components/common/SettingsMenu'
 
 const GAMES = [
@@ -33,6 +33,23 @@ const GAMES = [
     description:
       '두번째 밤이 찾아오면 늑대인간이 깨어납니다. 본인의 역할을 수행하고, 낮이 밝아오면 누가 늑대인간인지 토론으로 밝혀내세요.',
     maxPlayers: 10,
+  },
+  {
+    id: 'control',
+    title: '컨트롤',
+    tagline: '조명과 소리를 직접',
+    players: '제한 없음',
+    duration: '자유',
+    difficulty: '—',
+    tags: ['조명 직접 조절', '연출 버튼'],
+    accent: 'var(--accent)',
+    art: 'control',
+    description:
+      '게임 없이 방의 조명을 직접 맞추고, 축하·박수·파티 같은 연출을 버튼으로 터뜨립니다. 나가면 조명이 원래대로 돌아옵니다.',
+    // 게임이 아니라 인원 제한이 없다. 아래에서 이 값이 없으면 인원 검사를 건너뛴다.
+    maxPlayers: null,
+    // 튜토리얼이 없다. 바로 시작만 있다.
+    soloAction: true,
   },
 ]
 
@@ -83,7 +100,8 @@ export default function Lobby({
 
       <div className="gs-cards">
         {GAMES.map((g) => {
-          const overCapacity = playerCount > g.maxPlayers
+          // 컨트롤은 게임이 아니라 인원 제한이 없다(maxPlayers=null).
+          const overCapacity = g.maxPlayers != null && playerCount > g.maxPlayers
           const disabled = !connected || overCapacity
           const disabledReason =
             !connected ? '카메라 오류 — 연결을 확인해 주세요'
@@ -144,13 +162,46 @@ export default function Lobby({
         .gs-title { font-size: 30px; font-weight: 700; letter-spacing: -0.025em; }
         .gs-sub { margin: 0; font-size: 16px; color: var(--fg-soft); }
 
+        /* 카드는 **한 줄로만** 늘어서고, 한 번에 두 장이 화면을 채운다.
+           게임을 추가할 때마다 카드가 좁아지면 원래 있던 두 게임까지 같이
+           초라해진다. 카드 폭을 화면에 묶어두면 몇 개를 더 넣어도 그대로다.
+           나머지는 옆으로 밀어서 본다.
+
+           --peek 만큼 세 번째 카드가 살짝 걸쳐 보인다. 딱 두 장으로 잘라내면
+           옆에 더 있다는 것을 알 방법이 없다 — 걸친 조각이 밀어보라고 말한다. */
         .gs-cards {
           flex: 1;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 20px;
-          padding: 16px 40px 20px;
           min-height: 0;
+          --gs-gap: 20px;
+          --peek: 38px;
+          display: grid;
+          grid-auto-flow: column;
+          grid-auto-columns: calc((100% - var(--gs-gap) - var(--peek)) / 2);
+          gap: var(--gs-gap);
+          padding: 16px 40px 20px;
+          overflow-x: auto;
+          overflow-y: hidden;
+          overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch;
+          scroll-snap-type: x mandatory;
+          /* 스냅 기준선을 패딩 안쪽으로 민다.
+             이게 없으면 스냅이 첫 카드를 컨테이너 테두리에 딱 붙여서
+             왼쪽 여백이 통째로 사라진다 — 카드가 화면 끝에 붙어 답답해진다. */
+          scroll-padding-left: 40px;
+          /* 스크롤바는 숨긴다. 태블릿을 손으로 밀어 쓰는 화면이라 막대가
+             보일 이유가 없고, 카드 아래에 걸치면 지저분하다. */
+          scrollbar-width: none;
+        }
+        .gs-cards::-webkit-scrollbar { display: none; }
+        .gs-cards > * { scroll-snap-align: start; }
+        /* 좁은 화면에서는 한 장씩. 두 장을 우겨넣으면 둘 다 못 읽는다. */
+        @media (max-width: 820px) {
+          .gs-cards {
+            grid-auto-columns: calc(100% - var(--peek));
+            padding-left: 24px;
+            padding-right: 24px;
+            scroll-padding-left: 24px;
+          }
         }
 
         .gs-foot {
@@ -178,6 +229,7 @@ function GameCard({ game, isHovered, onHover, onStart, disabled, disabledReason 
       <div className="gcard-art">
         {game.art === 'yacht' && <YachtDiceArt />}
         {game.art === 'wolf'  && <WerewolfArt />}
+        {game.art === 'control' && <ControlArt />}
         <div className="gcard-art-overlay" />
         <div className="gcard-art-meta">
           <div className="gcard-tagline">{game.tagline}</div>
@@ -204,22 +256,26 @@ function GameCard({ game, isHovered, onHover, onStart, disabled, disabledReason 
           <div className="gcard-warn">{disabledReason}</div>
         )}
 
-        <div className="gcard-cta-row">
-          <button
-            className="gcard-cta gcard-cta-secondary"
-            onClick={() => !disabled && onStart('tutorial')}
-            disabled={disabled}
-          >
-            <IconBook size={16} />
-            튜토리얼 모드
-          </button>
+        {/* 컨트롤은 배울 규칙이 없어 튜토리얼이 없다. 눌러도 같은 곳으로 가는
+            버튼을 둘 두면 무엇이 다른지 묻게 만든다. */}
+        <div className={`gcard-cta-row${game.soloAction ? ' solo' : ''}`}>
+          {!game.soloAction && (
+            <button
+              className="gcard-cta gcard-cta-secondary"
+              onClick={() => !disabled && onStart('tutorial')}
+              disabled={disabled}
+            >
+              <IconBook size={16} />
+              튜토리얼 모드
+            </button>
+          )}
           <button
             className="gcard-cta gcard-cta-primary"
             onClick={() => !disabled && onStart('play')}
             disabled={disabled}
           >
             <IconPlay size={14} />
-            바로 시작
+            {game.soloAction ? '시작하기' : '바로 시작'}
           </button>
         </div>
 
@@ -306,6 +362,8 @@ function GameCard({ game, isHovered, onHover, onStart, disabled, disabledReason 
             grid-template-columns: 1fr 1fr;
             gap: 10px;
           }
+          /* 버튼이 하나뿐인 카드(컨트롤). 반쪽만 차지하면 빈 자리가 실수처럼 보인다. */
+          .gcard-cta-row.solo { grid-template-columns: 1fr; }
           .gcard-cta {
             appearance: none;
             border: 0;
