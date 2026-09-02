@@ -195,3 +195,66 @@ export function WerewolfArt() {
     </div>
   )
 }
+
+
+/**
+ * 컨트롤 카드 아트.
+ *
+ * 게임 둘은 그 게임의 물건(주사위·달)을 그린다. 컨트롤에는 물건이 없고 다루는
+ * 대상이 빛 자체라, **색이 번지는 빛무리**를 그린다. CSS 그라디언트만 쓰므로
+ * 무게가 거의 없다.
+ */
+export function ControlArt() {
+  const ORBS = [
+    { x: 22, y: 46, s: 132, c: '#ff5a7a' },
+    { x: 44, y: 30, s: 116, c: '#ffb43c' },
+    { x: 62, y: 58, s: 148, c: '#3ec8ff' },
+    { x: 80, y: 36, s: 120, c: '#a97cff' },
+  ]
+  return (
+    <div className="game-art game-art-control">
+      {ORBS.map((o, i) => (
+        <span
+          key={i}
+          className="ca-orb"
+          style={{
+            left: `${o.x}%`,
+            top: `${o.y}%`,
+            width: o.s,
+            height: o.s,
+            background: `radial-gradient(circle, ${o.c} 0%, transparent 68%)`,
+            animationDelay: `${i * 900}ms`,
+          }}
+        />
+      ))}
+      <div className="ca-veil" />
+      <style>{`
+        .game-art-control {
+          position: absolute; inset: 0;
+          background: #0d1016;
+          overflow: hidden;
+        }
+        .ca-orb {
+          position: absolute;
+          transform: translate(-50%, -50%);
+          border-radius: 50%;
+          filter: blur(6px);
+          opacity: 0.75;
+          animation: ca-breathe 5200ms ease-in-out infinite;
+        }
+        @keyframes ca-breathe {
+          0%, 100% { transform: translate(-50%, -50%) scale(0.92); opacity: 0.55; }
+          50%      { transform: translate(-50%, -50%) scale(1.1);  opacity: 0.85; }
+        }
+        /* 색이 너무 날것이면 카드 글자가 안 읽힌다. 아주 옅은 검정을 덮는다. */
+        .ca-veil {
+          position: absolute; inset: 0;
+          background: linear-gradient(180deg, rgba(8,10,14,0.16), rgba(8,10,14,0.52));
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ca-orb { animation: none; }
+        }
+      `}</style>
+    </div>
+  )
+}

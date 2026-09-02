@@ -369,6 +369,174 @@ YACHT_CUES: dict[str, Cue] = {
 IN_PLAY_YACHT_CUES = tuple(name for name in YACHT_CUES if name != "yacht_game_finish")
 
 
+# ── 컨트롤 세션 ──────────────────────────────────────────────────────────────
+#
+# 게임이 아니라 조명 자체를 다루는 자리다. 진행자가 버튼을 눌러 방 분위기를
+# 바꾼다 — 축하, 약올리기, 박수, 방구, 파티.
+#
+# 요트·늑대인간 Cue와 형태가 다른 이유: 파티는 색이 **여러 번** 바뀌어야 한다.
+# 한 색으로 터지고 마는 Cue로는 표현할 수 없어서, 색 여러 개를 순서대로 밟는
+# 형태로 정의한다. 색이 하나뿐인 큐는 단계가 하나인 특수한 경우일 뿐이다.
+#
+# 끝나면 반드시 직전 Scene으로 돌아온다 — 컨트롤 세션에서는 그 Scene이
+# 사용자가 슬라이더로 맞춰 둔 색이다.
+
+
+@dataclass(frozen=True)
+class ControlCue:
+    """색 여러 개를 순서대로 밟고 Scene으로 돌아오는 연출.
+
+    steps  : (색, 그 색을 유지할 ms) 목록. 하나면 단색 연출.
+    sfx    : 함께 재생할 효과음 이름 (audio/catalog.py의 SFX_REGISTRY 키).
+    """
+
+    name: str
+    label: str
+    steps: tuple[tuple[RGB, int], ...]
+    brightness: int
+    sfx: str
+    fall_ms: int = 600
+
+    @property
+    def total_ms(self) -> int:
+        return sum(hold for _color, hold in self.steps) + self.fall_ms
+
+
+# 파티 색 순환. 색상환을 고르게 돌아 "막 바뀐다"가 읽히게 한다.
+_PARTY_COLORS: tuple[RGB, ...] = (
+    (255, 40, 90),
+    (255, 170, 30),
+    (250, 240, 60),
+    (60, 220, 120),
+    (40, 190, 255),
+    (150, 80, 255),
+)
+
+CONTROL_CUES: dict[str, ControlCue] = {
+    "celebrate": ControlCue(
+        name="celebrate",
+        label="축하",
+        steps=(
+            (CELEBRATION_GOLD, 420),
+            ((255, 235, 170), 320),
+            (CELEBRATION_GOLD, 420),
+        ),
+        brightness=100,
+        sfx="control_celebrate",
+        fall_ms=700,
+    ),
+    # 약올리기 — 짓궂은 자주색이 깜빡인다. 축하와 반대 방향의 색이라 헷갈리지 않는다.
+    "tease": ControlCue(
+        name="tease",
+        label="약올리기",
+        steps=(
+            ((255, 60, 200), 240),
+            ((90, 20, 120), 200),
+            ((255, 60, 200), 240),
+            ((90, 20, 120), 200),
+            ((255, 60, 200), 300),
+        ),
+        brightness=85,
+        sfx="control_tease",
+        fall_ms=500,
+    ),
+    # 박수 — 노란 조명. 색은 사용자가 지정했다.
+    "applause": ControlCue(
+        name="applause",
+        label="박수",
+        steps=(((255, 214, 70), 1500),),
+        brightness=100,
+        sfx="control_applause",
+        fall_ms=700,
+    ),
+    # 방구 — 탁한 연두. 밝기를 낮춰 "가라앉는" 느낌을 준다.
+    "fart": ControlCue(
+        name="fart",
+        label="방구",
+        steps=(((150, 190, 60), 900), ((110, 150, 50), 700)),
+        brightness=55,
+        sfx="control_fart",
+        fall_ms=900,
+    ),
+    # 파티 — 색상환을 두 바퀴 돈다. 다른 것들보다 확실히 길다(약 9초).
+    "party": ControlCue(
+        name="party",
+        label="파티",
+        steps=tuple((c, 380) for c in _PARTY_COLORS * 4),
+        brightness=100,
+        sfx="control_party",
+        fall_ms=1000,
+    ),
+}
+
+
+def build_control_cue_map() -> dict[str, ControlCue]:
+    return dict(CONTROL_CUES)
+
+
+# ── 발표 연출 ────────────────────────────────────────────────────────────────
+#
+# 관리자 콘솔의 버튼 하나가 방을 어떻게 움직이는지. 조명 정의를 새로 만들지
+# 않고 위의 게임 정의를 조립만 한다 — 재현하려는 것이 실제 게임의 그 순간이라,
+# 여기서 따로 만들면 게임 쪽 값을 고쳤을 때 발표용만 옛 색으로 남는다.
+
+
+# 발표 콘솔의 바탕. 로비와 같은 백색이다 — 관리자 화면에 들어갔다는 이유로
+# 방 조명이 달라지면, 발표자는 아무것도 안 했는데 무대가 먼저 바뀐다.
+#
+# NEUTRAL_SCENE과 색·밝기가 같고 페이드만 길다. 여기로 돌아오는 자리가 대부분
+# 밤 색(밝기 15)이라, 게임용 800ms로 백색 100%까지 올리면 눈이 부시다.
+SHOW_REST_SCENE = Scene(
+    name="show_rest",
+    color=NEUTRAL_WHITE,
+    brightness=100,
+    transition_ms=1500,
+    kelvin=NEUTRAL_KELVIN,
+)
+
+# 발표 연출의 암전 페이드. 게임의 밤 전환과 같은 값을 쓴다(NIGHT_DIP_FALL_MS).
+SHOW_DARK_FALL_MS = NIGHT_DIP_FALL_MS
+
+
+@dataclass(frozen=True)
+class ShowLight:
+    """발표 버튼 하나의 조명 계획.
+
+        방을 재우고(dark_ms) → scene 을 올리고 → cue 를 터뜨리고
+        → 목소리가 끝나면 rest 로 물러난다.
+
+    **dark_ms가 필요한 이유.** 늑대인간 밤은 "눈을 감으세요 / 뜨세요"가 한
+    쌍이다. 밝은 방에서 곧바로 붉은색으로 갈아끼우면 조명이 뒤쪽만 말한다.
+    한 번 재웠다 올려야 앞쪽까지 조명이 말해준다. 게임의 밤 전환과 같은
+    구조인데(Scene.enter_via_dark), 여기서는 어둠의 길이와 목소리가 들어오는
+    시점을 맞춰야 해서 직접 잡는다.
+
+    **rest가 None이면 scene에 머문다.** 요트 큐처럼 스스로 제자리로 돌아오는
+    연출이 그렇다. 밤 색은 스스로 돌아올 데가 없어서 rest를 준다 — 목소리가
+    끝났는데 방이 계속 붉으면 그때부터는 연출이 아니라 그냥 붉은 방이다.
+    물러나는 시점을 여기서 숫자로 잡지 않는 이유는, 그게 **목소리가 끝나는
+    때**라서다. 목소리 길이는 음원 파일이 알고 있다(backend/show_acts.py).
+    """
+
+    scene: Scene
+    cue: Cue | None = None
+    dark_ms: int = 0
+    rest: Scene | None = None
+
+    @property
+    def enter_ms(self) -> int:
+        """버튼을 누르고 색이 오르기 시작할 때까지. 소리도 이때 들어온다."""
+        return SHOW_DARK_FALL_MS + self.dark_ms if self.dark_ms > 0 else 0
+
+    @property
+    def total_ms(self) -> int:
+        """색이 제자리에 설 때까지. rest는 목소리가 정하므로 빠진다."""
+        total = self.enter_ms + self.scene.transition_ms
+        if self.cue is not None:
+            total += self.cue.total_ms
+        return total
+
+
 def build_scene_map(night_brightness: int) -> dict[str, dict[str, Scene]]:
     return {
         "werewolf": build_werewolf_scenes(night_brightness),

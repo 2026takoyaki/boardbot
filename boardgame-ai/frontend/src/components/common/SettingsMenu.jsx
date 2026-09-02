@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { audio as audioApi } from '../../hooks/useAudioPlayer'
 import { useStrategyCoaching } from '../../hooks/useStrategyCoaching'
 import { playSfx } from '../../sfx'
-import { IconVolume, IconMusic, IconSparkle, IconArrowLeft, IconClose } from './Icons'
+import { IconVolume, IconMusic, IconSparkle, IconArrowLeft, IconClose, IconLock } from './Icons'
 
 /**
  * 톱니 버튼 + 설정 패널.
@@ -113,6 +113,12 @@ export default function SettingsMenu({
   showStrategy = false,
   /** 넘기면 '게임 나가기' 줄이 생긴다. 로비에는 나갈 곳이 없다. */
   onExit,
+  /**
+   * 넘기면 '관리자' 줄이 생긴다. 로비에서만 넘긴다 — 발표 연출은 게임을
+   * 시작하기 전에 쓰는 물건이라, 게임 중에 그 자리를 두면 잘못 눌러 판이
+   * 깨질 자리만 늘어난다. 비밀번호는 부르는 쪽이 묻는다(AdminGate).
+   */
+  onAdmin,
 }) {
   const [open, setOpen] = useState(false)
   const [vol, setVol] = useState(() => audioApi.volumes())
@@ -230,6 +236,23 @@ export default function SettingsMenu({
             onChange={changeBgm}
           />
           <div className="sm-note">0으로 내리면 꺼집니다</div>
+
+          {onAdmin && (
+            <>
+              <div className="sm-div" />
+              <button
+                type="button"
+                className="sm-line-btn"
+                onClick={stop(() => { setOpen(false); onAdmin() })}
+              >
+                <span className="sm-line-ic"><IconLock size={17} /></span>
+                <span className="sm-line-txt">
+                  <span className="sm-line-name">관리자</span>
+                  <span className="sm-line-desc">발표 연출 콘솔 · 비밀번호 필요</span>
+                </span>
+              </button>
+            </>
+          )}
 
           {onExit && (
             <>

@@ -581,6 +581,14 @@ class AudioManager:
         msg = item.msg
         if msg.msg_type == MsgType.TTS_PLAY.value:
             request = TTSRequest.from_dict(msg.payload)
+            if request.audio_url:
+                # 파일이 이미 정해진 발화. 합성 단계를 통째로 건너뛴다.
+                #
+                # 발표 연출이 여기로 온다(backend/show_acts.py) — 미리 만들어 둔
+                # 음원이라 키가 없어도, 인터넷이 끊겨도 나가야 한다. 합성 경로를
+                # 타면 캐시 미스 한 번에 발표장에서 조용해진다.
+                await self._send(WSMessage.make_tts_play(request, state_version=msg.state_version))
+                return
             voice = item.voice_override or self._voice_for(request)
             layer, layer_session_id = self._layer_for(request.text)
             path = self._engine.cache_hit(request.text, voice, layer, session_id=layer_session_id)
@@ -613,6 +621,7 @@ class AudioManager:
                 import time as _t
 
                 from benchmarks.common.trace_setup import bench_log
+
                 pbid = msg.payload.get("playback_id", "-") if isinstance(msg.payload, dict) else "-"
                 bench_log().info(
                     "audio_broadcast %s %s %.6f", msg.msg_type, pbid, _t.time(),
@@ -643,13 +652,17 @@ class AudioManager:
         interruptible: bool = True,
         state_version: int = 0,
         voice: VoiceConfig | None = None,
+        audio_url: str | None = None,
     ) -> str:
         """FSM 외부에서 직접 TTS를 큐에 넣을 때 (테스트/LLM 진입점/SFX 시퀀스).
 
         voice를 주면 그 목소리로만 합성한다(페르소나 미리듣기).
+        audio_url을 주면 합성하지 않고 그 파일을 그대로 튼다(발표용 음원).
+        text는 그 경우 자막으로만 쓰인다.
         """
         req = TTSRequest(
             text=text,
+            audio_url=audio_url,
             priority=priority,
             agent=agent,
             interruptible=interruptible,

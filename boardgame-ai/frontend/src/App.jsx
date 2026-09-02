@@ -12,6 +12,8 @@ import { orderForTurn, physicalSeatOrder } from './components/common/turnOrder'
 import Lobby from './pages/Lobby'
 import Countdown from './pages/Countdown'
 import WerewolfGame from './pages/WerewolfGame'
+import ControlSession from './pages/ControlSession'
+import AdminConsole from './pages/AdminConsole'
 import YachtGame from './pages/YachtGame'
 
 const WEREWOLF_PHASES = new Set([
@@ -99,9 +101,14 @@ export default function App() {
   }, [])
 
   // 백엔드 phase가 늑대인간 게임 단계로 진입하면 page 동기화 (새로고침 복구 용도)
-  // seat/lobby에서는 발동하지 않음 — 게임 선택 전 한밤 파이프라인이 켜지는 사이드이펙트 방지
+  // 아래 화면들에서는 발동하지 않는다.
+  //   seat/lobby   게임 선택 전 한밤 파이프라인이 켜지는 사이드이펙트 방지
+  //   control/admin 게임이 아니다. 직전 판의 페이즈가 남아 있으면 조명을 만지던
+  //                중에 늑대인간 화면으로 튕겨나가고, 그 순간 조명 복구도 어긋난다.
   useEffect(() => {
-    if (WEREWOLF_PHASES.has(phase) && page !== 'werewolf' && page !== 'seat' && page !== 'lobby') {
+    const exempt = page === 'werewolf' || page === 'seat' || page === 'lobby'
+      || page === 'control' || page === 'admin'
+    if (WEREWOLF_PHASES.has(phase) && !exempt) {
       setPage('werewolf')
     }
   }, [phase, page])
@@ -126,6 +133,16 @@ export default function App() {
   // 좌석 등록 페이지에서 사용할 콜백
   const goLobby = () => setPage('lobby')
 
+  // 관리자 콘솔(발표 연출). 비밀번호는 로비가 먼저 묻는다(AdminGate) —
+  // 여기까지 오면 이미 통과한 것이다.
+  //
+  // 컨트롤 세션과 같은 소켓을 쓰므로 백엔드에는 'control'로 알린다. 조명 복구
+  // 경로가 그쪽 하나뿐이라, 다른 이름으로 들어가면 나갈 때 방이 안 돌아온다.
+  const goAdmin = () => {
+    send('select_game', { game_type: 'control' })
+    setPage('admin')
+  }
+
   // Lobby에서 게임 카드 선택 → 카운트다운 진입
   const handleSelectGame = (gameId, mode) => {
     // 진행 순서 픽스
@@ -148,6 +165,13 @@ export default function App() {
     // 늑대인간 "튜토리얼 모드" = 연습 모드(frontend-only 플래그). game_type은 'werewolf' 그대로.
     let gameType = gameId
     if (gameId === 'yacht' && mode === 'tutorial') gameType = 'yacht_tutorial'
+    // 컨트롤은 게임이 아니라 카운트다운(턴 순서 안내)이 뜻이 없다. 바로 들어간다.
+    if (gameId === 'control') {
+      send('select_game', { game_type: 'control' })
+      setPage('control')
+      return
+    }
+
     setPendingGame({ gameId, mode, gameType })
     setIsPracticeMode(gameId === 'werewolf' && mode === 'tutorial')
     setYachtTutorialMode(gameId === 'yacht' && mode === 'tutorial')
@@ -197,6 +221,7 @@ export default function App() {
         send={send}
         onBack={() => setPage('seat')}
         onSelectGame={handleSelectGame}
+        onAdmin={goAdmin}
       />
     )
   } else if (page === 'countdown' && pendingGame && orderedPlayersAtStart) {
@@ -219,6 +244,14 @@ export default function App() {
         onChangePlayers={() => { setOrderedPlayersAtStart(null); setPage('seat') }}
       />
     )
+  } else if (page === 'control') {
+    pageEl = (
+      <ControlSession
+        onExit={() => { setOrderedPlayersAtStart(null); setPage('lobby') }}
+      />
+    )
+  } else if (page === 'admin') {
+    pageEl = <AdminConsole onExit={() => setPage('lobby')} />
   } else if (page === 'werewolf') {
     const playersForGame = orderedPlayersAtStart ?? registeredPlayers
     pageEl = (

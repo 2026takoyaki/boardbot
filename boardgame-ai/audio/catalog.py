@@ -25,11 +25,29 @@ ASSETS_DIR = _BASE_DIR / "assets"
 TTS_CACHE_DIR = ASSETS_DIR / "tts_cache"
 SFX_DIR = ASSETS_DIR / "sfx"
 BGM_DIR = ASSETS_DIR / "bgm"
+# 발표용으로 미리 만들어 둔 목소리. **캐시가 아니라 자산이다** — tts_cache는
+# .gitignore에 있고 지워도 다시 만들어지지만, 이쪽은 지우면 발표장에서
+# 되살릴 방법이 없다(합성하려면 키와 인터넷이 필요하다). 그래서 저장소에
+# 함께 들어간다. 만드는 법은 tools/generate_show_voices.py.
+SHOW_DIR = ASSETS_DIR / "show"
 
 # 캐시 계층별 디렉토리
 STATIC_CACHE_DIR = TTS_CACHE_DIR / "static"
 SESSION_CACHE_DIR = TTS_CACHE_DIR / "session"
 DYNAMIC_CACHE_DIR = TTS_CACHE_DIR / "dynamic"
+
+# 발표용 음원의 확장자. Typecast가 wav를 내보낸다(audio/tts/typecast.py의
+# audio_ext). 엔진을 바꾸면 여기와 파일을 같이 바꿔야 한다.
+SHOW_VOICE_EXT = "wav"
+
+
+def show_voice_url(act_id: str) -> str:
+    """브라우저가 받아갈 경로. 서버가 /show/ 로 이 디렉토리를 서빙한다."""
+    return f"/show/{act_id}.{SHOW_VOICE_EXT}"
+
+
+def show_voice_path(act_id: str) -> Path:
+    return SHOW_DIR / f"{act_id}.{SHOW_VOICE_EXT}"
 
 
 # 목소리는 여기가 아니라 페르소나가 소유한다(core/persona.py).
@@ -73,6 +91,22 @@ SFX_REGISTRY: dict[str, str] = {
     "game_end": "/sfx/game_end.mp3",                  # 결과 발표 징글
     # ── 늑대인간 ──
     "wolf_sound": "/sfx/wolf_sound.mp3",              # 늑대 울음. 밤 시작 분위기
+    # ── 컨트롤 세션 ──
+    # 진행자가 버튼으로 직접 트는 소리. 조명 큐와 짝을 이룬다(bulb/scenes.py).
+    #
+    # 파일이 아직 없어도 등록해 둔다. 없는 이름을 넘기면 AudioManager가 경고만
+    # 찍고 아무것도 안 보내서 조명까지 같이 죽은 것처럼 보인다. 등록해 두면
+    # 브라우저가 404를 조용히 무시하고 조명은 정상으로 도므로, 파일을 넣는
+    # 순간 소리만 붙는다.
+    "control_celebrate": "/sfx/control_celebrate.mp3",  # 축하
+    "control_tease": "/sfx/control_tease.mp3",  # 약올리기
+    "control_applause": "/sfx/control_applause.mp3",  # 박수
+    "control_fart": "/sfx/control_fart.mp3",  # 방구
+    "control_party": "/sfx/control_party.mp3",  # 파티 — 10초 안팎의 댄스 음악
+    # ── 발표 연출 ──
+    # 관리자 콘솔의 버튼이 쓴다(backend/show_acts.py). 나머지 셋은 실제 게임이
+    # 쓰는 소리를 그대로 가져다 쓰는데, 예언자 차례에 해당하는 소리만 없다.
+    "seer_chime": "/sfx/seer_chime.mp3",  # 예언자 기상 — 맑은 종소리
 }
 
 # BGM 레지스트리. 자산 파일: audio/assets/bgm/<filename>. 서버 /bgm/<filename>.

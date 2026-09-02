@@ -35,6 +35,12 @@ export const IconUser = (p) => (
   </Icon>
 )
 export const IconChevronUp = (p) => <Icon {...p}><path d="m6 15 6-6 6 6" /></Icon>
+export const IconLock = (p) => (
+  <Icon {...p}>
+    <rect x="4" y="10.5" width="16" height="10" rx="2.2" />
+    <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+  </Icon>
+)
 export const IconEdit = (p) => (
   <Icon {...p}>
     <path d="M14 4l6 6L9 21H3v-6L14 4Z" />
