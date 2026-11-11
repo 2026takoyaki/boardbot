@@ -45,7 +45,14 @@ class DiceManager:
         history_window: int = 10,
         pip_buffer_size: int = 11,  # 더 큰 버퍼로 YOLO/Hough 끊김 흡수
         history_max_miss: int = 30,
+        relative_motion_threshold: float = 0.12,
     ) -> None:
+        # 정지 판정 기준: 프레임당 이동이 주사위 크기의 이 비율 미만이면 정지.
+        # 0.12 — 이웃과 붙은 박스는 좌우 ±3px(70px 주사위에서 프레임 간 8~10%)씩
+        # 떨린다. 굴러가는 주사위는 프레임마다 30% 넘게 움직여 충분히 갈린다.
+        # motion_threshold(정규화 좌표 절대값)는 호환용으로만 남는다 — 화면 속
+        # 주사위 크기와 무관한 고정값이라, 카메라 높이가 바뀌면 의미가 달라진다.
+        self._relative_motion = relative_motion_threshold
         self._motion_threshold = motion_threshold
         self._stabilization_frames = stabilization_frames
         self._history_window = history_window
@@ -94,14 +101,37 @@ class DiceManager:
             hist.miss_count = 0  # 다시 잡힘 — 가림 카운터 리셋
 
             center = det.bbox.center()
+            box_w, box_h = det.bbox.x2 - det.bbox.x1, det.bbox.y2 - det.bbox.y1
+            jumped = False
+            if hist.center_history and box_w > 0 and box_h > 0:
+                px, py = hist.center_history[-1]
+                step = (((center[0] - px) / box_w) ** 2 + ((center[1] - py) / box_h) ** 2) ** 0.5
+                # 한 번에 주사위 크기의 절반 넘게 옮겨졌다 = 다른 자리에 놓였다.
+                # 컵에 가려졌다 같은 track_id로 딴 곳에서 다시 잡히는 경우가 이렇다.
+                # 박스 떨림은 이만큼 안 된다. 이력을 새로 시작해 정지부터 다시 잰다.
+                if step > _JUMP_RATIO:
+                    hist.center_history.clear()
+                    jumped = True
             hist.center_history.append(center)
 
-            motion_score = _compute_motion_score(hist.center_history)
-            is_stable = motion_score < self._motion_threshold
+            motion_score = _compute_motion_score(hist.center_history, box_w, box_h)
+            is_stable = not jumped and motion_score < self._relative_motion
 
             if is_stable:
                 hist.stable_frames += 1
             else:
+                if hist.stable_frames > 0 or hist.last_pip is not None:
+                    # 움직이기 시작했다 = 굴렸거나 옮겼다. 앞 면의 표를 버린다.
+                    #
+                    # 안 버리면 같은 track_id로 이어진 주사위는 옛 면의 표(최대
+                    # 11표)가 새 면의 표를 이긴다. 굴림 확정은 정지 15프레임에서
+                    # 나는데 눈 세기는 정지 10프레임부터라, 확정 순간 새 표는
+                    # 5개 남짓이다 — 옛 눈이 그대로 굴림 결과로 나간다.
+                    #
+                    # 확정값도 지운다. 새 면이 아직 안 읽혔으면 "?"(수동 입력)가
+                    # 나가는 편이 옛 눈이 조용히 나가는 것보다 낫다.
+                    hist.pip_buffer.clear()
+                    hist.last_pip = None
                 hist.stable_frames = 0
 
             # stable 확정 구간에서만 pip_count 갱신.
@@ -145,20 +175,30 @@ class DiceManager:
         self._histories.clear()
 
 
-def _compute_motion_score(history: deque[tuple[float, float]]) -> float:
-    """최근 N프레임 center 이동의 표준편차 (정규화).
+# 한 프레임 이동이 주사위 크기의 이 비율을 넘으면 "옮겨졌다"로 본다.
+_JUMP_RATIO = 0.5
 
+
+def _compute_motion_score(
+    history: deque[tuple[float, float]], box_w: float, box_h: float
+) -> float:
+    """최근 프레임당 이동량의 중앙값 — 주사위 크기 단위.
+
+    0.12이면 프레임마다 주사위 크기의 12%씩 움직이고 있다는 뜻이다.
+
+    예전에는 이동량의 **표준편차**를 썼다. 그러면 일정한 속도로 미끄러지는
+    주사위는 정지로, 제자리에서 박스만 떨리는 주사위(이웃 주사위와 붙어 YOLO
+    박스가 흔들리는 경우)는 움직임으로 판정됐다 — 그 주사위는 영영 눈을 세지
+    않아 "?"로 남았다(2026-11-11 실물 화면).
+
+    중앙값을 쓰는 이유: 박스가 한두 프레임 크게 튀어도 정지가 깨지지 않는다.
     샘플이 부족하면 큰 값을 반환해 가짜 stable 판정을 막는다.
-    (variance 계산상 작은 표본은 0에 가까워 motion_threshold 미만으로 떨어짐)
     """
-    if len(history) < 5:
+    if len(history) < 5 or box_w <= 0 or box_h <= 0:
         return float("inf")
-    dists: list[float] = []
-    pts = list(history)
-    for i in range(1, len(pts)):
-        dx = pts[i][0] - pts[i - 1][0]
-        dy = pts[i][1] - pts[i - 1][1]
-        dists.append((dx * dx + dy * dy) ** 0.5)
-    mean = sum(dists) / len(dists)
-    variance = sum((d - mean) ** 2 for d in dists) / len(dists)
-    return variance**0.5
+    pts = list(history)[-6:]
+    steps = sorted(
+        ((pts[i][0] - pts[i - 1][0]) / box_w) ** 2 + ((pts[i][1] - pts[i - 1][1]) / box_h) ** 2
+        for i in range(1, len(pts))
+    )
+    return steps[len(steps) // 2] ** 0.5

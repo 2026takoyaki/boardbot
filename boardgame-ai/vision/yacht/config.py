@@ -19,6 +19,20 @@ class VisionConfig:
     yolo_conf: float = 0.35
     yolo_iou: float = 0.5
     yolo_imgsz: int = 640
+    # 주사위를 어디서 찾는가.
+    #   "hybrid" — 트레이 안의 흰 덩어리(DiceFinder)를 기본으로 하고 YOLO dice를
+    #              보조 증거로 쓴다. 기본.
+    #                · 덩어리 + 흰색          → 주사위 (YOLO가 놓쳐도 잡는다: 킵존)
+    #                · 덩어리 + YOLO가 가리킴 → 색이 틀어져도 주사위
+    #                · 트레이 영역을 못 찾음   → YOLO 검출만으로 이어 간다
+    #              눈은 어느 경우든 그 박스에서 DotCounter(face)가 센다.
+    #   "finder" — 흰 덩어리만. YOLO dice는 안 본다.
+    #   "yolo"   — YOLO dice 클래스만. 지금 트레이(빨간 펠트)에서는 프레임마다
+    #              한두 개씩 빠졌다 잡혔다 하고(정지 카운터가 0으로 돌아가 굴림이
+    #              unstable로 끝난다) 킵존 주사위를 못 잡는다 (2026-11-11 실물
+    #              14장: 70개 중 YOLO 59, 킵존 0 / hybrid 69).
+    # YOLO는 어느 쪽이든 트레이·굴림통을 찾는 데 쓴다.
+    dice_source: str = "hybrid"
 
     # MediaPipe Hand
     mp_max_num_hands: int = 8

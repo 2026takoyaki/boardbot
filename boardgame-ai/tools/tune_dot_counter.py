@@ -1,6 +1,6 @@
 """주사위 눈 수 파라미터 실시간 튜닝 도구.
 
-트랙바로 HoughCircles/Blob 파라미터와 **조명**을 함께 조절하면서
+트랙바로 눈 세기(연결 성분 방식) 파라미터와 **조명**을 함께 조절하면서
 실제 카메라 또는 저장된 영상에서 인식 결과를 실시간 확인.
 
 조명을 같이 넣은 이유: 눈 인식 파라미터의 최적값은 조도에 따라 달라진다.
@@ -235,13 +235,13 @@ def main() -> None:
         _tb("* light bright", max(1, min(100, args.brightness)), 100)
         _tb("* light kelvin", start_slot, _KELVIN_SLOTS)
 
-    _tb("dp x10", int(params.dp * 10), 30)
-    _tb("min_dist%", int(params.min_dist_ratio * 100), 80)
-    _tb("canny_upper", params.canny_upper, 200)
-    _tb("accum_thresh", params.accum_thresh, 50)
-    _tb("r_min%", int(params.radius_min_ratio * 100), 20)
-    _tb("r_max%", int(params.radius_max_ratio * 100), 40)
-    _tb("clahe_clip x10", int(params.clahe_clip * 10), 80)
+    # 연결 성분 방식 파라미터 (vision/detectors/dot_counter.py). 크롭 타일에서
+    # 초록 테두리 = 눈으로 인정, 빨강 = 버림.
+    _tb("inset%", int(params.inset_ratio * 100), 25)
+    _tb("contrast", params.min_contrast, 120)
+    _tb("pip_min x1000", int(params.pip_min_area_ratio * 1000), 40)
+    _tb("pip_max x1000", int(params.pip_max_area_ratio * 1000), 250)
+    _tb("circ x100", int(params.pip_min_circularity * 100), 100)
     _tb("stable_frames", 15, 60)
 
     cap = cv2.VideoCapture(source)
@@ -263,13 +263,11 @@ def main() -> None:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
 
-        params.dp = max(0.1, cv2.getTrackbarPos("dp x10", WIN) / 10)
-        params.min_dist_ratio = max(0.01, cv2.getTrackbarPos("min_dist%", WIN) / 100)
-        params.canny_upper = max(1, cv2.getTrackbarPos("canny_upper", WIN))
-        params.accum_thresh = max(1, cv2.getTrackbarPos("accum_thresh", WIN))
-        params.radius_min_ratio = max(0.01, cv2.getTrackbarPos("r_min%", WIN) / 100)
-        params.radius_max_ratio = max(0.02, cv2.getTrackbarPos("r_max%", WIN) / 100)
-        params.clahe_clip = max(0.1, cv2.getTrackbarPos("clahe_clip x10", WIN) / 10)
+        params.inset_ratio = cv2.getTrackbarPos("inset%", WIN) / 100
+        params.min_contrast = cv2.getTrackbarPos("contrast", WIN)
+        params.pip_min_area_ratio = max(1, cv2.getTrackbarPos("pip_min x1000", WIN)) / 1000
+        params.pip_max_area_ratio = max(2, cv2.getTrackbarPos("pip_max x1000", WIN)) / 1000
+        params.pip_min_circularity = cv2.getTrackbarPos("circ x100", WIN) / 100
         stable_frames = cv2.getTrackbarPos("stable_frames", WIN)
 
         if light is not None:
@@ -385,13 +383,11 @@ def main() -> None:
         if key == ord("s"):
             print("\n=== DotCounterParams (vision/detectors/dot_counter.py) ===")
             print("DotCounterParams(")
-            print(f"    dp={params.dp},")
-            print(f"    min_dist_ratio={params.min_dist_ratio},")
-            print(f"    canny_upper={params.canny_upper},")
-            print(f"    accum_thresh={params.accum_thresh},")
-            print(f"    radius_min_ratio={params.radius_min_ratio},")
-            print(f"    radius_max_ratio={params.radius_max_ratio},")
-            print(f"    clahe_clip={params.clahe_clip},")
+            print(f"    inset_ratio={params.inset_ratio},")
+            print(f"    min_contrast={params.min_contrast},")
+            print(f"    pip_min_area_ratio={params.pip_min_area_ratio},")
+            print(f"    pip_max_area_ratio={params.pip_max_area_ratio},")
+            print(f"    pip_min_circularity={params.pip_min_circularity},")
             print(")")
             print(f"stable_frames = {stable_frames}")
             if light is not None:

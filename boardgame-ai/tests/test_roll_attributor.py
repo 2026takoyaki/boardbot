@@ -480,3 +480,145 @@ def test_static_scene_no_fire() -> None:
         result = attr.update(_frame(i, [], _initial_dice()))
         assert result is None
     assert attr.state == RollState.WAITING
+
+
+# ── 판정 결과(verdict) — 발표 영상이 "왜 무시됐는가"를 띄우는 데 쓴다 ──────────
+
+
+def _quick_attr() -> RollAttributor:
+    return RollAttributor(
+        stabilization_frames=3,
+        enter_debounce_frames=1,
+        exit_debounce_frames=1,
+        roll_tray_in_tray_required=1,
+    )
+
+
+def test_verdict_confirmed_on_real_roll() -> None:
+    attr = _quick_attr()
+    attr.update(_frame(0, [], _initial_dice()))
+    attr.update(_frame(1, [_hand("p_a", (0.5, 0.5))], _initial_dice()))
+    assert attr.verdict is None  # 점유 중에는 아직 결과가 없다
+    attr.update(_frame(2, [], _rolled_dice()))
+    assert attr.verdict is not None
+    assert attr.verdict.code == "confirmed"
+    assert attr.verdict.actor_id == "p_a"
+    assert attr.verdict.score is not None and attr.verdict.score >= 0.15
+
+
+def test_verdict_no_cup_when_hand_covers_dice_without_cup() -> None:
+    """손으로 가렸다 치우기·킵존 옮기기 — 굴림통을 안 썼으니 굴림이 아니다."""
+    attr = _quick_attr()
+    attr.update(_frame(0, [], _initial_dice(), roll_tray_in=False))
+    attr.update(_frame(1, [_hand("p_a", (0.5, 0.5))], _initial_dice(), roll_tray_in=False))
+    result = attr.update(_frame(2, [], _rolled_dice(), roll_tray_in=False))
+    assert result is None
+    assert attr.verdict is not None and attr.verdict.code == "no_cup"
+
+
+def test_verdict_no_change_on_brief_touch() -> None:
+    attr = _quick_attr()
+    attr.update(_frame(0, [], _initial_dice()))
+    attr.update(_frame(1, [_hand("p_a", (0.5, 0.5))], _initial_dice()))
+    attr.update(_frame(2, [], _initial_dice()))
+    assert attr.verdict is not None and attr.verdict.code == "no_change"
+
+
+def test_verdict_clears_on_next_frame() -> None:
+    attr = _quick_attr()
+    attr.update(_frame(0, [], _initial_dice()))
+    attr.update(_frame(1, [_hand("p_a", (0.5, 0.5))], _initial_dice()))
+    attr.update(_frame(2, [], _rolled_dice()))
+    assert attr.verdict is not None
+    attr.update(_frame(3, [], _rolled_dice()))
+    assert attr.verdict is None
+
+
+def test_gates_report_progress_while_occupied() -> None:
+    attr = _quick_attr()
+    attr.update(_frame(0, [], _initial_dice()))
+    assert attr.gates()["occupied"] is False
+    attr.update(_frame(1, [_hand("p_a", (0.5, 0.5))], _initial_dice()))
+    attr.update(_frame(2, [_hand("p_a", (0.5, 0.5))], _initial_dice()))
+    gates = attr.gates()
+    assert gates["occupied"] is True
+    assert gates["cup_frames"] >= 1
+    assert gates["hand_or_shake"] is True
+    assert gates["need_dice"] == 5
+
+
+# ── 정착 대기 (6월 녹화본 재생에서 나온 회귀) ─────────────────────────────────
+
+
+def test_settle_wait_restarts_when_hand_comes_back() -> None:
+    """통에 담는 동안 쓴 대기 프레임이 쏟은 뒤의 대기를 갉아먹지 않는다.
+
+    주사위를 손으로 집어 통에 담는 사이에는 손이 트레이 밖이고 주사위가 0개라
+    정착 대기가 돈다. 그 프레임이 점유 한 번 동안 누적되면, 쏟은 뒤 주사위가
+    멈출 시간이 모자라 정상 굴림이 unstable로 끝난다.
+    """
+    from vision.attribution import roll_attributor as ra
+
+    attr = _quick_attr()
+    hand = _hand("p_a", (0.5, 0.5))
+    f = 0
+    attr.update(_frame(f, [], _initial_dice()))
+    f += 1
+    attr.update(_frame(f, [hand], _initial_dice()))  # 집으러 들어옴
+    # 통에 담는 중: 손은 트레이 밖, 주사위는 통 안 — 한도 직전까지 대기를 쓴다
+    for _ in range(ra._SETTLE_TIMEOUT_FRAMES - 2):
+        f += 1
+        attr.update(_frame(f, [], []))
+    assert attr.state == RollState.HAND_IN_TRAY
+    f += 1
+    attr.update(_frame(f, [hand], []))  # 쏟으러 다시 들어옴
+    # 쏟은 직후: 아직 구르는 중 (정지 프레임 부족) — 예전에는 여기서 unstable
+    rolling = [_dice(i + 50, (0.32 + 0.06 * i, 0.5), pip=None) for i in range(5)]
+    for d in rolling:
+        d.stable_frames = 0
+    for _ in range(10):
+        f += 1
+        assert attr.update(_frame(f, [], rolling)) is None
+        assert attr.state == RollState.HAND_IN_TRAY
+    f += 1
+    assert attr.update(_frame(f, [], _rolled_dice())) == "p_a"
+    assert attr.verdict is not None and attr.verdict.code == "confirmed"
+
+
+def test_partial_reroll_waits_for_late_die() -> None:
+    """4개 킵 + 1개 재굴림에서, 굴린 주사위가 손이 빠진 **뒤에** 잡혀도 확정된다.
+
+    기준(스냅샷)은 통에 담긴 1개를 뺀 4개다. 쏟고 손이 빠진 직후 몇 프레임은
+    그 4개가 그대로 보여 "개수 충족 + 정지 + 변화 0"이 된다. 여기서 바로
+    no_change로 끝내면 굴림이 사라진다.
+    """
+    attr = _quick_attr()
+    kept = [_dice(i, (0.25 + 0.05 * i, 0.3), pip=p) for i, p in enumerate([6, 4, 2, 3])]
+    hand = _hand("p_a", (0.5, 0.5))
+    attr.update(_frame(0, [], kept))  # 5번째는 이미 통 안
+    attr.update(_frame(1, [hand], kept))
+    assert attr.state == RollState.HAND_IN_TRAY
+    # 손이 빠졌고 굴린 주사위는 아직 안 잡혔다
+    for f in range(2, 6):
+        assert attr.update(_frame(f, [], kept)) is None
+        assert attr.state == RollState.HAND_IN_TRAY
+    late = _dice(77, (0.6, 0.6), pip=5)
+    assert attr.update(_frame(6, [], [*kept, late])) == "p_a"
+
+
+def test_partial_reroll_wait_times_out_to_no_change() -> None:
+    """굴림통만 스치고 아무것도 안 굴렸으면 한도 뒤에 no_change로 끝난다."""
+    from vision.attribution import roll_attributor as ra
+
+    attr = _quick_attr()
+    kept = [_dice(i, (0.25 + 0.05 * i, 0.3), pip=p) for i, p in enumerate([6, 4, 2, 3])]
+    attr.update(_frame(0, [], kept))
+    attr.update(_frame(1, [_hand("p_a", (0.5, 0.5))], kept))
+    f = 2
+    for _ in range(ra._SETTLE_TIMEOUT_FRAMES):
+        assert attr.update(_frame(f, [], kept)) is None
+        assert attr.verdict is None
+        f += 1
+    assert attr.update(_frame(f, [], kept)) is None
+    assert attr.verdict is not None and attr.verdict.code == "no_change"
+    assert attr.state == RollState.WAITING

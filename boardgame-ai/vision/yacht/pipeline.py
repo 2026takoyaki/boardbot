@@ -24,6 +24,7 @@ from vision.attribution.seat_matcher import (
 from vision.yacht.config import VisionConfig
 from vision.debug.jsonl_logger import JsonlLogger
 from vision.debug.overlay import draw_overlay
+from vision.detectors.dice_finder import DiceFinder
 from vision.detectors.dot_counter import DotCounter
 from vision.detectors.gesture_classifier import GestureClassifier
 from vision.detectors.hand_detector import HandDetector
@@ -81,6 +82,7 @@ class VisionPipeline:
         # 1프레임 확정으로 낮춰도 단발 오검출이 가짜 굴림을 일으키지는 않는다.
         self._byte_tracker = ByteTracker(min_hits=1)
         self._dot_counter = DotCounter()
+        self._dice_finder = DiceFinder()
         self._dice_manager = DiceManager(
             motion_threshold=float(DEFAULT_PARAMS["motion_threshold_norm"]),
             stabilization_frames=10,
@@ -157,16 +159,38 @@ class VisionPipeline:
     def update_players(self, players: list[Player]) -> None:
         self._players = players
 
-    def _process_one(self, frame_bgr: Any, frame_id: int, ts: float) -> None:
-        h, w = frame_bgr.shape[:2]
+    def _detect_objects(
+        self, frame_bgr: Any
+    ) -> tuple[BBox | None, BBox | None, BBox | None, list[YoloDet]]:
+        """(tray, tray_inner, roll_tray, 주사위들). 데모(demos/demo6)도 이걸 쓴다.
 
+        주사위는 기본으로 DiceFinder가 찾는다(config.dice_source). 그때 트레이도
+        DiceFinder가 찾은 실제 트레이 영역으로 바꾼다 — YOLO가 노트북 같은 다른
+        어두운 물체에 트레이 박스를 하나 더 내면, 굴림 판정(손이 트레이에
+        들어왔나)이 엉뚱한 곳을 본다.
+        """
         yolo_dets = self._yolo.detect(frame_bgr)
         tray, tray_inner, roll_tray, dice_dets = _split_dets(yolo_dets)
-
+        if self._config.dice_source in ("hybrid", "finder"):
+            trays = [d.bbox for d in yolo_dets if d.cls_name in ("tray", "tray_inner")]
+            # hybrid: YOLO dice를 보조 증거·대체 결과로 넘긴다. finder: 덩어리만 본다.
+            hints = dice_dets if self._config.dice_source == "hybrid" else None
+            dice_dets = self._dice_finder.find(frame_bgr, trays, hints)
+            if self._dice_finder.tray is not None:
+                tray = self._dice_finder.tray
+        # 트레이 밖 검출을 버린다. DiceFinder가 찾은 주사위는 원래 트레이 안이라
+        # 그대로 남고, 트레이 영역을 못 찾아 YOLO 검출로 대체된 프레임(hybrid)에서
+        # 테이블 위 오검출을 거른다 — 예전 YOLO 경로와 같은 보호다.
         if tray is not None and self._config.tray_mask_padding > 0:
             dice_dets = _filter_dice_inside_tray(
                 dice_dets, tray, padding=self._config.tray_mask_padding
             )
+        return tray, tray_inner, roll_tray, dice_dets
+
+    def _process_one(self, frame_bgr: Any, frame_id: int, ts: float) -> None:
+        h, w = frame_bgr.shape[:2]
+
+        tray, tray_inner, roll_tray, dice_dets = self._detect_objects(frame_bgr)
 
         tracked = self._byte_tracker.update(dice_dets, frame_id)
         dice_states = self._dice_manager.update(tracked, frame_bgr, self._dot_counter)

@@ -33,7 +33,11 @@ from vision.yacht.schemas import DiceState, YachtFramePerception
 # 기본 INFO/WARNING 환경에선 조용히 동작.
 _log = logging.getLogger(__name__)
 
-# 손이 빠진 뒤 주사위가 다 보이고 멈추기를 기다리는 최대 프레임 (30fps 기준 1.5초).
+# 손이 빠진 뒤 주사위가 다 보이고 멈추기를 기다리는 최대 프레임 (30fps 기준 2.5초).
+#
+# 45(1.5초)는 빠듯했다. 쏟고 손을 빼는 순간부터 세는데, 주사위가 구르다 멈추고
+# (0.5~1초) 정지 이력 5프레임 + 정지 15프레임을 채워야 해서 35~50프레임이 든다.
+# 조금만 오래 구르면 정상 굴림이 unstable로 끝났다.
 #
 # 쏟은 직후에는 몇 프레임 동안 일부가 안 잡힌다 — 공중에 있거나 서로 겹친다.
 # 그래서 개수가 모자라면 기다린다. 그런데 무한정 기다리면, 킵존처럼 주사위를
@@ -42,12 +46,35 @@ _log = logging.getLogger(__name__)
 # 끝까지 굴림이 한 번도 안 잡혔다 (실측).
 #
 # 상한을 두고, 넘으면 WAITING으로 돌아가 지금 보이는 것으로 기준을 다시 잡는다.
-_SETTLE_TIMEOUT_FRAMES = 45
+_SETTLE_TIMEOUT_FRAMES = 75
 
 
 class RollState(Enum):
     WAITING = auto()
     HAND_IN_TRAY = auto()
+
+
+@dataclass(frozen=True)
+class RollVerdict:
+    """점유 한 번이 어떻게 끝났는가. 판정에는 쓰지 않고 **보여주기**에만 쓴다.
+
+    지금까지는 굴림이 아니라고 판정한 이유가 디버그 로그에만 남았다. 발표
+    영상(demos/demo6_roll_gate.py)이 "손으로 가린 것·킵존으로 옮긴 것은 왜
+    무시됐는가"를 화면에 띄우려면 그 이유를 읽을 수 있어야 한다.
+
+    code:
+      confirmed   굴림 확정 — 상태 전환
+      no_cup      굴림통이 트레이에 안 들어왔다 (손으로 가림·킵존 옮김)
+      no_action   손도 굴림통 흔들림도 없었다
+      rebase      주사위 개수가 줄어든 채 멈췄다 — 기준을 다시 잡음 (킵존으로 뺌)
+      unstable    주사위가 끝내 멈추지 않았다
+      no_change   배치가 굴리기 전과 거의 같다 (손만 댐)
+    """
+
+    code: str
+    actor_id: str | None = None
+    score: float | None = None
+    dice_count: int | None = None
 
 
 @dataclass
@@ -109,6 +136,8 @@ class RollAttributor:
         # 직전 update()에서 굴림이 finalize됐는지 (actor가 None이어도 True 가능).
         # pipeline이 perception.roll_just_confirmed 게이트 세팅에 사용.
         self._just_finalized: bool = False
+        # 직전 update()에서 점유가 끝났다면 그 결과. 다음 update()에서 지운다.
+        self._verdict: RollVerdict | None = None
 
         # 디바운스 카운터: 손 안에 있는 연속 프레임, 밖에 있는 연속 프레임
         self._in_streak: int = 0
@@ -173,6 +202,7 @@ class RollAttributor:
         """
         _ = active_player
         self._just_finalized = False  # 매 프레임 리셋 — 발화 분기에서만 True
+        self._verdict = None
 
         # nearest player_id 누적 (tray 또는 roll_tray 근처) — fallback actor용.
         # actor 판정에는 active_player 필터를 걸지 않는다: 차례가 아닌 사람이
@@ -226,6 +256,23 @@ class RollAttributor:
     @property
     def state(self) -> RollState:
         return self._state
+
+    @property
+    def verdict(self) -> RollVerdict | None:
+        """직전 update()에서 점유가 끝났으면 그 결과, 아니면 None."""
+        return self._verdict
+
+    def gates(self) -> dict[str, object]:
+        """점유 중 관문별 진행 상황. 보여주기 전용 — 판정에 영향 없다."""
+        return {
+            "occupied": self._state == RollState.HAND_IN_TRAY,
+            "cup_frames": self._roll_tray_in_tray_streak,
+            "cup_required": self._roll_tray_in_tray_required,
+            "hand_or_shake": self._hand_seen_in_tray or self._shaking_seen,
+            "need_dice": self._required_dice_count(),
+            "stab_frames": self._stab_frames,
+            "change_threshold": self._change_threshold,
+        }
 
     @property
     def just_finalized(self) -> bool:
@@ -288,6 +335,13 @@ class RollAttributor:
 
         # 진출 디바운스 — 연속 N프레임 밖이어야 진짜 빠진 걸로 인정
         if self._out_streak < self._exit_debounce:
+            # 손(또는 흔들리는 굴림통)이 다시 들어왔다 — 정착 대기를 처음부터 센다.
+            #
+            # 안 지우면 대기 프레임이 점유 한 번 동안 **누적**된다. 주사위를 손으로
+            # 집어 통에 담는 사이(손이 트레이 밖, 주사위 0개)에 이미 30프레임을
+            # 쓰고, 쏟은 뒤에는 15프레임밖에 안 남아 정상 굴림이 unstable로
+            # 끝났다 (6월 녹화본 33~36초, 30fps 재생).
+            self._settle_wait = 0
             return None
 
         # roll_tray 미진입 — 굴림통 안 썼다고 판정 (킵존 옮김 등)
@@ -297,6 +351,7 @@ class RollAttributor:
                 f"streak={self._roll_tray_in_tray_streak} "
                 f"need={self._roll_tray_in_tray_required} → WAITING (굴림 아님)"
             )
+            self._verdict = RollVerdict("no_cup")
             self._reset_to_waiting()
             return None
 
@@ -307,6 +362,7 @@ class RollAttributor:
             _log.debug(
                 "[roll] hand_out: 점유 중 손도 흔들림도 없음 → WAITING (굴림 아님)"
             )
+            self._verdict = RollVerdict("no_action")
             self._reset_to_waiting()
             return None
 
@@ -328,6 +384,7 @@ class RollAttributor:
                 f"[roll] hand_out: dice {len(target_dice)}개로 안정 — "
                 f"기준을 {need}개에서 다시 잡는다 (킵존 이동 등)"
             )
+            self._verdict = RollVerdict("rebase", dice_count=len(target_dice))
             self._reset_to_waiting()
             return None
         # 2) 모두 stable
@@ -340,6 +397,7 @@ class RollAttributor:
             self._settle_wait += 1
             if self._settle_wait > _SETTLE_TIMEOUT_FRAMES:
                 _log.debug(f"[roll] hand_out: dice가 계속 불안정 — {unstable} → WAITING")
+                self._verdict = RollVerdict("unstable")
                 self._reset_to_waiting()
                 return None
             _log.debug(f"[roll] hand_out: dice 불안정 — {unstable} (state 유지)")
@@ -347,6 +405,7 @@ class RollAttributor:
         # 3) snapshot 대비 변화 점수
         if self._snapshot is None:
             _log.debug("[roll] hand_out: snapshot 없음 → WAITING 복귀 (발화 없음)")
+            self._verdict = RollVerdict("no_change")
             self._reset_to_waiting()
             return None
         score = _compute_change_score(self._snapshot, target_dice, self._center_shift_ratio)
@@ -369,10 +428,27 @@ class RollAttributor:
                 self._candidate_actor,
                 self._fallback_actor(),
             )
+            self._verdict = RollVerdict(
+                "confirmed", actor_id=actor, score=score, dice_count=len(target_dice)
+            )
             self._reset_to_waiting()
             return actor
-        # 변화 없음 — 손만 댄 케이스
+        # 변화 없음. 바로 끝내지 않고 정착 대기 한도까지 본다.
+        #
+        # 킵한 주사위는 그대로 두고 한두 개만 다시 굴리면, 통에서 나온 주사위가
+        # 화면에 잡히기 전 몇 프레임 동안은 "개수 충족 + 전부 정지 + 변화 0"이다
+        # (기준 개수는 통에 담긴 걸 뺀 수라서). 여기서 바로 끝내면 그 굴림은
+        # 사라지고, 뒤늦게 잡힌 주사위는 다음 기준에 조용히 섞인다 (6월 녹화본
+        # 53초: 1개 재굴림이 no_change).
+        #
+        # 기준에 주사위가 전부(expected_dice_count) 있었으면 기다릴 게 없다 — 더
+        # 나올 주사위가 없으니 예전처럼 바로 끝낸다.
+        if len(self._snapshot.items) < self._expected_dice:
+            self._settle_wait += 1
+            if self._settle_wait <= _SETTLE_TIMEOUT_FRAMES:
+                return None
         _log.debug("[roll] 변화 부족 → WAITING (손만 댐)")
+        self._verdict = RollVerdict("no_change", score=score, dice_count=len(target_dice))
         self._reset_to_waiting()
         return None
 
