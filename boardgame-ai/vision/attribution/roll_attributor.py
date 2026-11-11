@@ -33,11 +33,7 @@ from vision.yacht.schemas import DiceState, YachtFramePerception
 # 기본 INFO/WARNING 환경에선 조용히 동작.
 _log = logging.getLogger(__name__)
 
-# 손이 빠진 뒤 주사위가 다 보이고 멈추기를 기다리는 최대 프레임 (30fps 기준 2.5초).
-#
-# 45(1.5초)는 빠듯했다. 쏟고 손을 빼는 순간부터 세는데, 주사위가 구르다 멈추고
-# (0.5~1초) 정지 이력 5프레임 + 정지 15프레임을 채워야 해서 35~50프레임이 든다.
-# 조금만 오래 구르면 정상 굴림이 unstable로 끝났다.
+# 손이 빠진 뒤 주사위가 다 보이고 멈추기를 기다리는 최대 프레임 (30fps 기준 1.5초).
 #
 # 쏟은 직후에는 몇 프레임 동안 일부가 안 잡힌다 — 공중에 있거나 서로 겹친다.
 # 그래서 개수가 모자라면 기다린다. 그런데 무한정 기다리면, 킵존처럼 주사위를
@@ -46,7 +42,7 @@ _log = logging.getLogger(__name__)
 # 끝까지 굴림이 한 번도 안 잡혔다 (실측).
 #
 # 상한을 두고, 넘으면 WAITING으로 돌아가 지금 보이는 것으로 기준을 다시 잡는다.
-_SETTLE_TIMEOUT_FRAMES = 75
+_SETTLE_TIMEOUT_FRAMES = 45
 
 
 class RollState(Enum):
