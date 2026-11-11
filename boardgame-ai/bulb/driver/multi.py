@@ -15,9 +15,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
-from bulb.driver.base import RGB, LightDriver
+from bulb.driver.base import RGB, LightDriver, SequenceStep
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +40,35 @@ class MultiDriver(LightDriver):
         duration_ms: int,
         kelvin: int | None = None,
     ) -> None:
+        await self._each(lambda d: d.apply(color, brightness, duration_ms, kelvin))
+
+    @property
+    def supports_sequence(self) -> bool:  # type: ignore[override]
+        # 하나라도 못 받으면 전부 단계별 경로로 간다. 섞으면 전구마다 다른
+        # 방식으로 움직여 색이 어긋난다.
+        return all(d.supports_sequence for d in self._drivers)
+
+    @property
+    def drivers(self) -> tuple[LightDriver, ...]:
+        return self._drivers
+
+    async def play_sequence(
+        self,
+        steps: Sequence[SequenceStep],
+        brightness: int,
+        alt: Sequence[SequenceStep] | None = None,
+    ) -> None:
+        # 두 번째·네 번째 … 전구가 alt를 밟는다. 두 전구가 같은 박자로 서로
+        # 다른 색·밝기를 내면 방 안에서 빛이 오가는 것처럼 보인다.
+        plans = {
+            id(d): (alt if alt is not None and i % 2 == 1 else steps)
+            for i, d in enumerate(self._drivers)
+        }
+        await self._each(lambda d: d.play_sequence(plans[id(d)], brightness))
+
+    async def _each(self, call: Callable[[LightDriver], Awaitable[None]]) -> None:
         results = await asyncio.gather(
-            *(d.apply(color, brightness, duration_ms, kelvin) for d in self._drivers),
+            *(call(d) for d in self._drivers),
             return_exceptions=True,
         )
 

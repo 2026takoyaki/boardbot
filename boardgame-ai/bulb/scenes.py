@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bulb.driver.base import RGB
+from bulb.driver.base import RGB, SequenceStep
 from games.werewolf.ontology import WerewolfPhase
 from games.yacht.state import YachtPhase
 
@@ -396,10 +396,45 @@ class ControlCue:
     brightness: int
     sfx: str
     fall_ms: int = 600
+    # True면 색이 멈추지 않고 다음 색으로 계속 흘러간다(무지개). False면
+    # 유지 시간의 절반 동안 넘어가고 나머지는 그 색에 머문다 — "바뀐다"가
+    # 읽혀야 하는 파티·약올리기가 그쪽이다.
+    smooth: bool = False
+    # 단계를 직접 적은 연출. 있으면 steps 대신 쓴다 — 밝기가 단계마다 다르거나
+    # 효과음 박자에 맞춰 길이가 제각각인 연출(반짝임·피날레)이 그렇다.
+    flow: tuple[SequenceStep, ...] | None = None
+    # 두 번째 전구가 대신 밟을 단계. flow와 박자가 같고 색·밝기만 다르다.
+    # 두 전구가 엇갈려 빛나면 방 안에서 빛이 오가는 것처럼 보인다.
+    alt_flow: tuple[SequenceStep, ...] | None = None
+
+    @property
+    def run_ms(self) -> int:
+        """색을 다 밟을 때까지. 복귀 페이드는 빠진다."""
+        return sum(step.hold_ms for step in self.sequence())
 
     @property
     def total_ms(self) -> int:
-        return sum(hold for _color, hold in self.steps) + self.fall_ms
+        return self.run_ms + self.fall_ms
+
+    def transition_for(self, hold_ms: int) -> int:
+        """한 단계에서 직전 색으로부터 넘어오는 시간."""
+        if self.smooth:
+            return hold_ms
+        # 단계 전환은 유지 시간보다 짧아야 색이 "바뀐다"로 읽힌다. 전환이
+        # 유지만큼 길면 계속 페이드만 하는 것으로 보인다.
+        return max(60, hold_ms // 2)
+
+    def sequence(self) -> tuple[SequenceStep, ...]:
+        """전구에 통째로 넘길 형태 (bulb/driver/base.py의 play_sequence)."""
+        if self.flow is not None:
+            return self.flow
+        return tuple(
+            SequenceStep(color=color, hold_ms=hold, transition_ms=self.transition_for(hold))
+            for color, hold in self.steps
+        )
+
+    def alt_sequence(self) -> tuple[SequenceStep, ...] | None:
+        return self.alt_flow
 
 
 # 파티 색 순환. 색상환을 고르게 돌아 "막 바뀐다"가 읽히게 한다.
@@ -458,16 +493,117 @@ CONTROL_CUES: dict[str, ControlCue] = {
         sfx="control_fart",
         fall_ms=900,
     ),
-    # 파티 — 색상환을 두 바퀴 돈다. 다른 것들보다 확실히 길다(약 9초).
+    # 파티 — 색당 120ms로 정신없이 돈다(약 8.6초). 380ms였을 때 실물로 보고
+    # 느리다는 판정을 받았다(2026-11-11). 단계를 몇 개로 늘려도 전구에는
+    # 한 바퀴만 가고 반복 횟수가 붙으므로 명령은 하나다.
     "party": ControlCue(
         name="party",
         label="파티",
-        steps=tuple((c, 380) for c in _PARTY_COLORS * 4),
+        steps=tuple((c, 120) for c in _PARTY_COLORS * 12),
         brightness=100,
         sfx="control_party",
         fall_ms=1000,
     ),
 }
+
+
+# ── 발표용 득점 연출 ─────────────────────────────────────────────────────────
+#
+# 처음에는 무지개였다. 실물로 보니 정신만 사납고 "축하"로 읽히지 않았다
+# (2026-11-11 판정). 축하는 색이 많은 것이 아니라 **빛이 살아 움직이는 것**이라,
+# 금빛 하나로 밝기를 출렁이고 두 전구를 엇갈리게 했다.
+#
+# 피날레는 효과음(game_end.mp3) 박자에 맞췄다. ffmpeg로 뽑은 음 시작 지점:
+#   0.6 0.8 1.0 1.15 │ 1.7 1.9 2.1 2.25 │ 2.7 │ 3.35 │ 3.8부터 잦아듦
+# 효과음을 바꾸면 이 표도 다시 뽑아야 한다.
+
+GOLD = (255, 165, 30)
+GOLD_HOT = (255, 215, 130)
+_AMBER = (255, 140, 40)
+_MAGENTA = (255, 40, 150)
+_VIOLET = (140, 60, 255)
+_SKY = (40, 160, 255)
+
+
+def _step(
+    color: RGB, hold_ms: int, brightness: int, transition_ms: int | None = None
+) -> SequenceStep:
+    """transition_ms를 안 주면 hold 내내 흘러간다(멈추지 않는 출렁임)."""
+    return SequenceStep(
+        color=color,
+        hold_ms=hold_ms,
+        transition_ms=hold_ms if transition_ms is None else transition_ms,
+        brightness=brightness,
+    )
+
+
+def _note(color: RGB, window_ms: int) -> tuple[SequenceStep, SequenceStep]:
+    """음 하나. 확 터졌다가 다음 음까지 잦아든다."""
+    return (_step(color, 60, 100, 50), _step(color, window_ms - 60, 35))
+
+
+def _phrase(
+    colors: tuple[RGB, RGB], windows: tuple[int, ...], flip: bool
+) -> tuple[SequenceStep, ...]:
+    """음 여러 개. 두 색을 번갈아 쓰고, 짝 전구는 반대 순서로 쓴다."""
+    first, second = (colors[1], colors[0]) if flip else colors
+    out: list[SequenceStep] = []
+    for i, window in enumerate(windows):
+        out.extend(_note(first if i % 2 == 0 else second, window))
+    return tuple(out)
+
+
+def _shimmer(pairs: int, flip: bool) -> tuple[SequenceStep, ...]:
+    """금빛 출렁임. 짝 전구는 반대 위상이라 한쪽이 밝을 때 다른 쪽이 어둡다."""
+    high, low = _step(GOLD, 170, 100), _step(GOLD, 170, 18)
+    pair = (low, high) if flip else (high, low)
+    return pair * pairs
+
+
+def _gold_burst(flip: bool) -> tuple[SequenceStep, ...]:
+    return (
+        _step(GOLD_HOT, 150, 100, 60),  # 번쩍
+        *_shimmer(8, flip),  # 엇갈려 반짝 2.7초
+        _step(GOLD, 800, 75, 400),  # 금빛으로 가라앉아 머문다
+    )
+
+
+def _finale(flip: bool) -> tuple[SequenceStep, ...]:
+    climax_sweep = _VIOLET if flip else _MAGENTA
+    return (
+        _step(_AMBER, 600, 55, 550),  # 0.0  예열 — 백색에서 호박색으로
+        *_phrase((GOLD, _MAGENTA), (200, 200, 150, 550), flip),  # 0.6 첫 소절
+        *_phrase((_VIOLET, _SKY), (200, 200, 150, 450), flip),  # 1.7 둘째 소절
+        _step(GOLD_HOT, 80, 100, 50),  # 2.7  둘이 함께 터진다
+        _step(climax_sweep, 570, 80),  #      갈라져 흐른다
+        _step(GOLD_HOT, 80, 100, 50),  # 3.35 마지막 타격
+        _step(GOLD, 370, 100, 50),  #      금빛 유지 → 3.8부터 백색으로 잦아듦
+    )
+
+
+# 요트(야찌) — 번쩍 → 두 전구가 엇갈려 금빛으로 반짝 → 은은하게 남는다. 약 5.2초.
+GOLD_BURST = ControlCue(
+    name="gold_burst",
+    label="금빛 반짝임",
+    steps=(),
+    brightness=100,
+    sfx="hand_legendary",
+    fall_ms=900,
+    flow=_gold_burst(flip=False),
+    alt_flow=_gold_burst(flip=True),
+)
+
+# 피날레 — 효과음 박자에 맞춘 3.8초 + 백색으로 1.2초.
+FINALE_FANFARE = ControlCue(
+    name="finale_fanfare",
+    label="피날레",
+    steps=(),
+    brightness=100,
+    sfx="game_end",
+    fall_ms=1200,
+    flow=_finale(flip=False),
+    alt_flow=_finale(flip=True),
+)
 
 
 def build_control_cue_map() -> dict[str, ControlCue]:
@@ -522,6 +658,8 @@ class ShowLight:
     cue: Cue | None = None
     dark_ms: int = 0
     rest: Scene | None = None
+    # 색 여러 개를 밟는 연출(무지개). cue 대신 쓴다 — 둘 다 주면 cue 다음에 돈다.
+    sequence: ControlCue | None = None
 
     @property
     def enter_ms(self) -> int:
@@ -534,6 +672,8 @@ class ShowLight:
         total = self.enter_ms + self.scene.transition_ms
         if self.cue is not None:
             total += self.cue.total_ms
+        if self.sequence is not None:
+            total += self.sequence.total_ms
         return total
 
 

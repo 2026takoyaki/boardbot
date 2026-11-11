@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
+from typing import Any
 
+from bulb import discovery
 from bulb.config import LightConfig
 from bulb.controller import LightController
 from bulb.driver.base import LightDriver
@@ -40,6 +43,8 @@ __all__ = [
     "Scene",
     "build_controller",
     "build_driver",
+    "driver_ips",
+    "reconnect",
 ]
 
 
@@ -94,3 +99,71 @@ def build_controller(
         scene_map=build_scene_map(resolved.night_brightness),
         cue_map=build_cue_map(),
     )
+
+
+def driver_ips(driver: LightDriver) -> list[str]:
+    """이 드라이버가 실제로 명령을 보내는 전구 IP. 실물 전구가 아니면 빈 목록."""
+    from bulb.driver.yeelight import YeelightDriver
+
+    if isinstance(driver, MultiDriver):
+        return [ip for d in driver.drivers for ip in driver_ips(d)]
+    if isinstance(driver, YeelightDriver):
+        return [driver.ip]
+    return []
+
+
+async def reconnect(controller: LightController) -> dict[str, Any]:
+    """전구를 다시 찾아 붙이고 상태를 돌려준다. 서버 부팅과 관리자 콘솔이 부른다.
+
+    적힌 IP(LIGHT_BULB_IP)가 전부 닿으면 아무것도 바꾸지 않는다. 안 닿으면
+    네트워크를 훑어(bulb/discovery.py) 찾은 IP로 드라이버를 갈아 끼우고 현재
+    Scene을 다시 보낸다. 아무것도 못 찾으면 그대로 둔다 — 전구가 아직 핫스팟에
+    붙는 중일 수 있고, 붙으면 적힌 IP로 그대로 동작한다.
+
+    실물 전구 모드(LIGHT_DRIVER=yeelight)가 아니면 찾지 않는다.
+
+    Returns:
+        화면에 그대로 보낼 상태. {"driver", "expected", "active", "source", "ok"}
+    """
+    config = controller.config
+    if config.driver != "yeelight":
+        return {
+            "driver": config.driver,
+            "expected": 0,
+            "active": [],
+            "source": "none",
+            "ok": False,
+        }
+
+    hints = driver_ips(controller.driver) or list(config.bulb_ips)
+    expected = max(len(config.bulb_ips), 1)
+    found, source = await discovery.locate(hints)
+
+    if found and sorted(found) != sorted(hints):
+        try:
+            new_config = replace(config, bulb_ips=tuple(found))
+            await controller.swap_driver(build_driver(new_config))
+            logger.warning(
+                "light: 전구 IP가 바뀌었다 %s → %s. .env의 LIGHT_BULB_IP도 고쳐 두면 "
+                "다음 부팅이 빨라진다.",
+                ",".join(hints),
+                ",".join(found),
+            )
+        except Exception:
+            logger.warning("light: 찾은 전구로 갈아 끼우지 못했다", exc_info=True)
+
+    active = found
+    if not found:
+        logger.warning(
+            "light: 전구를 찾지 못했다 (적힌 IP %s). 핫스팟 연결·2.4GHz·전원을 확인하라.",
+            ",".join(hints) or "없음",
+        )
+    else:
+        logger.info("light: 전구 %d개 연결 (%s, %s)", len(found), ",".join(found), source)
+    return {
+        "driver": "yeelight",
+        "expected": expected,
+        "active": active,
+        "source": source,
+        "ok": len(active) >= expected,
+    }

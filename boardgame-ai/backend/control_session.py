@@ -34,6 +34,7 @@ from fastapi import WebSocket
 
 from audio.manager import AudioManager
 from backend.show_acts import ShowAct, build_show_acts
+from bulb import reconnect as reconnect_light
 from bulb.controller import LightController
 from bulb.scenes import CONTROL_CUES, NEUTRAL_SCENE, SHOW_REST_SCENE, Scene
 from core.constants import MsgType
@@ -119,6 +120,9 @@ class ControlSession:
                             "text": a.text,
                             "persona": a.persona_name,
                             "duration_ms": a.duration_ms(),
+                            # 조명이 제자리에 설 때까지. 화면은 말과 이것이
+                            # 둘 다 끝나야 버튼을 푼다(피날레는 무지개가 더 길다).
+                            "light_ms": a.light_ms,
                             # 효과음 끝나기 이만큼 전에 목소리를 부른다.
                             # 겹치는 일은 화면이 한다 — 아래 _play_show 참고.
                             "voice_overlap_ms": a.voice_overlap_ms,
@@ -166,6 +170,34 @@ class ControlSession:
         if input_type == "CONTROL_SHOW_REST":
             self._show_rest(bool(payload.get("dark", False)))
             return
+
+        if input_type == "CONTROL_LIGHT_PROBE":
+            await self.send_light_status()
+            return
+
+    async def send_light_status(self) -> None:
+        """전구를 다시 찾고 몇 개가 붙어 있는지 화면에 알린다.
+
+        발표 직전에 확인하는 자리다. 서버는 조명이 죽어도 멀쩡히 돌아서, 이게
+        없으면 버튼을 눌러 보기 전까지 조명이 죽은 줄 모른다 — 예선이 그랬다.
+        """
+        if self._light is None:
+            status: dict[str, Any] = {
+                "driver": "none", "expected": 0, "active": [], "source": "none", "ok": False,
+            }
+        else:
+            try:
+                status = await reconnect_light(self._light)
+            except Exception:
+                logger.warning("control: 전구 상태 확인 실패", exc_info=True)
+                status = {
+                    "driver": self._light.config.driver,
+                    "expected": len(self._light.config.bulb_ips),
+                    "active": [],
+                    "source": "none",
+                    "ok": False,
+                }
+        await self.send(WSMessage(msg_type=MsgType.LIGHT_STATUS.value, payload=status))
 
     async def restore_light(self) -> None:
         """나갈 때 조명을 원래대로. 서버의 finally가 부른다."""

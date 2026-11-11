@@ -17,9 +17,10 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 
 from bulb.config import LightConfig
-from bulb.driver.base import BRIGHTNESS_MAX, RGB, LightDriver
+from bulb.driver.base import BRIGHTNESS_MAX, RGB, LightDriver, SequenceStep, plan_flows
 from bulb.scenes import (
     NEUTRAL_SCENE,
     NIGHT_DIP_DARK_MS,
@@ -90,6 +91,29 @@ class LightController:
         # 뒤늦게 깨어나 새 색을 옛 색으로 덮어쓴다. 새 Scene이 오면 취소한다.
         self._scene_task: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
+
+    @property
+    def config(self) -> LightConfig:
+        return self._config
+
+    @property
+    def driver(self) -> LightDriver:
+        return self._driver
+
+    async def swap_driver(self, driver: LightDriver) -> None:
+        """전구가 다른 IP에서 발견됐을 때 드라이버를 갈아 끼운다.
+
+        진행 중인 연출은 버린다 — 옛 드라이버로 나가던 명령이 새 드라이버
+        이후에 도착할 수 있다. 그리고 지금 Scene을 새 전구에 다시 보낸다.
+        새 전구는 우리가 마지막에 무엇을 보냈는지 모르므로 캐시도 비운다.
+        """
+        old = self._driver
+        self._cancel_pending()
+        self._driver = driver
+        self._last_applied = None
+        with contextlib.suppress(Exception):
+            await old.close()
+        await self._apply_scene_once(self._scene, self._game)
 
     # ── 구독 진입점 ──────────────────────────────────────────────────────────
 
@@ -372,9 +396,17 @@ class LightController:
             # 페이드가 끝나고 어둠이 유지되는 시간까지 기다린다. 안 기다리면
             # 다 꺼지기도 전에 다음 색이 올라가 암전이 눈에 보이지 않는다.
             await asyncio.sleep(plan.enter_ms / 1000)
+        before = self._last_applied
         await self._apply_scene(plan.scene, game)
         if plan.cue is not None:
             await self._play_cue(plan.cue, game)
+        if plan.sequence is not None:
+            # 바탕색으로 넘어가는 중이면 그 페이드가 끝난 뒤에 시작한다. 이미
+            # 바탕색이면(대부분 — 콘솔의 바탕이 그 백색이다) 곧바로 시작한다.
+            # 효과음은 버튼을 누른 순간 나가므로, 여기서 쉬면 그만큼 박자가 밀린다.
+            if self._last_applied != before:
+                await asyncio.sleep(plan.scene.transition_ms / 1000)
+            await self._run_control_cue(plan.sequence, game)
 
     def settle(self, scene: Scene, game: str | None = None) -> None:
         """연출이 끝났으니 이 Scene으로 물러난다. 즉시 반환한다.
@@ -389,13 +421,67 @@ class LightController:
         self._scene_task = self._spawn(self._apply_scene(scene, game))
 
     async def _run_control_cue(self, cue: ControlCue, game: str | None) -> None:
-        for color, hold_ms in cue.steps:
-            # 단계 전환은 유지 시간보다 짧아야 색이 "바뀐다"로 읽힌다. 전환이
-            # 유지만큼 길면 계속 페이드만 하는 것으로 보인다.
-            await self._drive(color, cue.brightness, max(60, hold_ms // 2), game, None)
-            await asyncio.sleep(hold_ms / 1000)
+        if self._driver.supports_sequence:
+            # 실물 전구. 시퀀스를 흐름 명령으로 넘기고 끝날 때까지 기다린다.
+            # 단계마다 보내면 분당 명령 제한에 걸려 복귀까지 거부된다
+            # (bulb/driver/base.py의 play_sequence 주석).
+            await self._play_flows(cue, game)
+        else:
+            for step in cue.sequence():
+                level = step.brightness if step.brightness is not None else cue.brightness
+                await self._drive(step.color, level, step.transition_ms, game, None)
+                await asyncio.sleep(step.hold_ms / 1000)
         await self._drive(
             self._scene.color, self._scene.brightness, cue.fall_ms, game, self._scene.kelvin
+        )
+
+    async def _play_flows(self, cue: ControlCue, game: str | None) -> None:
+        """흐름 묶음을 제 시각에 보내고 시퀀스가 끝날 때까지 기다린다.
+
+        대부분은 묶음 하나다. 효과음 박자에 맞춘 피날레처럼 긴 연출만 여러
+        묶음으로 나뉘고(base.plan_flows), 각 묶음을 그 묶음이 시작할 시각에
+        보낸다. 시작 시각을 처음 기준으로 재므로 묶음 사이에 지연이 쌓이지 않는다.
+
+        캐시를 무조건 비운다. 시퀀스가 끝나면 전구는 마지막 색에 머물러 있어서
+        직전에 보낸 값과 실제 상태가 다르다 — 비우지 않으면 뒤이은 복귀가
+        "이미 그 색이다"로 중복 제거되어 방이 시퀀스의 마지막 색으로 남는다.
+        """
+        level = self._clamp(cue.brightness, game)
+        steps = self._clamp_steps(cue.sequence(), game)
+        alt = cue.alt_sequence()
+        alt = self._clamp_steps(alt, game) if alt is not None else None
+        self._last_applied = None
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        for offset_ms, chunk, alt_chunk in plan_flows(steps, alt):
+            delay = started + offset_ms / 1000 - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                await asyncio.wait_for(
+                    self._driver.play_sequence(chunk, level, alt_chunk),
+                    timeout=self._config.command_timeout_s,
+                )
+            except asyncio.CancelledError:
+                raise
+            except TimeoutError:
+                logger.warning("light: 시퀀스 '%s' 타임아웃", cue.name)
+            except Exception:
+                logger.warning("light: 시퀀스 '%s' 실패", cue.name)
+        remaining = started + cue.run_ms / 1000 - loop.time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    def _clamp_steps(
+        self, steps: tuple[SequenceStep, ...], game: str | None
+    ) -> tuple[SequenceStep, ...]:
+        """단계별 밝기에도 게임 하한을 적용한다. 반짝임의 어두운 쪽이 그 대상이다."""
+        return tuple(
+            replace(s, brightness=self._clamp(s.brightness, game))
+            if s.brightness is not None
+            else s
+            for s in steps
         )
 
     # ── 생명주기 ─────────────────────────────────────────────────────────────

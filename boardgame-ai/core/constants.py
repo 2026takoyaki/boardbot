@@ -30,6 +30,8 @@ class MsgType(StrEnum):
     # 지금 조명이 무슨 색인가. 화면 가장자리 색 띠가 이걸 그린다.
     # bulb/driver/frontend.py가 보내고, 컨트롤 세션도 같은 형식을 쓴다.
     LIGHT_STATE = "light_state"
+    # 실물 전구가 몇 개 붙어 있는가. 관리자 콘솔이 발표 직전 확인에 쓴다.
+    LIGHT_STATUS = "light_status"
     HELLO = "hello"
     # 페르소나가 바뀌어 화면 문구가 통째로 달라졌음을 알린다. hello로 다시
     # 보내면 프론트가 새 접속으로 착각해 게임을 다시 시작한다.

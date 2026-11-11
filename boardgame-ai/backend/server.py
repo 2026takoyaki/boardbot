@@ -44,6 +44,7 @@ from backend.yacht_runner import YachtRunner
 from backend.yacht_session import YachtSession
 from bridge.local_bridge import LocalBridge
 from bulb import LightConfig, build_controller
+from bulb import reconnect as reconnect_light
 from core.envelope import WSMessage
 from vision.camera import CameraManager
 from vision.yacht.config import VisionConfig
@@ -113,6 +114,10 @@ async def lifespan(app: FastAPI):
     light_controller = build_controller(
         config=light_config, broadcast=ws_manager.broadcast_message
     )
+    # 적힌 전구 IP가 안 닿으면 핫스팟을 훑어 실제 IP를 찾는다. 핫스팟은 접속
+    # 순서에 따라 IP를 다르게 줄 수 있고, 조명은 실패해도 서버가 멀쩡히 떠서
+    # 화면만 봐서는 모른다. 실물 전구 모드가 아니면 아무것도 안 한다.
+    app.state.light_status = await reconnect_light(light_controller)
     # 로비·좌석 등록 구간의 밝기는 이 기본값이 유일한 보장이다 — 로비는
     # 세션을 거치지 않고 브로드캐스트해서 조명 스트림에 잡히지 않는다.
     await light_controller.start()
