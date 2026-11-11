@@ -104,6 +104,32 @@ export default function AdminConsole({ onExit }) {
     if (hello?.acts) setActs(hello.acts)
   }, [hello])
 
+  // 실물 전구가 몇 개 붙어 있는가. 들어오자마자 한 번 묻고, 버튼으로 다시 묻는다.
+  //
+  // 서버는 조명이 죽어도 멀쩡히 돈다(조명이 게임을 막지 않도록). 그래서 이게
+  // 없으면 연출을 눌러 보기 전까지 조명이 죽은 줄 모른다 — 예선이 그랬다.
+  // 다시 찾기는 IP가 바뀌었어도 핫스팟을 훑어 찾아 붙인다(bulb/discovery.py).
+  //
+  // 따로 들고 있는 이유: 메시지 목록은 최근 20개만 남는다(최신이 앞). 연출을
+  // 몇 번 누르면 오디오 메시지에 밀려 상태가 목록에서 사라진다.
+  const [lightStatus, setLightStatus] = useState(null)
+  useEffect(() => {
+    const latest = messages[0]
+    if (latest?.msg_type === 'light_status') setLightStatus(latest.payload)
+  }, [messages])
+  const [probing, setProbing] = useState(false)
+  const probe = useCallback(() => {
+    setProbing(true)
+    send('CONTROL_LIGHT_PROBE', {})
+  }, [send])
+  useEffect(() => { setProbing(false) }, [lightStatus])
+  const probedRef = useRef(false)
+  useEffect(() => {
+    if (!connected || probedRef.current) return
+    probedRef.current = true
+    probe()
+  }, [connected, probe])
+
   // 바탕 조명의 색·밝기·페이드는 전부 백엔드가 갖는다(bulb/scenes.py). 여기서
   // 숫자를 들고 슬라이더 경로로 보내면 색온도가 빠져 전구마다 흰색이 갈린다.
   const setRoom = useCallback((dark) => send('CONTROL_SHOW_REST', { dark }), [send])
@@ -143,13 +169,18 @@ export default function AdminConsole({ onExit }) {
     send('CONTROL_SHOW', { act: act.id })
     setRunning(act.id)
 
-    // 말이 끝나면 푼다. 소리가 꺼져 있으면(진행자 음량 0) 재생기가 건너뛰면서
-    // 같은 신호를 보내므로, 그 경우에도 버튼은 제때 풀린다.
+    // 말이 끝나고 **조명도 끝나면** 푼다. 소리가 꺼져 있으면(진행자 음량 0)
+    // 재생기가 건너뛰면서 같은 신호를 보내므로, 그 경우에도 버튼은 제때 풀린다.
+    //
+    // 조명을 기다리는 이유: 피날레처럼 무지개가 말보다 훨씬 긴 연출이 있다.
+    // 말이 끝났다고 풀어 두면 무지개가 도는 도중에 다음 버튼이 눌려 끊긴다.
+    const lightDoneAt = performance.now() + (act.light_ms || 0)
     unlockRef.current?.()
     unlockRef.current = audioApi.onNextTtsEnded(() => {
       unlockRef.current = null
+      const wait = Math.max(0, lightDoneAt - performance.now())
       window.clearTimeout(lockRef.current)
-      setRunning(null)
+      lockRef.current = window.setTimeout(() => setRunning(null), wait)
     })
     window.clearTimeout(lockRef.current)
     lockRef.current = window.setTimeout(() => {
@@ -177,7 +208,7 @@ export default function AdminConsole({ onExit }) {
         {/* 제목은 상단바가 이미 달고 있다. 여기서 한 번 더 쓰면 같은 말이
             두 줄 차지하고, 그만큼 버튼이 작아진다. */}
         <p className="ac-sub">
-          누르면 조명·진행자 목소리·효과음이 함께 나갑니다. 실제 게임이 쓰는 연출 그대로입니다.
+          누르면 조명·진행자 목소리·효과음이 함께 나갑니다. ‘발표용’ 표시가 없는 것은 실제 게임 연출 그대로입니다.
         </p>
 
         <div className="ac-grid">
@@ -243,10 +274,51 @@ export default function AdminConsole({ onExit }) {
               ? '소등 중입니다. 연출을 쓰려면 소등을 끄세요.'
               : '연출이 끝나면 조명이 알아서 돌아옵니다. 나가면 로비 조명으로 복귀합니다.'}
           </span>
+
+          <LightStatus status={lightStatus} probing={probing} onProbe={probe} disabled={!connected} />
         </div>
       </div>
 
       <style>{CSS}</style>
+    </div>
+  )
+}
+
+/**
+ * 전구 연결 상태. 발표 직전에 이것만 보고 판단할 수 있어야 한다.
+ *
+ *   초록  전구가 기대한 수만큼 붙어 있다
+ *   주황  일부만 붙어 있다 — 한쪽 전구 전원·핫스팟 확인
+ *   빨강  하나도 없다
+ *   회색  실물 전구 모드가 아니다(LIGHT_DRIVER) — 화면 조명만 움직인다
+ */
+function LightStatus({ status, probing, onProbe, disabled }) {
+  let tone = 'idle'
+  let text = '전구 확인 중…'
+  if (status && !probing) {
+    const n = status.active?.length ?? 0
+    if (status.driver !== 'yeelight') {
+      tone = 'idle'
+      text = `실물 전구 꺼짐 (${status.driver})`
+    } else if (status.ok) {
+      tone = 'ok'
+      text = `전구 ${n}/${status.expected} 연결`
+    } else if (n > 0) {
+      tone = 'warn'
+      text = `전구 ${n}/${status.expected}만 연결`
+    } else {
+      tone = 'bad'
+      text = '전구 연결 안 됨'
+    }
+  }
+  const title = status?.active?.length ? status.active.join(', ') : undefined
+  return (
+    <div className={`ac-light ac-light-${tone}`} title={title}>
+      <span className="ac-light-dot" aria-hidden />
+      <span className="ac-light-text">{text}</span>
+      <button type="button" className="ac-light-btn" onClick={onProbe} disabled={disabled || probing}>
+        {probing ? '찾는 중' : '다시 찾기'}
+      </button>
     </div>
   )
 }
@@ -424,6 +496,36 @@ const CSS = `
     transition: transform 180ms cubic-bezier(.2,.8,.25,1);
   }
   .ac-toggle.on .ac-toggle-knob { transform: translateX(16px); }
+
+  .ac-light {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 6px 6px 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    font-size: 13.5px; font-weight: 700;
+    white-space: nowrap;
+  }
+  .ac-light-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--fg-mute); }
+  .ac-light-ok .ac-light-dot { background: #3ccf7a; box-shadow: 0 0 0 3px color-mix(in oklch, #3ccf7a 25%, transparent); }
+  .ac-light-warn .ac-light-dot { background: var(--warn); }
+  .ac-light-bad { border-color: color-mix(in oklch, #ff5a5a 60%, var(--border)); }
+  .ac-light-bad .ac-light-dot { background: #ff5a5a; }
+  .ac-light-bad .ac-light-text { color: #ff7a7a; }
+  .ac-light-btn {
+    appearance: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--fg);
+    font-family: inherit; font-size: 12.5px; font-weight: 650;
+    cursor: pointer;
+  }
+  .ac-light-btn:hover:not(:disabled) { border-color: var(--fg-faint); }
+  .ac-light-btn:disabled { opacity: 0.5; cursor: default; }
 
   /* 좁아지면 한 줄에 하나씩. 넷을 우겨넣으면 대본이 안 읽힌다. */
   @media (max-width: 860px) {

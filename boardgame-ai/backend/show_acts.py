@@ -38,6 +38,8 @@ from agents.personas import get_persona
 from audio.catalog import show_voice_path, show_voice_url
 from bulb.config import LightConfig
 from bulb.scenes import (
+    FINALE_FANFARE,
+    GOLD_BURST,
     NEUTRAL_SCENE,
     SHOW_REST_SCENE,
     YACHT_CUES,
@@ -71,8 +73,9 @@ _VOICE_OVERLAP_MS = 500
 _NIGHT_DARK_MS = 1000
 
 # 밤 색이 차오르는 시간. 게임보다 느리게 잡는다 — 게임에서는 진행이 밀리면
-# 안 되지만 발표에서는 이 차오름 자체가 보여줄 것이다.
-_NIGHT_RISE_MS = 2200
+# 안 되지만 발표에서는 이 차오름 자체가 보여줄 것이다. 2.2초로는 "솨아악"
+# 차오르는 느낌이 안 난다는 판정을 받아 늘렸다(2026-11-11).
+_NIGHT_RISE_MS = 4500
 
 
 def _night_show(scene: Scene) -> Scene:
@@ -243,6 +246,24 @@ def build_show_acts(night_brightness: int | None = None) -> tuple[ShowAct, ...]:
                 cue=YACHT_CUES["yacht_turn_transition_lead_change"],
             ),
         ),
+        # ── 요트 · 발표용 확장 ──
+        # **실제 게임에는 없는 연출이다.** 게임의 요트 확정 큐는 금빛 한 번이다
+        # (yacht_turn_transition_highlight) — 이 전구가 주사위 인식 조명이라
+        # 게임 중에는 6초씩 방을 물들일 수 없다. 발표장에서는 그 제약이 없고,
+        # 백색 위의 금빛 한 번은 무대에서 거의 안 보여서 따로 둔다.
+        #
+        # 반짝임은 전구가 스스로 돈다(color flow). 명령 두 개로 끝나서 분당
+        # 명령 제한에 걸리지 않는다.
+        ShowAct(
+            id="yacht_legend",
+            label="요트! 50점",
+            hint="다섯 개가 전부 같은 눈 · 금빛으로 엇갈려 반짝 (발표용)",
+            persona_id="shagal",
+            delivery=DELIVERY_EXCITED,
+            text="샤갈! 요트! 주사위 다섯 개가 전부 6입니다. 50점, 이게 되네요!",
+            sfx="hand_legendary",
+            light=ShowLight(scene=NEUTRAL_SCENE, sequence=GOLD_BURST),
+        ),
         # ── 전략 에이전트 ──
         # 조명이 움직이지 않는 유일한 버튼이다. 실제 게임에서도 전략 조언에는
         # 조명 큐가 없다 — 굴림 결과를 보고 얹는 말이라 사건이 아니고, 요트
@@ -269,5 +290,17 @@ def build_show_acts(night_brightness: int | None = None) -> tuple[ShowAct, ...]:
             ),
             sfx="dice_recognized",
             light=ShowLight(scene=NEUTRAL_SCENE),
+        ),
+        # ── 마무리 ──
+        # 발표의 마지막 버튼. 게임 종료음 박자에 맞춰 두 전구가 다른 색으로 터진다.
+        # 이것도 실제 게임에는 없다 — 게임 종료 큐는 금빛 한 번이다.
+        ShowAct(
+            id="finale",
+            label="피날레",
+            hint="발표 마무리 · 효과음 박자에 맞춰 빛이 터진다 (발표용)",
+            persona_id="basic",
+            text="오늘 함께해 주셔서 감사합니다. 즐거운 게임 되세요!",
+            sfx="game_end",
+            light=ShowLight(scene=NEUTRAL_SCENE, sequence=FINALE_FANFARE),
         ),
     )
